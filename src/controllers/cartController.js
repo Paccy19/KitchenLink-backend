@@ -33,4 +33,8 @@ const clear = asyncHandler(async (req, res) => {
   res.json(await cartService.clear(req.customer._id));
 });
 
-module.exports = { getCart, add, update, remove, clear };
+const replace = asyncHandler(async (req, res) => {
+  res.json(await cartService.replace(req.customer._id, req.body?.items));
+});
+
+module.exports = { getCart, add, update, remove, clear, replace };

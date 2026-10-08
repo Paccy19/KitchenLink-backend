@@ -17,9 +17,8 @@ router.use('/', vendorRoutes);
 router.use('/', authRoutes);
 router.use('/', wishlistRoutes);
 router.use('/', cartRoutes);
-router.use('/', orderRoutes);
+router.use('/orders', orderRoutes);
 
-// Future: attach auth middleware for authenticated customer endpoints here.
-// Public discovery endpoints above intentionally skip authentication.
+// Discovery routes remain public; customer routes apply authentication locally.
 
 module.exports = router;

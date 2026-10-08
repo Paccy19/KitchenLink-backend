@@ -13,7 +13,11 @@ const serializeWishlistEntry = (entry) => {
     price_rwf: item.price_rwf,
     image_url: item.image_url || null,
     is_available: Boolean(item.is_available),
-    vendor_id: String(item.vendor_id),
+    vendor_id: String(item.vendor_id?._id ?? item.vendor_id),
+    vendor_name: item.vendor_id?.name ?? '',
+    vendor_type: item.vendor_id?.vendor_type ?? '',
+    vendor_neighborhood: item.vendor_id?.neighborhood ?? '',
+    delivery_available: Boolean(item.vendor_id?.delivery_available),
     added_at: entry.created_at,
   };
 };
@@ -37,7 +41,7 @@ class WishlistService {
 
     const existing = await wishlistRepository.findByCustomerAndItem(customerId, menuItemId);
     if (existing) {
-      throw ApiError.conflict('Item is already in your wishlist.', 'ALREADY_IN_WISHLIST');
+      return this.list(customerId);
     }
 
     await wishlistRepository.add(customerId, menuItemId);

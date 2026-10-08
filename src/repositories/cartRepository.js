@@ -61,6 +61,17 @@ class CartRepository {
     const result = await CartItem.deleteMany({ customer_id: customerId });
     return result.deletedCount;
   }
+
+  async replace(customerId, entries) {
+    await CartItem.deleteMany({ customer_id: customerId });
+    if (entries.length === 0) return [];
+    return CartItem.insertMany(entries.map((entry) => ({
+      customer_id: customerId,
+      menu_item_id: entry.menu_item_id,
+      vendor_id: entry.vendor_id,
+      quantity: entry.quantity,
+    })));
+  }
 }
 
 module.exports = new CartRepository();

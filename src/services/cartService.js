@@ -122,6 +122,51 @@ class CartService {
     await cartRepository.clear(customerId);
     return this.getCart(customerId);
   }
+
+  async replace(customerId, rawItems) {
+    if (!Array.isArray(rawItems) || rawItems.length > 50) {
+      throw ApiError.badRequest('items must be an array with at most 50 entries.', {
+        items: 'expected an array of menu_item_id and quantity entries',
+      });
+    }
+
+    const aggregated = new Map();
+    for (const rawItem of rawItems) {
+      const menuItemId = String(rawItem?.menu_item_id ?? '');
+      const quantity = parseQuantity(rawItem?.quantity, { required: false });
+      const menuItem = await menuItemRepository.findById(menuItemId).catch(() => null);
+      if (!menuItem) {
+        throw ApiError.notFound('Menu item not found.', 'MENU_ITEM_NOT_FOUND');
+      }
+      if (!menuItem.is_available) {
+        throw ApiError.conflict(`${menuItem.name} is currently unavailable.`, 'ITEM_UNAVAILABLE');
+      }
+      const existing = aggregated.get(menuItemId);
+      const nextQuantity = (existing?.quantity ?? 0) + quantity;
+      if (nextQuantity > config.limits.cartMaxQuantity) {
+        throw ApiError.badRequest(
+          `quantity must not exceed ${config.limits.cartMaxQuantity}.`,
+          { quantity: `maximum is ${config.limits.cartMaxQuantity}` }
+        );
+      }
+      aggregated.set(menuItemId, {
+        menu_item_id: menuItem._id,
+        vendor_id: menuItem.vendor_id,
+        quantity: nextQuantity,
+      });
+    }
+
+    const entries = [...aggregated.values()];
+    if (new Set(entries.map((entry) => String(entry.vendor_id))).size > 1) {
+      throw ApiError.conflict(
+        'Checkout supports one kitchen at a time. Your cart has items from multiple kitchens.',
+        'CART_VENDOR_CONFLICT'
+      );
+    }
+
+    await cartRepository.replace(customerId, entries);
+    return this.getCart(customerId);
+  }
 }
 
 module.exports = new CartService();
