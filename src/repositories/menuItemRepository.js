@@ -3,6 +3,14 @@ const { MenuItem } = require('../models');
 const { buildTokenFilter } = require('../utils/search');
 
 class MenuItemRepository {
+  async findById(menuItemId) {
+    return MenuItem.findById(menuItemId).lean();
+  }
+
+  async findAvailableById(menuItemId) {
+    return MenuItem.findOne({ _id: menuItemId, is_available: true }).lean();
+  }
+
   /**
    * Most frequently ordered, available dishes, optionally restricted
    * to a set of nearby vendors. Returns vendor info for display.
