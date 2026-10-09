@@ -14,12 +14,6 @@ const vendorRepository = require('../repositories/vendorRepository');
 
 const { orders } = config;
 
-const MOCK_RIDERS = [
-  { name: 'Jean-Paul Habimana', phone: '+250788000111' },
-  { name: 'Aline Uwase', phone: '+250788000222' },
-  { name: 'Eric Niyonshuti', phone: '+250788000333' },
-];
-
 const PROVIDERS = {
   momo: 'momo_mock',
   card: 'card_mock',
@@ -501,8 +495,6 @@ class OrderService {
         name: bodyRider.name.trim().slice(0, 80),
         phone: typeof bodyRider.phone === 'string' ? bodyRider.phone.trim() : '',
       };
-    } else if (nextStatus === 'confirmed' && !order.rider?.name) {
-      rider = MOCK_RIDERS[crypto.randomInt(0, MOCK_RIDERS.length)];
     }
     if (rider?.name) update.rider = rider;
 

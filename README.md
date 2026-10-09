@@ -39,27 +39,6 @@ npm start
 | `PLATFORM_COMMISSION_PERCENT` | `0` | Percent withheld from each completed order payout. |
 | `TZ_OFFSET_HOURS` | `2` | Offset used for "today" dashboard metrics (Rwanda = 2). |
 
-## Seed data
-
-Populates a demo vendor with login credentials, 4 categories, 6 menu items
-(including add-on options), a demo customer and 12 orders dated today
-(9 completed, 3 pending) so the dashboard shows realistic numbers.
-
-```bash
-npm run seed
-```
-
-Re-running is safe: it replaces the demo vendor's menu, options and orders.
-
-### Demo vendor login
-
-| Field | Value |
-| --- | --- |
-| Business / vendor name | `Mama Keza Kitchen` |
-| Phone | `+250788123456` |
-| Email (alternative) | `vendor@ofk.rw` |
-| Password (alternative) | `Vendor@123` |
-
 ## Migrations
 
 MongoDB is schemaless, so schema changes apply automatically through Mongoose.
@@ -131,12 +110,12 @@ curl -X POST http://localhost:4000/api/v1/vendor/auth/register \
 # Business name + phone (primary flow)
 curl -X POST http://localhost:4000/api/v1/vendor/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"name":"Mama Keza Kitchen","phone":"0788123456"}'
+  -d '{"name":"YOUR_VENDOR_NAME","phone":"YOUR_VENDOR_PHONE"}'
 
 # Email + password (accounts created before)
 curl -X POST http://localhost:4000/api/v1/vendor/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"vendor@ofk.rw","password":"Vendor@123"}'
+  -d '{"email":"YOUR_VENDOR_EMAIL","password":"YOUR_VENDOR_PASSWORD"}'
 ```
 
 ### Dashboard
@@ -271,19 +250,19 @@ is a terminal state.
 
 There is no automated suite yet. The fastest verification path:
 
-1. Ensure MongoDB is running, then reset the demo data:
+1. Ensure MongoDB is running and start the backend:
 
    ```bash
-   npm run seed
    npm run dev
    ```
 
-2. Log in and capture a token:
+2. Register a vendor through the frontend or vendor registration API, then log
+   in using that account and capture a token:
 
    ```bash
    TOKEN=$(curl -s -X POST http://localhost:4000/api/v1/vendor/auth/login \
      -H "Content-Type: application/json" \
-     -d '{"email":"vendor@ofk.rw","password":"Vendor@123"}' | node -pe "JSON.parse(require('fs').readFileSync(0)).token")
+     -d '{"name":"YOUR_VENDOR_NAME","phone":"YOUR_VENDOR_PHONE"}' | node -pe "JSON.parse(require('fs').readFileSync(0)).token")
    ```
 
 3. Exercise the API:
@@ -296,7 +275,3 @@ There is no automated suite yet. The fastest verification path:
 
 4. Check boundaries: a request without a token returns `401`, a customer token
    returns `403`, and `new → completed` returns `409`.
-
-After seeding, the dashboard returns `today_orders: 12`, `pending_orders: 3`,
-`completed_orders: 9`, `today_sales_rwf: 145000`, `total_sales_rwf: 2345000`
-and `available_balance_rwf: 1870000`.

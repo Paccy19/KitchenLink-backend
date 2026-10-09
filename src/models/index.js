@@ -8,6 +8,7 @@ const WishlistItem = require('./WishlistItem');
 const CartItem = require('./CartItem');
 const Order = require('./Order');
 const Payment = require('./Payment');
+const Withdrawal = require('./Withdrawal');
 
 module.exports = {
   Vendor,
@@ -20,4 +21,5 @@ module.exports = {
   CartItem,
   Order,
   Payment,
+  Withdrawal,
 };

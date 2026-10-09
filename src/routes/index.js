@@ -5,6 +5,7 @@ const vendorAuthRoutes = require('./vendorAuthRoutes');
 const vendorDashboardRoutes = require('./vendorDashboardRoutes');
 const vendorMenuRoutes = require('./vendorMenuRoutes');
 const vendorOrderRoutes = require('./vendorOrderRoutes');
+const vendorWalletRoutes = require('./vendorWalletRoutes');
 const authRoutes = require('./authRoutes');
 const wishlistRoutes = require('./wishlistRoutes');
 const cartRoutes = require('./cartRoutes');
@@ -24,6 +25,7 @@ router.use('/', cartRoutes);
 router.use('/vendor/auth', vendorAuthRoutes);
 router.use('/vendor/menu', vendorMenuRoutes);
 router.use('/vendor/orders', vendorOrderRoutes);
+router.use('/vendor/wallet', vendorWalletRoutes);
 router.use('/vendor', vendorDashboardRoutes);
 router.use('/orders', orderRoutes);
 

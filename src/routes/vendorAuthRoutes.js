@@ -12,7 +12,8 @@ const registrationFiles = upload.registration.fields([
 ]);
 
 router.post('/register', registrationFiles, vendorAuthController.register);
-router.post('/login', vendorAuthController.login);
+router.post('/send-otp', vendorAuthController.sendOtp);
+router.post('/verify-otp', vendorAuthController.verifyOtp);
 router.get('/me', requireVendorAuth, vendorAuthController.me);
 router.post('/change-password', requireVendorAuth, vendorAuthController.changePassword);
 

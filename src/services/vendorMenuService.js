@@ -59,6 +59,23 @@ class VendorMenuService {
         field: 'is_available',
       });
     }
+    if (body.is_preorder !== undefined) {
+      payload.is_preorder = parseBooleanValue(body.is_preorder, {
+        field: 'is_preorder',
+      });
+    }
+    if (body.preorder_cutoff !== undefined) {
+      payload.preorder_cutoff =
+        parseOptionalText(body.preorder_cutoff, {
+          field: 'preorder_cutoff',
+          max: 120,
+        }) || '';
+    }
+    if (body.is_popular !== undefined) {
+      payload.is_popular = parseBooleanValue(body.is_popular, {
+        field: 'is_popular',
+      });
+    }
     return payload;
   }
 

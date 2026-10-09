@@ -7,12 +7,17 @@ const register = asyncHandler(async (req, res) => {
   );
 });
 
-const login = asyncHandler(async (req, res) => {
-  const result = await vendorAuthService.login({
-    name: req.body?.name,
+const sendOtp = asyncHandler(async (req, res) => {
+  const result = await vendorAuthService.sendLoginOtp({
     phone: req.body?.phone,
-    email: req.body?.email,
-    password: req.body?.password,
+  });
+  res.json(result);
+});
+
+const verifyOtp = asyncHandler(async (req, res) => {
+  const result = await vendorAuthService.verifyLoginOtp({
+    phone: req.body?.phone,
+    code: req.body?.code,
   });
   res.json(result);
 });
@@ -30,4 +35,4 @@ const changePassword = asyncHandler(async (req, res) => {
   );
 });
 
-module.exports = { register, login, me, changePassword };
+module.exports = { register, sendOtp, verifyOtp, me, changePassword };

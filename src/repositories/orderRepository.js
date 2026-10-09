@@ -45,7 +45,17 @@ class OrderRepository {
   async dashboardMetrics(vendorId, { start, end, pendingStatuses }) {
     const vendorObjectId = new mongoose.Types.ObjectId(String(vendorId));
 
-    const [todayOrders, pendingOrders, completedAgg] = await Promise.all([
+    const [
+      todayOrders,
+      pendingOrders,
+      newOrders,
+      preparingOrders,
+      readyOrders,
+      completedOrdersTotal,
+      cancelledOrders,
+      activeAgg,
+      completedAgg,
+    ] = await Promise.all([
       Order.countDocuments({
         vendor_id: vendorObjectId,
         created_at: { $gte: start, $lt: end },
@@ -54,6 +64,18 @@ class OrderRepository {
         vendor_id: vendorObjectId,
         status: { $in: pendingStatuses },
       }),
+      Order.countDocuments({ vendor_id: vendorObjectId, status: 'placed' }),
+      Order.countDocuments({ vendor_id: vendorObjectId, status: 'preparing' }),
+      Order.countDocuments({
+        vendor_id: vendorObjectId,
+        status: { $in: ['ready', 'out_for_delivery'] },
+      }),
+      Order.countDocuments({ vendor_id: vendorObjectId, status: 'delivered' }),
+      Order.countDocuments({ vendor_id: vendorObjectId, status: 'cancelled' }),
+      Order.aggregate([
+        { $match: { vendor_id: vendorObjectId, status: { $in: pendingStatuses } } },
+        { $group: { _id: null, total: { $sum: '$total_rwf' } } },
+      ]),
       Order.aggregate([
         { $match: { vendor_id: vendorObjectId, status: 'delivered' } },
         {
@@ -73,17 +95,33 @@ class OrderRepository {
     ]);
 
     const completed = completedAgg[0] || { count: 0, sales: 0 };
+    const active = activeAgg[0] || { total: 0 };
 
     return {
       todayOrders,
       pendingOrders,
       completedOrders: completed.count,
       todaySalesRwf: completed.sales,
+      newOrders,
+      preparingOrders,
+      readyOrders,
+      completedOrdersTotal,
+      cancelledOrders,
+      activeSalesRwf: active.total,
     };
   }
 
-  async listByCustomer(customerId, { status, limit, offset }) {
-    const filter = { customer_id: customerId };
+  /** Gross value of orders still in-flight (not completed/cancelled). */
+  async activeSalesTotal(vendorId, statuses) {
+    const vendorObjectId = new mongoose.Types.ObjectId(String(vendorId));
+    const [result] = await Order.aggregate([
+      { $match: { vendor_id: vendorObjectId, status: { $in: statuses } } },
+      { $group: { _id: null, total: { $sum: '$total_rwf' } } },
+    ]);
+    return result?.total ?? 0;
+  }
+
+  async listByCustomer(customerId, { status, limit, offset }) {    const filter = { customer_id: customerId };
     if (status) filter.status = status;
 
     const [orders, total] = await Promise.all([

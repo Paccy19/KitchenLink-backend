@@ -56,11 +56,6 @@ class HomeService {
           limit: config.limits.feedDishes,
         });
       }
-      if (dishes.length === 0) {
-        dishes = await menuItemRepository.findPopular({
-          limit: config.limits.feedDishes,
-        });
-      }
     } else {
       dishes = await menuItemRepository.findPopular({
         limit: config.limits.feedDishes,

@@ -4,7 +4,6 @@ const ApiError = require('../utils/ApiError');
 const { signToken } = require('../utils/jwt');
 const { normalizePhone, parseDeliveryLocation } = require('../utils/validators');
 const {
-  parseEmail,
   parsePassword,
   parseRequiredText,
   parseVendorType,
@@ -19,9 +18,7 @@ const { hashPassword, comparePassword } = require('../utils/password');
 const { buildPublicUrl, resolveImageUrl } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
 const categoryRepository = require('../repositories/categoryRepository');
-
-const DUMMY_HASH =
-  '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvali';
+const otpRepository = require('../repositories/otpRepository');
 
 class VendorAuthService {
   /**
@@ -90,8 +87,8 @@ class VendorAuthService {
       payment_information: paymentInformation,
       verification_documents: documents,
       verification_status: 'pending',
-      is_active: false,
-      delivery_available: false,
+      is_active: true,
+      delivery_available: true,
       available_balance: 0,
       total_sales: 0,
       ...(bannerImageUrl ? { banner_image_url: bannerImageUrl } : {}),
@@ -100,20 +97,105 @@ class VendorAuthService {
     return { vendor: serializeVendorAccount(vendor), next: 'login' };
   }
 
-  /**
-   * Primary login: business/vendor name + phone number.
-   * Email + password is still accepted for accounts created before.
-   */
-  async login({ name, phone, email, password }) {
-    if (name && phone) return this.#loginByNamePhone(name, phone);
-    if (email && password) return this.#loginWithPassword(email, password);
-    throw ApiError.badRequest(
-      'Provide business name and phone number, or email and password.',
-      {
-        name: 'required with phone',
-        phone: 'required with name',
-      }
+  async sendLoginOtp({ phone }) {
+    const normalizedPhone = normalizePhone(phone);
+    const vendor = await vendorRepository.findByPhone(normalizedPhone);
+    if (!vendor) {
+      throw ApiError.notFound(
+        'No vendor account is registered with this phone number.',
+        'VENDOR_NOT_FOUND'
+      );
+    }
+    this.#assertCanLogin(vendor);
+
+    const now = Date.now();
+    const lastSentAt = await otpRepository.lastSentAt(normalizedPhone);
+    if (lastSentAt && now - new Date(lastSentAt).getTime() < config.auth.otpResendCooldownSeconds * 1000) {
+      throw ApiError.tooMany(
+        'A code was just sent. Please wait before requesting another.',
+        'OTP_RESEND_TOO_SOON',
+        { retry_after_seconds: config.auth.otpResendCooldownSeconds }
+      );
+    }
+
+    const recentCount = await otpRepository.countRecent(
+      normalizedPhone,
+      new Date(now - config.auth.otpRateWindowMinutes * 60 * 1000)
     );
+    if (recentCount >= config.auth.otpRateMaxSends) {
+      throw ApiError.tooMany(
+        'Too many code requests. Please try again later.',
+        'OTP_RATE_LIMITED',
+        { retry_after_minutes: config.auth.otpRateWindowMinutes }
+      );
+    }
+
+    const code = String(crypto.randomInt(100000, 1000000));
+    await otpRepository.create({
+      phoneNumber: normalizedPhone,
+      purpose: 'vendor',
+      code,
+      expiresAt: new Date(now + config.auth.otpTtlMinutes * 60 * 1000),
+    });
+
+    const isDev = config.env !== 'production';
+    if (isDev) console.log(`[vendor otp] ${normalizedPhone} -> ${code}`);
+
+    return {
+      phone_number: normalizedPhone,
+      expires_in_seconds: config.auth.otpTtlMinutes * 60,
+      ...(isDev ? { dev_otp: code } : {}),
+    };
+  }
+
+  async verifyLoginOtp({ phone, code }) {
+    const normalizedPhone = normalizePhone(phone);
+    const rawCode = typeof code === 'string' ? code.trim() : String(code ?? '');
+    if (!/^\d{6}$/.test(rawCode)) {
+      throw ApiError.badRequest('code must be a 6-digit number.', {
+        code: 'expected 6 digits',
+      });
+    }
+
+    const otp = await otpRepository.findLatestActive(normalizedPhone, 'vendor');
+    if (!otp) {
+      const latest = await otpRepository.findLatestAny(normalizedPhone, 'vendor');
+      throw ApiError.badRequest(
+        latest && latest.expires_at < new Date()
+          ? 'Code expired. Request a new one.'
+          : 'No active code for this phone number. Request a new one.',
+        latest && latest.expires_at < new Date() ? 'OTP_EXPIRED' : 'OTP_NOT_FOUND'
+      );
+    }
+
+    if (otp.attempts >= config.auth.otpMaxAttempts) {
+      await otpRepository.consume(otp._id);
+      throw ApiError.tooMany(
+        'Too many incorrect attempts. Request a new code.',
+        'OTP_TOO_MANY_ATTEMPTS'
+      );
+    }
+
+    if (otp.code !== rawCode) {
+      await otpRepository.incrementAttempts(otp._id);
+      const remaining = config.auth.otpMaxAttempts - (otp.attempts + 1);
+      throw ApiError.badRequest('Incorrect code.', 'OTP_INVALID', {
+        code: 'incorrect code',
+        attempts_remaining: Math.max(remaining, 0),
+      });
+    }
+
+    await otpRepository.consume(otp._id);
+    const vendor = await vendorRepository.findByPhone(normalizedPhone);
+    if (!vendor) {
+      throw ApiError.notFound(
+        'This vendor account is no longer available.',
+        'VENDOR_NOT_FOUND'
+      );
+    }
+    this.#assertCanLogin(vendor);
+    await vendorRepository.touchLogin(vendor._id);
+    return this.#issueSession(vendor);
   }
 
   me(vendor) {
@@ -138,45 +220,6 @@ class VendorAuthService {
     const password_hash = await hashPassword(newPassword);
     await vendorRepository.update(vendor._id, { password_hash });
     return { updated: true };
-  }
-
-  async #loginByNamePhone(name, phone) {
-    const vendorName = parseRequiredText(name, {
-      field: 'name',
-      min: 2,
-      max: 120,
-    });
-    const normalizedPhone = normalizePhone(phone);
-
-    const vendor = await vendorRepository.findByPhone(normalizedPhone);
-    if (!vendor || vendor.name.toLowerCase() !== vendorName.toLowerCase()) {
-      throw ApiError.unauthorized(
-        'Invalid business name or phone number.',
-        'INVALID_CREDENTIALS'
-      );
-    }
-
-    this.#assertCanLogin(vendor);
-    await vendorRepository.touchLogin(vendor._id);
-    return this.#issueSession(vendor);
-  }
-
-  async #loginWithPassword(email, password) {
-    const normalizedEmail = parseEmail(email);
-    const rawPassword = parsePassword(password);
-
-    const vendor = await vendorRepository.findByEmailWithPassword(normalizedEmail);
-    const hash = vendor?.password_hash;
-
-    // Compare against a dummy hash when the account is missing to keep timing flat.
-    const ok = await comparePassword(rawPassword, hash || DUMMY_HASH);
-    if (!vendor || !hash || !ok) {
-      throw ApiError.unauthorized('Invalid email or password.', 'INVALID_CREDENTIALS');
-    }
-
-    this.#assertCanLogin(vendor);
-    await vendorRepository.touchLogin(vendor._id);
-    return this.#issueSession(vendor);
   }
 
   #assertCanLogin(vendor) {

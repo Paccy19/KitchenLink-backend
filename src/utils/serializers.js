@@ -104,6 +104,7 @@ function serializeVendorAccount(vendor) {
     rating: vendor.rating,
     estimated_prep_time: vendor.estimated_prep_time,
     is_active: Boolean(vendor.is_active),
+    is_open: vendor.is_open === undefined ? true : Boolean(vendor.is_open),
     delivery_available: Boolean(vendor.delivery_available),
     banner_image_url: vendor.banner_image_url || null,
     food_category_ids: (vendor.food_category_ids || []).map(String),
@@ -123,6 +124,7 @@ function serializeVendorAccount(vendor) {
     })),
     available_balance_rwf: vendor.available_balance ?? 0,
     total_sales_rwf: vendor.total_sales ?? 0,
+    commission_percent: config.vendor.commissionPercent,
     location: {
       neighborhood: vendor.neighborhood || null,
       address: vendor.address || null,
@@ -156,6 +158,9 @@ function serializeVendorMenuItem(item, options = []) {
     price_rwf: item.price_rwf,
     preparation_time_minutes: item.preparation_time_minutes ?? 0,
     is_available: Boolean(item.is_available),
+    is_preorder: Boolean(item.is_preorder),
+    preorder_cutoff: item.preorder_cutoff || '',
+    is_popular: Boolean(item.is_popular),
     image_url: item.image_url || null,
     category: categoryPopulated
       ? { id: String(category._id), name: category.name }
@@ -234,7 +239,19 @@ function serializeVendorDashboard({
   todaySalesRwf,
   totalSalesRwf,
   availableBalanceRwf,
+  newOrders = 0,
+  preparingOrders = 0,
+  readyOrders = 0,
+  completedOrdersTotal = 0,
+  cancelledOrders = 0,
+  activeSalesRwf = 0,
+  commissionPercent = 0,
+  withdrawnRwf = 0,
 }) {
+  const commissionRate = commissionPercent / 100;
+  const netEarnedRwf = Math.round(totalSalesRwf * (1 - commissionRate));
+  const pendingBalanceRwf = Math.round(activeSalesRwf * (1 - commissionRate));
+
   return {
     today_orders: todayOrders,
     pending_orders: pendingOrders,
@@ -242,6 +259,28 @@ function serializeVendorDashboard({
     today_sales_rwf: todaySalesRwf,
     total_sales_rwf: totalSalesRwf,
     available_balance_rwf: availableBalanceRwf,
+    new_orders: newOrders,
+    preparing_orders: preparingOrders,
+    ready_orders: readyOrders,
+    completed_orders_total: completedOrdersTotal,
+    cancelled_orders: cancelledOrders,
+    pending_balance_rwf: pendingBalanceRwf,
+    commission_percent: commissionPercent,
+    net_earned_rwf: netEarnedRwf,
+    withdrawn_rwf: withdrawnRwf,
+  };
+}
+
+function serializeWithdrawal(withdrawal) {
+  return {
+    id: String(withdrawal._id),
+    amount_rwf: withdrawal.amount_rwf,
+    method: withdrawal.method,
+    method_label: withdrawal.method_label || withdrawal.method,
+    status: withdrawal.status,
+    reference: withdrawal.reference || null,
+    processed_at: withdrawal.processed_at ?? null,
+    created_at: withdrawal.created_at,
   };
 }
 
@@ -258,4 +297,5 @@ module.exports = {
   serializeVendorMenuItem,
   serializeVendorOrder,
   serializeVendorDashboard,
+  serializeWithdrawal,
 };

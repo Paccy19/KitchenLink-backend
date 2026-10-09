@@ -108,6 +108,19 @@ class VendorRepository {
     ).lean();
   }
 
+  /** Atomically reserves funds; returns null when the balance is insufficient. */
+  async decrementBalance(vendorId, amountRwf) {
+    return Vendor.findOneAndUpdate(
+      {
+        _id: vendorId,
+        deleted_at: null,
+        available_balance: { $gte: amountRwf },
+      },
+      { $inc: { available_balance: -amountRwf } },
+      { new: true }
+    ).lean();
+  }
+
   async softDelete(vendorId) {
     return Vendor.findOneAndUpdate(
       { _id: vendorId, deleted_at: null },

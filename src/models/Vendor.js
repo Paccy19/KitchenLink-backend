@@ -60,6 +60,8 @@ const vendorSchema = new mongoose.Schema(
     rating: { type: Number, min: 0, max: 5, default: 0 },
     estimated_prep_time: { type: Number, min: 0, default: 30 },
     is_active: { type: Boolean, default: true },
+    // Store open/closed toggle shown in the Vendor Dashboard.
+    is_open: { type: Boolean, default: true },
     is_featured: { type: Boolean, default: false },
     banner_image_url: { type: String, default: '' },
     delivery_available: { type: Boolean, default: false },
