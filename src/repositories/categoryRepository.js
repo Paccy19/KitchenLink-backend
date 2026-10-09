@@ -1,5 +1,8 @@
 const { Category } = require('../models');
 
+const escapeRegex = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 class CategoryRepository {
   async findAll(limit = 100) {
     return Category.find()
@@ -10,6 +13,12 @@ class CategoryRepository {
 
   async findById(categoryId) {
     return Category.findById(categoryId).lean();
+  }
+
+  async findByName(name) {
+    return Category.findOne({
+      name: new RegExp(`^${escapeRegex(name)}$`, 'i'),
+    }).lean();
   }
 }
 

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const timestamps = require('./timestamps');
 
 const customerSchema = new mongoose.Schema(
   {
@@ -7,7 +8,7 @@ const customerSchema = new mongoose.Schema(
     is_verified: { type: Boolean, default: true },
     last_login_at: { type: Date },
   },
-  { timestamps: true }
+  { timestamps }
 );
 
 customerSchema.index({ phone_number: 1 }, { unique: true });

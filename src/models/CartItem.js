@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const timestamps = require('./timestamps');
 
 const cartItemSchema = new mongoose.Schema(
   {
@@ -19,7 +20,7 @@ const cartItemSchema = new mongoose.Schema(
     },
     quantity: { type: Number, required: true, min: 1, default: 1 },
   },
-  { timestamps: true }
+  { timestamps }
 );
 
 cartItemSchema.index({ customer_id: 1, menu_item_id: 1 }, { unique: true });

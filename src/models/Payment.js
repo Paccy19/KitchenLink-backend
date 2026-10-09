@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const timestamps = require('./timestamps');
 const config = require('../config');
 
 const paymentSchema = new mongoose.Schema(
@@ -30,7 +31,7 @@ const paymentSchema = new mongoose.Schema(
     failure_reason: { type: String, default: '' },
     paid_at: { type: Date },
   },
-  { timestamps: true }
+  { timestamps }
 );
 
 paymentSchema.index({ order_id: 1, created_at: -1 });

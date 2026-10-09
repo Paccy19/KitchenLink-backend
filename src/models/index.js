@@ -1,6 +1,7 @@
 const Vendor = require('./Vendor');
 const Category = require('./Category');
 const MenuItem = require('./MenuItem');
+const MenuItemOption = require('./MenuItemOption');
 const Customer = require('./Customer');
 const OtpCode = require('./OtpCode');
 const WishlistItem = require('./WishlistItem');
@@ -12,6 +13,7 @@ module.exports = {
   Vendor,
   Category,
   MenuItem,
+  MenuItemOption,
   Customer,
   OtpCode,
   WishlistItem,

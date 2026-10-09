@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const timestamps = require('./timestamps');
 const config = require('../config');
 
 const orderSchema = new mongoose.Schema(
@@ -26,6 +27,14 @@ const orderSchema = new mongoose.Schema(
         quantity: { type: Number, required: true, min: 1 },
         subtotal_rwf: { type: Number, required: true },
         image_url: { type: String, default: '' },
+        options: [
+          {
+            option_id: { type: mongoose.Schema.Types.ObjectId, ref: 'MenuItemOption' },
+            group_name: { type: String, default: 'Options' },
+            name: { type: String, required: true },
+            additional_price_rwf: { type: Number, min: 0, default: 0 },
+          },
+        ],
       },
     ],
     subtotal_rwf: { type: Number, required: true },
@@ -66,14 +75,16 @@ const orderSchema = new mongoose.Schema(
     },
     eta_minutes: { type: Number },
     estimated_delivery_at: { type: Date },
+    completed_at: { type: Date },
     cancelled_at: { type: Date },
     cancel_reason: { type: String, default: '' },
   },
-  { timestamps: true }
+  { timestamps }
 );
 
 orderSchema.index({ customer_id: 1, created_at: -1 });
 orderSchema.index({ vendor_id: 1, status: 1 });
+orderSchema.index({ vendor_id: 1, completed_at: -1 });
 orderSchema.index({ status: 1, created_at: -1 });
 
 module.exports = mongoose.model('Order', orderSchema);

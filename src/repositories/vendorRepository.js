@@ -18,7 +18,7 @@ class VendorRepository {
     limit,
     offset = 0,
   }) {
-    const baseQuery = { is_active: true };
+    const baseQuery = { is_active: true, deleted_at: null };
     if (categoryVendorIds) baseQuery._id = { $in: categoryVendorIds };
 
     let pipeline;
@@ -62,15 +62,62 @@ class VendorRepository {
   }
 
   async findById(vendorId) {
-    return Vendor.findById(vendorId).lean();
+    return Vendor.findOne({ _id: vendorId, deleted_at: null }).lean();
   }
 
   async findActiveById(vendorId) {
-    return Vendor.findOne({ _id: vendorId, is_active: true }).lean();
+    return Vendor.findOne({ _id: vendorId, is_active: true, deleted_at: null }).lean();
+  }
+
+  /** Used only by the vendor login flow; includes the password hash. */
+  async findByEmailWithPassword(email) {
+    return Vendor.findOne({ email, deleted_at: null })
+      .select('+password_hash')
+      .lean();
+  }
+
+  async findByPhone(phone) {
+    return Vendor.findOne({ phone, deleted_at: null }).lean();
+  }
+
+  async create(doc) {
+    const vendor = await Vendor.create(doc);
+    return vendor.toObject();
+  }
+
+  async update(vendorId, update) {
+    return Vendor.findOneAndUpdate(
+      { _id: vendorId, deleted_at: null },
+      { $set: update },
+      { new: true }
+    ).lean();
+  }
+
+  async touchLogin(vendorId) {
+    await Vendor.updateOne(
+      { _id: vendorId },
+      { $set: { last_login_at: new Date() } }
+    );
+  }
+
+  async incrementSales(vendorId, { totalRwf = 0, balanceRwf = 0 }) {
+    return Vendor.findOneAndUpdate(
+      { _id: vendorId, deleted_at: null },
+      { $inc: { total_sales: totalRwf, available_balance: balanceRwf } },
+      { new: true }
+    ).lean();
+  }
+
+  async softDelete(vendorId) {
+    return Vendor.findOneAndUpdate(
+      { _id: vendorId, deleted_at: null },
+      { $set: { deleted_at: new Date(), is_active: false } },
+      { new: true }
+    ).lean();
   }
 
   async findTopRated(limit) {
-    return Vendor.find({ is_active: true })
+    return Vendor.find({ is_active: true, deleted_at: null })
       .sort({ rating: -1, estimated_prep_time: 1, name: 1 })
       .limit(limit)
       .lean();
@@ -89,6 +136,7 @@ class VendorRepository {
 
     return Vendor.find({
       is_active: true,
+      deleted_at: null,
       $or: orClauses,
     })
       .sort({ rating: -1 })

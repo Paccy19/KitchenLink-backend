@@ -5,9 +5,21 @@ const numberFromEnv = (value, fallback) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const numberFromEnvOrZero = (value, fallback = 0) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
+
+const port = Number(process.env.PORT) || 4000;
+
 const config = {
   env: process.env.NODE_ENV || 'development',
-  port: Number(process.env.PORT) || 4000,
+  port,
+  publicBaseUrl: (process.env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(
+    /\/+$/,
+    ''
+  ),
   mongoUri:
     process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/online_food_kitchen',
   geo: {
@@ -76,6 +88,88 @@ const config = {
         label: 'Cash on Delivery',
         description: 'Pay the rider when your order arrives',
       },
+    ],
+  },
+  vendor: {
+    // Role claim embedded in vendor JWT access tokens.
+    jwtRole: 'vendor',
+    // Platform commission retained from each completed order payout (percent).
+    commissionPercent: numberFromEnvOrZero(process.env.PLATFORM_COMMISSION_PERCENT, 0),
+    // Rwanda (CAT / UTC+2, no DST) is used for "today" dashboard calculations.
+    timezoneOffsetHours: Number(process.env.TZ_OFFSET_HOURS) || 2,
+    uploads: {
+      dir: process.env.UPLOAD_DIR || 'uploads',
+      publicPath: '/uploads',
+      maxFileSizeBytes: numberFromEnv(process.env.UPLOAD_MAX_MB, 5) * 1024 * 1024,
+      maxDocumentSizeBytes:
+        numberFromEnv(process.env.UPLOAD_DOC_MAX_MB, 10) * 1024 * 1024,
+      allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+      documentMimeTypes: [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'application/pdf',
+      ],
+      maxDocuments: 10,
+    },
+    limits: {
+      menuDefault: 20,
+      menuMax: 100,
+      optionsMax: 30,
+      ordersDefault: 10,
+      ordersMax: 50,
+    },
+    // Vendor-facing order lifecycle (Rwanda food-delivery vocabulary).
+    orderStatuses: [
+      'new',
+      'accepted',
+      'preparing',
+      'ready',
+      'completed',
+      'cancelled',
+    ],
+    orderStatusLabels: {
+      new: 'New order',
+      accepted: 'Accepted',
+      preparing: 'Preparing',
+      ready: 'Ready',
+      completed: 'Completed',
+      cancelled: 'Cancelled',
+    },
+    // Allowed vendor-initiated transitions. Terminal states have no exits.
+    orderTransitions: {
+      new: ['accepted', 'cancelled'],
+      accepted: ['preparing', 'cancelled'],
+      preparing: ['ready', 'cancelled'],
+      ready: ['completed', 'cancelled'],
+      completed: [],
+      cancelled: [],
+    },
+    // Translation layer over the shared Order.status field.
+    vendorToInternalStatus: {
+      new: 'placed',
+      accepted: 'confirmed',
+      preparing: 'preparing',
+      ready: 'ready',
+      completed: 'delivered',
+      cancelled: 'cancelled',
+    },
+    internalToVendorStatus: {
+      placed: 'new',
+      confirmed: 'accepted',
+      preparing: 'preparing',
+      ready: 'ready',
+      out_for_delivery: 'ready',
+      delivered: 'completed',
+      cancelled: 'cancelled',
+    },
+    // Internal statuses considered "pending" (not yet completed/cancelled).
+    pendingInternalStatuses: [
+      'placed',
+      'confirmed',
+      'preparing',
+      'ready',
+      'out_for_delivery',
     ],
   },
 };

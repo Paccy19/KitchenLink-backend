@@ -16,6 +16,16 @@ const normalizeError = (err) => {
     return ApiError.badRequest('Validation failed.', details);
   }
 
+  if (err?.name === 'MulterError') {
+    const message =
+      err.code === 'LIMIT_FILE_SIZE'
+        ? 'Image is too large.'
+        : 'Image upload failed.';
+    return new ApiError(400, err.code || 'UPLOAD_ERROR', message, {
+      image: err.message,
+    });
+  }
+
   if (err?.code === 11000) {
     return new ApiError(409, 'DUPLICATE_ENTRY', 'Duplicate value for a unique field.', {
       ...err.keyValue,

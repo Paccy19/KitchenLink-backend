@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const timestamps = require('./timestamps');
 
 const otpCodeSchema = new mongoose.Schema(
   {
@@ -9,7 +10,7 @@ const otpCodeSchema = new mongoose.Schema(
     expires_at: { type: Date, required: true },
     consumed_at: { type: Date },
   },
-  { timestamps: true }
+  { timestamps }
 );
 
 otpCodeSchema.index({ expires_at: 1 }, { expireAfterSeconds: 0 });

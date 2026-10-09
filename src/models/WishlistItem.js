@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const timestamps = require('./timestamps');
 
 const wishlistItemSchema = new mongoose.Schema(
   {
@@ -13,7 +14,7 @@ const wishlistItemSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { timestamps: true }
+  { timestamps }
 );
 
 wishlistItemSchema.index({ customer_id: 1, menu_item_id: 1 }, { unique: true });
