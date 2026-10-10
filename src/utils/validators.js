@@ -73,6 +73,59 @@ function parsePaymentMethod(raw) {
   return raw;
 }
 
+// MTN (078, 079) and Airtel (073) are the supported Mobile Money networks.
+const MOBILE_MONEY_PHONE_REGEX = /^0(78|79|73)\d{7}$/;
+const MOBILE_PHONE_REGEX = /^0(72|73|78|79)\d{7}$/;
+const CARD_NUMBER_REGEX = /^\d{13,19}$/;
+const CARD_EXPIRY_REGEX = /^(0[1-9]|1[0-2])\/\d{2}$/;
+
+function normalizeRwandanPhone(raw) {
+  let digits = String(raw ?? '').replace(/[^\d]/g, '');
+  if (digits.startsWith('250')) digits = digits.slice(3);
+  if (!digits.startsWith('0')) digits = `0${digits}`;
+  return digits;
+}
+
+/**
+ * Validates the payer details captured at checkout. Phone-based methods accept
+ * a Rwandan mobile number; cards require a number and MM/YY expiry. The CVV is
+ * validated by the client and intentionally never persisted.
+ */
+function parsePaymentDetails(method, raw) {
+  const details = raw && typeof raw === 'object' ? raw : {};
+
+  if (method === 'card') {
+    const cardNumber = String(details.card_number ?? '').replace(/[\s-]/g, '');
+    if (!CARD_NUMBER_REGEX.test(cardNumber)) {
+      throw ApiError.badRequest('payment_details.card_number is invalid.', {
+        card_number: 'expected 13-19 digits',
+      });
+    }
+    const cardExpiry = String(details.card_expiry ?? '').trim();
+    if (!CARD_EXPIRY_REGEX.test(cardExpiry)) {
+      throw ApiError.badRequest('payment_details.card_expiry is invalid.', {
+        card_expiry: 'expected MM/YY',
+      });
+    }
+    return { phone: '', card_number: cardNumber, card_expiry: cardExpiry };
+  }
+
+  const phone = normalizeRwandanPhone(details.phone);
+  const valid =
+    method === 'mobile_money'
+      ? MOBILE_MONEY_PHONE_REGEX.test(phone)
+      : MOBILE_PHONE_REGEX.test(phone);
+  if (!valid) {
+    throw ApiError.badRequest('payment_details.phone is invalid.', {
+      phone:
+        method === 'mobile_money'
+          ? 'expected an MTN or Airtel number (+25078, +25079 or +25073)'
+          : 'expected a valid Rwandan mobile number, e.g. 0788123456',
+    });
+  }
+  return { phone, card_number: '', card_expiry: '' };
+}
+
 function parseDeliveryLocation(raw) {
   if (!raw || typeof raw !== 'object') {
     throw ApiError.badRequest('delivery_location is required.', {
@@ -111,5 +164,6 @@ module.exports = {
   parseName,
   parseQuantity,
   parsePaymentMethod,
+  parsePaymentDetails,
   parseDeliveryLocation,
 };

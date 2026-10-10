@@ -1,11 +1,26 @@
 const asyncHandler = require('../utils/asyncHandler');
 const deliveryService = require('../services/deliveryService');
 const driverProfileService = require('../services/driverProfileService');
+const notificationService = require('../services/notificationService');
 
 const updateProfile = asyncHandler(async (req, res) => {
   res.json(
     await driverProfileService.update(req.driver, req.body, req.file)
   );
+});
+
+const listNotifications = asyncHandler(async (req, res) => {
+  res.json(await notificationService.listForDriver(req.driver._id, req.query));
+});
+
+const markNotificationRead = asyncHandler(async (req, res) => {
+  res.json(
+    await notificationService.markDriverRead(req.driver._id, req.params.notification_id)
+  );
+});
+
+const markAllNotificationsRead = asyncHandler(async (req, res) => {
+  res.json(await notificationService.markAllDriverRead(req.driver._id));
 });
 
 const available = asyncHandler(async (req, res) => {
@@ -58,6 +73,9 @@ const stats = asyncHandler(async (req, res) => {
 
 module.exports = {
   updateProfile,
+  listNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
   available,
   accept,
   reject,

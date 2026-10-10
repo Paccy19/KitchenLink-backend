@@ -209,11 +209,10 @@ curl -X PATCH http://localhost:4000/api/v1/vendor/orders/$ORDER_ID/status \
 Any other transition returns `409 INVALID_STATUS_TRANSITION`. Each response
 includes `allowed_next_statuses` so the UI can render only valid actions.
 
-When an order moves to `completed`, the backend sets `completed_at`, settles
-cash-on-delivery payments, increments each item's `orders_count`, and credits
-the vendor's `total_sales` (and `available_balance`, net of
-`PLATFORM_COMMISSION_PERCENT`). Completion is idempotent because `completed`
-is a terminal state.
+When an order moves to `completed`, the backend sets `completed_at`, increments
+each item's `orders_count`, and credits the vendor's `total_sales` (and
+`available_balance`, net of `PLATFORM_COMMISSION_PERCENT`). Completion is
+idempotent because `completed` is a terminal state.
 
 > The vendor lifecycle is a translation layer over the shared customer order
 > statuses (`new→placed`, `accepted→confirmed`, `completed→delivered`), so a

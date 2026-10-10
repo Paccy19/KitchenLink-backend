@@ -10,6 +10,10 @@ router.use(requireDriverAuth);
 
 router.patch('/profile', upload.single('profile_image'), driverController.updateProfile);
 
+router.get('/notifications', driverController.listNotifications);
+router.post('/notifications/read-all', driverController.markAllNotificationsRead);
+router.post('/notifications/:notification_id/read', driverController.markNotificationRead);
+
 router.get('/deliveries/available', driverController.available);
 router.get('/deliveries/active', driverController.active);
 router.get('/deliveries/history', driverController.history);

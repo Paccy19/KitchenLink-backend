@@ -18,7 +18,6 @@ const driverRepository = require('../repositories/driverRepository');
 const orderRepository = require('../repositories/orderRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const customerRepository = require('../repositories/customerRepository');
-const paymentRepository = require('../repositories/paymentRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
 const notificationService = require('./notificationService');
 
@@ -183,6 +182,25 @@ class DeliveryService {
       lastBroadcastAt: offeredAt,
       offerExpiresAt: expiresAt,
     });
+
+    // Push an in-app (+ SMS) notification to each nearby eligible driver so
+    // they are alerted the moment the vendor marks the order ready.
+    const vendorDoc = await vendorRepository.findById(delivery.vendor_id);
+    await Promise.all(
+      eligible.map((driver) =>
+        notificationService
+          .notifyDriverOffer(driver._id, {
+            vendorName: vendorDoc?.name,
+            orderNumber: delivery.order_number,
+            pickupNeighborhood: delivery.pickup_location?.neighborhood,
+            earningsRwf: delivery.promised_earnings_rwf || 0,
+            orderId: delivery.order_id,
+            deliveryId: delivery._id,
+            expiresAt,
+          })
+          .catch(() => null)
+      )
+    );
 
     const notified = eligible.map((driver) => String(driver._id));
     if (config.env !== 'production') {
@@ -360,9 +378,10 @@ class DeliveryService {
       driver_id: driver._id,
       delivery_id: delivery._id,
       rider: { name: driver.name, phone: driver.phone },
+      status: 'assigned',
     });
     await orderRepository.pushHistory(delivery.order_id, {
-      status: 'ready',
+      status: 'assigned',
       at: now,
       note: `Driver ${driver.name} assigned`,
     });
@@ -433,6 +452,17 @@ class DeliveryService {
     });
 
     // Side-effects on the order lifecycle.
+    if (nextStatus === 'picked_up') {
+      await orderRepository.update(delivery.order_id, {
+        status: 'picked_up',
+        picked_up_at: now,
+      });
+      await orderRepository.pushHistory(delivery.order_id, {
+        status: 'picked_up',
+        at: now,
+        note: 'Picked up by rider',
+      });
+    }
     if (nextStatus === 'out_for_delivery') {
       await orderRepository.update(delivery.order_id, { status: 'out_for_delivery' });
       await orderRepository.pushHistory(delivery.order_id, {
@@ -622,10 +652,6 @@ class DeliveryService {
       ...(completed ? { completed_at: now } : {}),
     };
 
-    if (order.payment_method === 'cash_on_delivery' && order.payment_status !== 'paid') {
-      update.payment_status = 'paid';
-    }
-
     await orderRepository.update(delivery.order_id, update);
     await orderRepository.pushHistory(delivery.order_id, {
       status: completed ? 'delivered' : 'delivered',
@@ -635,7 +661,7 @@ class DeliveryService {
 
     // Full completion only happens when the OTP was verified. This mirrors what
     // the vendor's manual "mark completed" did, so the kitchen never has to come
-    // back: COD payment settles, the vendor is credited and dish counts bump.
+    // back: the vendor is credited and dish counts bump.
     if (completed) {
       await this.#applyVendorCompletion(order, delivery);
     }
@@ -649,14 +675,6 @@ class DeliveryService {
     const vendorId = order.vendor_id || delivery.vendor_id;
     if (!vendorId) return;
     try {
-      const payment = await paymentRepository.findLatestByOrder(order._id);
-      if (order.payment_method === 'cash_on_delivery' && payment && payment.status !== 'successful') {
-        await paymentRepository.update(payment._id, {
-          status: 'successful',
-          paid_at: new Date(),
-        });
-      }
-
       const commission = config.vendor.commissionPercent / 100;
       const balanceRwf = Math.round(order.total_rwf * (1 - commission));
       await vendorRepository.incrementSales(vendorId, {

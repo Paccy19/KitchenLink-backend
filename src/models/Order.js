@@ -57,6 +57,12 @@ const orderSchema = new mongoose.Schema(
       enum: ['pending', 'paid', 'failed', 'refunded'],
       default: 'pending',
     },
+    // Payer details captured at checkout: phone for mobile wallets, card for cards.
+    payment_details: {
+      phone: { type: String, default: '' },
+      card_number: { type: String, default: '' },
+      card_expiry: { type: String, default: '' },
+    },
     status: {
       type: String,
       enum: config.orders.statuses,

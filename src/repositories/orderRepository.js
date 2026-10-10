@@ -68,7 +68,7 @@ class OrderRepository {
       Order.countDocuments({ vendor_id: vendorObjectId, status: 'preparing' }),
       Order.countDocuments({
         vendor_id: vendorObjectId,
-        status: { $in: ['ready', 'out_for_delivery'] },
+        status: { $in: ['ready', 'assigned', 'picked_up', 'out_for_delivery'] },
       }),
       Order.countDocuments({ vendor_id: vendorObjectId, status: 'delivered' }),
       Order.countDocuments({ vendor_id: vendorObjectId, status: 'cancelled' }),

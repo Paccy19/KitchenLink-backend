@@ -13,6 +13,7 @@ function serializeCategory(category) {
 
 /** Compact vendor card used in feed / nearby / search lists. */
 function serializeVendorCard(vendor, { distanceKm } = {}) {
+  const [lng, lat] = vendor.location?.coordinates ?? [null, null];
   return {
     id: String(vendor._id),
     name: vendor.name,
@@ -23,6 +24,10 @@ function serializeVendorCard(vendor, { distanceKm } = {}) {
     banner_image_url: vendor.banner_image_url || null,
     avatar_url: vendor.profile_image_url || null,
     delivery_available: Boolean(vendor.delivery_available),
+    location: {
+      latitude: typeof lat === 'number' ? lat : null,
+      longitude: typeof lng === 'number' ? lng : null,
+    },
   };
 }
 

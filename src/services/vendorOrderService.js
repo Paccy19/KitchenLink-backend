@@ -12,7 +12,6 @@ const orderRepository = require('../repositories/orderRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const customerRepository = require('../repositories/customerRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
-const paymentRepository = require('../repositories/paymentRepository');
 const deliveryService = require('./deliveryService');
 
 const { vendor: vendorConfig } = config;
@@ -109,21 +108,8 @@ class VendorOrderService {
       update.cancel_reason = note;
     }
 
-    let payment = await paymentRepository.findLatestByOrder(order._id);
-
     if (nextStatus === 'completed') {
       update.completed_at = now;
-
-      // Cash-on-delivery settles when the kitchen completes the order.
-      if (order.payment_method === 'cash_on_delivery' && order.payment_status !== 'paid') {
-        update.payment_status = 'paid';
-        if (payment && payment.status !== 'successful') {
-          payment = await paymentRepository.update(payment._id, {
-            status: 'successful',
-            paid_at: now,
-          });
-        }
-      }
     }
 
     const updated = await orderRepository.update(order._id, update);

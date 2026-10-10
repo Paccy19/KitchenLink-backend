@@ -5,6 +5,7 @@ const ApiError = require('../utils/ApiError');
 const {
   parseDeliveryLocation,
   parsePaymentMethod,
+  parsePaymentDetails,
 } = require('../utils/validators');
 const orderRepository = require('../repositories/orderRepository');
 const paymentRepository = require('../repositories/paymentRepository');
@@ -18,9 +19,10 @@ const notificationService = require('./notificationService');
 const { orders } = config;
 
 const PROVIDERS = {
-  momo: 'momo_mock',
+  mobile_money: 'momo_mock',
   card: 'card_mock',
-  cash_on_delivery: 'cod',
+  ekash: 'ekash_mock',
+  wallet: 'wallet',
 };
 
 const methodLabel = (code) =>
@@ -82,6 +84,16 @@ const serializePayment = (payment, orderMethod) => {
   };
 };
 
+const serializePaymentDetails = (order) => {
+  const details = order.payment_details || {};
+  const cardNumber = details.card_number || '';
+  return {
+    phone: details.phone || '',
+    card_last4: cardNumber ? cardNumber.slice(-4) : '',
+    card_expiry: details.card_expiry || '',
+  };
+};
+
 const serializeDetail = (order, vendor, payment, delivery) => ({
   id: String(order._id),
   order_number: order.order_number,
@@ -90,6 +102,7 @@ const serializeDetail = (order, vendor, payment, delivery) => ({
   payment_method: order.payment_method,
   payment_method_label: methodLabel(order.payment_method),
   payment_status: order.payment_status,
+  payment_details: serializePaymentDetails(order),
   created_at: order.created_at,
   updated_at: order.updated_at,
   vendor: vendor
@@ -220,19 +233,6 @@ class OrderService {
   async #initiatePayment(order, method, simulate) {
     const provider = PROVIDERS[method];
 
-    if (method === 'cash_on_delivery') {
-      const payment = await paymentRepository.create({
-        order_id: order._id,
-        customer_id: order.customer_id,
-        amount_rwf: order.total_rwf,
-        method,
-        provider,
-        status: 'pending',
-        reference: generateReference(provider),
-      });
-      return { paymentStatus: 'pending', payment };
-    }
-
     let payment = await paymentRepository.create({
       order_id: order._id,
       customer_id: order.customer_id,
@@ -261,6 +261,7 @@ class OrderService {
   async checkout(customerId, body) {
     const deliveryLocation = parseDeliveryLocation(body?.delivery_location);
     const paymentMethod = parsePaymentMethod(body?.payment_method);
+    const paymentDetails = parsePaymentDetails(paymentMethod, body?.payment_details);
     const simulate = body?.payment_simulate;
 
     const entries = (await cartRepository.list(customerId)).filter(
@@ -318,6 +319,7 @@ class OrderService {
       total_rwf: total,
       delivery_location: deliveryLocation,
       payment_method: paymentMethod,
+      payment_details: paymentDetails,
       payment_status: 'pending',
       status: 'placed',
       status_history: [{ status: 'placed', at: now, note: 'Order placed' }],
@@ -554,17 +556,7 @@ class OrderService {
     }
     if (rider?.name) update.rider = rider;
 
-    let payment = await paymentRepository.findLatestByOrder(order._id);
-
-    if (nextStatus === 'delivered' && order.payment_method === 'cash_on_delivery') {
-      update.payment_status = 'paid';
-      if (payment && payment.status !== 'successful') {
-        payment = await paymentRepository.update(payment._id, {
-          status: 'successful',
-          paid_at: now,
-        });
-      }
-    }
+    const payment = await paymentRepository.findLatestByOrder(order._id);
 
     const updated = await orderRepository.update(order._id, update);
     await orderRepository.pushHistory(order._id, {
