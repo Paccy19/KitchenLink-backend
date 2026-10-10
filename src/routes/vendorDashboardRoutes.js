@@ -10,7 +10,10 @@ router.get('/dashboard', requireVendorAuth, vendorDashboardController.overview);
 router.patch(
   '/profile',
   requireVendorAuth,
-  upload.single('banner_image'),
+  upload.fields([
+    { name: 'banner_image', maxCount: 1 },
+    { name: 'profile_image', maxCount: 1 },
+  ]),
   vendorProfileController.update
 );
 

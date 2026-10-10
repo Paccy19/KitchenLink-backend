@@ -11,6 +11,9 @@ const paymentRepository = require('../repositories/paymentRepository');
 const cartRepository = require('../repositories/cartRepository');
 const cartService = require('./cartService');
 const vendorRepository = require('../repositories/vendorRepository');
+const deliveryRepository = require('../repositories/deliveryRepository');
+const notificationRepository = require('../repositories/notificationRepository');
+const notificationService = require('./notificationService');
 
 const { orders } = config;
 
@@ -41,6 +44,28 @@ const generateOrderNumber = () => {
 const generateReference = (provider) =>
   `${provider.toUpperCase()}-${Date.now()}-${crypto.randomInt(100000, 999999)}`;
 
+const CLOSED_DELIVERY_STATUSES = ['completed', 'cancelled', 'rejected'];
+
+/**
+ * Customer-facing view of the delivery leg. The proof-of-delivery code is only
+ * revealed while the delivery is in-flight (and not yet verified) — once it is
+ * completed/closed the code is withheld.
+ */
+const serializeOrderDelivery = (delivery) => {
+  if (!delivery) return null;
+  const closed =
+    CLOSED_DELIVERY_STATUSES.includes(delivery.status) || Boolean(delivery.otp_verified_at);
+  return {
+    id: String(delivery._id),
+    status: delivery.status,
+    status_label: config.delivery.statusLabels[delivery.status] || delivery.status,
+    otp_required: Boolean(delivery.otp_code),
+    proof_of_delivery_code: closed ? null : delivery.otp_code || null,
+    otp_verified: Boolean(delivery.otp_verified_at),
+    can_confirm: !closed && Boolean(delivery.otp_code),
+  };
+};
+
 const serializePayment = (payment, orderMethod) => {
   if (!payment) return null;
   return {
@@ -57,7 +82,7 @@ const serializePayment = (payment, orderMethod) => {
   };
 };
 
-const serializeDetail = (order, vendor, payment) => ({
+const serializeDetail = (order, vendor, payment, delivery) => ({
   id: String(order._id),
   order_number: order.order_number,
   status: order.status,
@@ -89,6 +114,7 @@ const serializeDetail = (order, vendor, payment) => ({
   total_rwf: order.total_rwf,
   delivery_location: { ...order.delivery_location },
   payment: serializePayment(payment),
+  delivery: serializeOrderDelivery(delivery),
   rider: order.rider?.name ? { name: order.rider.name, phone: order.rider.phone } : null,
   status_history: order.status_history.map((entry) => ({
     status: entry.status,
@@ -101,7 +127,7 @@ const serializeDetail = (order, vendor, payment) => ({
   cancel_reason: order.cancel_reason || null,
 });
 
-const serializeTracking = (order, vendor, payment) => {
+const serializeTracking = (order, vendor, payment, delivery) => {
   const historyByStatus = new Map(
     (order.status_history || []).map((entry) => [entry.status, entry.at])
   );
@@ -154,6 +180,7 @@ const serializeTracking = (order, vendor, payment) => {
         }
       : null,
     delivery_location: { ...order.delivery_location },
+    delivery: serializeOrderDelivery(delivery),
     timeline,
     status_history: order.status_history.map((entry) => ({
       status: entry.status,
@@ -182,11 +209,12 @@ class OrderService {
   }
 
   async #loadWithVendor(order) {
-    const [vendor, payment] = await Promise.all([
+    const [vendor, payment, delivery] = await Promise.all([
       vendorRepository.findById(order.vendor_id),
       paymentRepository.findLatestByOrder(order._id),
+      deliveryRepository.findByOrderId(order._id),
     ]);
-    return { order, vendor, payment };
+    return { order, vendor, payment, delivery };
   }
 
   async #initiatePayment(order, method, simulate) {
@@ -339,8 +367,8 @@ class OrderService {
 
     const detailed = await Promise.all(
       list.map(async (order) => {
-        const { vendor, payment } = await this.#loadWithVendor(order);
-        return serializeDetail(order, vendor, payment);
+        const { vendor, payment, delivery } = await this.#loadWithVendor(order);
+        return serializeDetail(order, vendor, payment, delivery);
       })
     );
 
@@ -350,16 +378,44 @@ class OrderService {
     };
   }
 
+  /**
+   * Backfills a delivery-code notification for deliveries that were created
+   * before the notification channel existed (or that raced it). Guarantees the
+   * customer always has an in-app notification while the delivery is in-flight.
+   */
+  async #ensureDeliveryCodeNotification(order, delivery) {
+    if (!delivery?.otp_code || delivery.otp_verified_at) return;
+    if (CLOSED_DELIVERY_STATUSES.includes(delivery.status)) return;
+
+    const existing = await notificationRepository.findByOrderAndCustomer(
+      order.customer_id,
+      order._id
+    );
+    if (existing) return;
+
+    try {
+      await notificationService.notifyDeliveryCode(order.customer_id, {
+        orderNumber: order.order_number,
+        orderId: order._id,
+        code: delivery.otp_code,
+      });
+    } catch (error) {
+      console.log(`[order] could not backfill delivery code notification: ${error?.message}`);
+    }
+  }
+
   async getDetail(customerId, orderId) {
     const order = await this.#loadOrder(customerId, orderId);
-    const { vendor, payment } = await this.#loadWithVendor(order);
-    return serializeDetail(order, vendor, payment);
+    const { vendor, payment, delivery } = await this.#loadWithVendor(order);
+    await this.#ensureDeliveryCodeNotification(order, delivery);
+    return serializeDetail(order, vendor, payment, delivery);
   }
 
   async track(customerId, orderId) {
     const order = await this.#loadOrder(customerId, orderId);
-    const { vendor, payment } = await this.#loadWithVendor(order);
-    return serializeTracking(order, vendor, payment);
+    const { vendor, payment, delivery } = await this.#loadWithVendor(order);
+    await this.#ensureDeliveryCodeNotification(order, delivery);
+    return serializeTracking(order, vendor, payment, delivery);
   }
 
   async cancel(customerId, orderId, body) {
@@ -522,7 +578,8 @@ class OrderService {
 
     const refreshed = await orderRepository.findById(order._id);
     const vendor = await vendorRepository.findById(refreshed.vendor_id);
-    return serializeDetail(refreshed, vendor, payment);
+    const delivery = await deliveryRepository.findByOrderId(refreshed._id);
+    return serializeDetail(refreshed, vendor, payment, delivery);
   }
 }
 

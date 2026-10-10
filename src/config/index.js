@@ -49,6 +49,17 @@ const config = {
     otpRateWindowMinutes: 10,
     otpRateMaxSends: 5,
   },
+  notifications: {
+    sms: {
+      // When disabled (or missing credentials) messages are logged in dev.
+      enabled: process.env.SMS_ENABLED === 'true',
+      provider: process.env.SMS_PROVIDER || 'log',
+      apiUrl: process.env.SMS_API_URL || '',
+      apiKey: process.env.SMS_API_KEY || '',
+      apiKeyHeader: process.env.SMS_API_KEY_HEADER || '',
+      senderId: process.env.SMS_SENDER_ID || 'FoodKitchen',
+    },
+  },
   orders: {
     agentKey: process.env.AGENT_API_KEY || 'dev-agent-key',
     deliveryFeeRwf: Number(process.env.DELIVERY_FEE_RWF) || 1000,
@@ -171,6 +182,79 @@ const config = {
       'ready',
       'out_for_delivery',
     ],
+  },
+  delivery: {
+    // Role claim embedded in driver JWT access tokens.
+    jwtRole: 'driver',
+    // How long a broadcast offer stays open before it can be re-dispatched.
+    offerTimeoutSeconds: numberFromEnv(
+      process.env.DELIVERY_OFFER_TIMEOUT_SECONDS,
+      45
+    ),
+    // Driver search radius (km) around the pickup point.
+    defaultRadiusKm: numberFromEnv(process.env.DELIVERY_RADIUS_KM, 8),
+    // Max concurrent deliveries a driver can hold.
+    maxActiveDeliveries: numberFromEnv(process.env.DELIVERY_MAX_ACTIVE, 3),
+    // Multiplier applied to straight-line distance to approximate road km.
+    roadFactor: Number(process.env.DELIVERY_ROAD_FACTOR) || 1.3,
+    // Fee model (RWF): fee = max(min, base + per_km * distance).
+    baseFeeRwf: numberFromEnvOrZero(process.env.DELIVERY_BASE_FEE_RWF, 500),
+    perKmFeeRwf: numberFromEnvOrZero(process.env.DELIVERY_PER_KM_FEE_RWF, 200),
+    minFeeRwf: numberFromEnvOrZero(process.env.DELIVERY_MIN_FEE_RWF, 800),
+    // Share of the delivery fee paid to the driver (percent).
+    driverSharePercent: numberFromEnvOrZero(
+      process.env.DELIVERY_DRIVER_SHARE_PERCENT,
+      80
+    ),
+    // Delivery lifecycle statuses (guarded by `transitions`).
+    statuses: [
+      'pending',
+      'accepted',
+      'preparing',
+      'ready_for_pickup',
+      'assigned_to_driver',
+      'picked_up',
+      'out_for_delivery',
+      'delivered',
+      'completed',
+      'cancelled',
+      'rejected',
+    ],
+    statusLabels: {
+      pending: 'Pending pickup',
+      accepted: 'Accepted',
+      preparing: 'Preparing',
+      ready_for_pickup: 'Ready for pickup',
+      assigned_to_driver: 'Assigned to driver',
+      picked_up: 'Picked up',
+      out_for_delivery: 'Out for delivery',
+      delivered: 'Delivered',
+      completed: 'Completed',
+      cancelled: 'Cancelled',
+      rejected: 'Rejected',
+    },
+    // Allowed driver-initiated transitions. Terminal states have no exits.
+    transitions: {
+      pending: ['ready_for_pickup', 'accepted', 'assigned_to_driver', 'cancelled', 'rejected'],
+      accepted: ['preparing', 'ready_for_pickup', 'assigned_to_driver', 'cancelled'],
+      preparing: ['ready_for_pickup', 'assigned_to_driver', 'cancelled'],
+      ready_for_pickup: ['assigned_to_driver', 'cancelled', 'rejected'],
+      assigned_to_driver: ['picked_up', 'ready_for_pickup', 'cancelled'],
+      picked_up: ['out_for_delivery', 'cancelled'],
+      out_for_delivery: ['delivered', 'cancelled'],
+      delivered: ['completed'],
+      completed: [],
+      cancelled: [],
+      rejected: [],
+    },
+    // Statuses considered "active" for a driver.
+    activeStatuses: ['assigned_to_driver', 'picked_up', 'out_for_delivery'],
+    // Statuses shown to drivers as available offers.
+    availableStatuses: ['pending', 'ready_for_pickup'],
+    // Statuses that can still be re-broadcast after a timeout.
+    dispatchableStatuses: ['pending', 'ready_for_pickup'],
+    // Statuses that count as a finished (historical) delivery.
+    terminalStatuses: ['completed', 'cancelled', 'rejected'],
   },
 };
 

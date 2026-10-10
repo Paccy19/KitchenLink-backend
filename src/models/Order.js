@@ -73,8 +73,21 @@ const orderSchema = new mongoose.Schema(
       name: { type: String },
       phone: { type: String },
     },
+    // Delivery leg (set automatically when the order is ready for pickup).
+    driver_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Driver',
+      default: null,
+    },
+    delivery_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Delivery',
+      default: null,
+    },
     eta_minutes: { type: Number },
     estimated_delivery_at: { type: Date },
+    picked_up_at: { type: Date },
+    delivered_at: { type: Date },
     completed_at: { type: Date },
     cancelled_at: { type: Date },
     cancel_reason: { type: String, default: '' },
@@ -86,5 +99,6 @@ orderSchema.index({ customer_id: 1, created_at: -1 });
 orderSchema.index({ vendor_id: 1, status: 1 });
 orderSchema.index({ vendor_id: 1, completed_at: -1 });
 orderSchema.index({ status: 1, created_at: -1 });
+orderSchema.index({ driver_id: 1, status: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);

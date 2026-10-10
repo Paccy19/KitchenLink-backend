@@ -9,6 +9,9 @@ const CartItem = require('./CartItem');
 const Order = require('./Order');
 const Payment = require('./Payment');
 const Withdrawal = require('./Withdrawal');
+const Driver = require('./Driver');
+const Delivery = require('./Delivery');
+const Notification = require('./Notification');
 
 module.exports = {
   Vendor,
@@ -22,4 +25,7 @@ module.exports = {
   Order,
   Payment,
   Withdrawal,
+  Driver,
+  Delivery,
+  Notification,
 };

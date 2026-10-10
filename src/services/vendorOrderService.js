@@ -13,6 +13,7 @@ const vendorRepository = require('../repositories/vendorRepository');
 const customerRepository = require('../repositories/customerRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
 const paymentRepository = require('../repositories/paymentRepository');
+const deliveryService = require('./deliveryService');
 
 const { vendor: vendorConfig } = config;
 
@@ -134,6 +135,16 @@ class VendorOrderService {
 
     if (nextStatus === 'completed') {
       await this.#applyCompletionPayout(vendor, order);
+    }
+
+    // When the kitchen signals the food is ready, a delivery is created and
+    // broadcast to online drivers automatically (driver gets the notification).
+    if (nextStatus === 'ready') {
+      try {
+        await deliveryService.handleOrderReady(order);
+      } catch (error) {
+        console.error('[delivery] failed to dispatch ready order:', error.message);
+      }
     }
 
     const customer = await customerRepository.findById(order.customer_id);

@@ -12,7 +12,7 @@ const { resolveImageUrl } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
 
 class VendorProfileService {
-  async update(vendor, body = {}, file) {
+  async update(vendor, body = {}, files = {}) {
     const payload = {};
 
     if (body.name !== undefined) {
@@ -57,15 +57,22 @@ class VendorProfileService {
     }
 
     const bannerImageUrl = resolveImageUrl({
-      file,
+      file: files?.banner_image?.[0],
       image_url: body.banner_image_url,
       image_base64: body.banner_image_base64,
     });
     if (bannerImageUrl !== undefined) payload.banner_image_url = bannerImageUrl;
 
+    const profileImageUrl = resolveImageUrl({
+      file: files?.profile_image?.[0],
+      image_url: body.profile_image_url,
+      image_base64: body.profile_image_base64,
+    });
+    if (profileImageUrl !== undefined) payload.profile_image_url = profileImageUrl;
+
     if (Object.keys(payload).length === 0) {
       throw ApiError.badRequest('No supported profile fields were provided.', {
-        body: 'expected name, owner_name, description, phone, is_open, operating_hours, payment_information or banner_image',
+        body: 'expected name, owner_name, description, phone, is_open, operating_hours, payment_information, banner_image or profile_image',
       });
     }
 

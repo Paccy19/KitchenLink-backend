@@ -25,7 +25,7 @@ const buildPublicUrl = (filename) =>
 
 const writeBuffer = (buffer, ext) => {
   ensureUploadsDir();
-  const filename = `menu-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
+  const filename = `upload-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
   fs.writeFileSync(path.join(uploadsDir, filename), buffer);
   return buildPublicUrl(filename);
 };

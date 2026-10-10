@@ -4,7 +4,11 @@ const timestamps = require('./timestamps');
 const otpCodeSchema = new mongoose.Schema(
   {
     phone_number: { type: String, required: true, index: true },
-    purpose: { type: String, enum: ['customer', 'vendor'], default: 'customer' },
+    purpose: {
+      type: String,
+      enum: ['customer', 'vendor', 'driver'],
+      default: 'customer',
+    },
     code: { type: String, required: true },
     name: { type: String, trim: true },
     attempts: { type: Number, default: 0 },

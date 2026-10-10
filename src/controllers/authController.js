@@ -23,4 +23,10 @@ const me = asyncHandler(async (req, res) => {
   res.json(await authService.me(req.customer));
 });
 
-module.exports = { sendOtp, verifyOtp, me };
+const updateProfile = asyncHandler(async (req, res) => {
+  res.json(
+    await authService.updateProfile(req.customer, req.body, req.file)
+  );
+});
+
+module.exports = { sendOtp, verifyOtp, me, updateProfile };

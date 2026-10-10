@@ -5,6 +5,7 @@ const customerSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     phone_number: { type: String, required: true, unique: true },
+    profile_image_url: { type: String, default: '' },
     is_verified: { type: Boolean, default: true },
     last_login_at: { type: Date },
   },

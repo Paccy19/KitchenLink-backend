@@ -64,6 +64,7 @@ const vendorSchema = new mongoose.Schema(
     is_open: { type: Boolean, default: true },
     is_featured: { type: Boolean, default: false },
     banner_image_url: { type: String, default: '' },
+    profile_image_url: { type: String, default: '' },
     delivery_available: { type: Boolean, default: false },
     // Foods this vendor serves (references discovery categories).
     food_category_ids: [

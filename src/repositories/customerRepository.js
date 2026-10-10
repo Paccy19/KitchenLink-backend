@@ -30,6 +30,14 @@ class CustomerRepository {
       { $set: { last_login_at: new Date() } }
     );
   }
+
+  async update(customerId, update) {
+    return Customer.findOneAndUpdate(
+      { _id: customerId },
+      { $set: update },
+      { new: true }
+    ).lean();
+  }
 }
 
 module.exports = new CustomerRepository();

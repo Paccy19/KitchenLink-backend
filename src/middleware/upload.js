@@ -16,7 +16,7 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname || '').toLowerCase();
     const safeExt = /^\.[a-z0-9]{1,5}$/.test(ext) ? ext : '';
-    cb(null, `menu-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${safeExt}`);
+    cb(null, `upload-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${safeExt}`);
   },
 });
 

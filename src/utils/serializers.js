@@ -21,6 +21,7 @@ function serializeVendorCard(vendor, { distanceKm } = {}) {
     estimated_prep_time: vendor.estimated_prep_time,
     distance_km: typeof distanceKm === 'number' ? round1(distanceKm) : null,
     banner_image_url: vendor.banner_image_url || null,
+    avatar_url: vendor.profile_image_url || null,
     delivery_available: Boolean(vendor.delivery_available),
   };
 }
@@ -85,6 +86,7 @@ function serializeVendorStorefront(vendor, { menu, distanceKm } = {}) {
       longitude: lng,
     },
     banner_image_url: vendor.banner_image_url || null,
+    avatar_url: vendor.profile_image_url || null,
     distance_km: typeof distanceKm === 'number' ? round1(distanceKm) : null,
     menu,
   };
@@ -107,6 +109,7 @@ function serializeVendorAccount(vendor) {
     is_open: vendor.is_open === undefined ? true : Boolean(vendor.is_open),
     delivery_available: Boolean(vendor.delivery_available),
     banner_image_url: vendor.banner_image_url || null,
+    profile_image_url: vendor.profile_image_url || null,
     food_category_ids: (vendor.food_category_ids || []).map(String),
     food_categories: vendor.food_categories || [],
     operating_hours: (vendor.operating_hours || []).map((entry) => ({
@@ -271,6 +274,161 @@ function serializeVendorDashboard({
   };
 }
 
+/* --------------------------- delivery / drivers --------------------------- */
+
+const deliveryStatusLabel = (status) =>
+  config.delivery.statusLabels[status] || status;
+
+/** Authenticated driver profile (never exposes the password hash). */
+function serializeDriverAccount(driver) {
+  const [lng, lat] = driver.location?.coordinates ?? [null, null];
+  return {
+    id: String(driver._id),
+    name: driver.name,
+    phone: driver.phone || null,
+    email: driver.email || null,
+    vehicle_type: driver.vehicle_type || 'motorcycle',
+    plate_number: driver.plate_number || '',
+    license_number: driver.license_number || '',
+    rating: driver.rating ?? 5,
+    rating_count: driver.rating_count ?? 0,
+    is_online: Boolean(driver.is_online),
+    is_available: Boolean(driver.is_available),
+    status: driver.status || 'offline',
+    active_deliveries_count: driver.active_deliveries_count ?? 0,
+    max_active_deliveries: driver.max_active_deliveries ?? config.delivery.maxActiveDeliveries,
+    completed_deliveries: driver.completed_deliveries ?? 0,
+    total_earnings_rwf: driver.total_earnings_rwf ?? 0,
+    profile_image_url: driver.profile_image_url || null,
+    verification_status: driver.verification_status || 'approved',
+    current_location: {
+      latitude: lat,
+      longitude: lng,
+      updated_at: driver.location_updated_at ?? null,
+    },
+    created_at: driver.created_at,
+    updated_at: driver.updated_at,
+  };
+}
+
+function serializeDelivery(delivery, options = {}) {
+  const {
+    order,
+    driver: driverOverride,
+    distanceFromDriverKm,
+    revealCustomer = true,
+  } = options;
+
+  const vendor =
+    options.vendor ||
+    (delivery.vendor_id && typeof delivery.vendor_id === 'object'
+      ? delivery.vendor_id
+      : null);
+  const customer =
+    options.customer ||
+    (delivery.customer_id && typeof delivery.customer_id === 'object'
+      ? delivery.customer_id
+      : null);
+  const driver = driverOverride || (delivery.driver_id && typeof delivery.driver_id === 'object'
+    ? delivery.driver_id
+    : null);
+
+  const vendorVendor = vendor && vendor.name ? vendor : null;
+  const vendorLocation = vendorVendor?.location?.coordinates;
+  const [vLng, vLat] = Array.isArray(vendorLocation) ? vendorLocation : [null, null];
+
+  return {
+    id: String(delivery._id),
+    order_id: String(delivery.order_id),
+    order_number: delivery.order_number,
+    status: delivery.status,
+    status_label: deliveryStatusLabel(delivery.status),
+    allowed_next_statuses: config.delivery.transitions[delivery.status] || [],
+    driver_id: delivery.driver_id ? String(delivery.driver_id._id || delivery.driver_id) : null,
+    vendor: vendorVendor
+      ? {
+          id: String(vendorVendor._id),
+          name: vendorVendor.name,
+          phone: vendorVendor.phone || null,
+          avatar_url: vendorVendor.profile_image_url || null,
+          address: vendorVendor.address || delivery.pickup_location?.address || null,
+          neighborhood: vendorVendor.neighborhood || delivery.pickup_location?.neighborhood || null,
+          latitude: vLat ?? delivery.pickup_location?.latitude ?? null,
+          longitude: vLng ?? delivery.pickup_location?.longitude ?? null,
+        }
+      : {
+          id: String(delivery.vendor_id),
+          name: null,
+          phone: null,
+          address: delivery.pickup_location?.address || null,
+          neighborhood: delivery.pickup_location?.neighborhood || null,
+          latitude: delivery.pickup_location?.latitude ?? null,
+          longitude: delivery.pickup_location?.longitude ?? null,
+        },
+    customer: {
+      id: customer ? String(customer._id) : String(delivery.customer_id),
+      name: customer?.name || null,
+      phone_number: revealCustomer ? customer?.phone_number || null : null,
+    },
+    pickup_location: { ...delivery.pickup_location },
+    delivery_location: { ...delivery.delivery_location },
+    route_distance_km: round1(delivery.route_distance_km),
+    distance_from_driver_km:
+      typeof distanceFromDriverKm === 'number' ? round1(distanceFromDriverKm) : null,
+    delivery_fee_rwf: delivery.delivery_fee_rwf,
+    promised_earnings_rwf: delivery.promised_earnings_rwf,
+    payment_method: delivery.payment_method || null,
+    otp_required: Boolean(delivery.otp_code),
+    proof_photo_url: delivery.proof_photo_url || null,
+    dispatched_at: delivery.dispatch?.last_broadcast_at ?? null,
+    offer_expires_at: delivery.dispatch?.offer_expires_at ?? null,
+    assigned_at: delivery.assigned_at ?? null,
+    picked_up_at: delivery.picked_up_at ?? null,
+    out_for_delivery_at: delivery.out_for_delivery_at ?? null,
+    delivered_at: delivery.delivered_at ?? null,
+    completed_at: delivery.completed_at ?? null,
+    cancelled_at: delivery.cancelled_at ?? null,
+    cancel_reason: delivery.cancel_reason || null,
+    created_at: delivery.created_at,
+    updated_at: delivery.updated_at,
+    items: (order?.items || []).map((item) => ({
+      menu_item_id: item.menu_item_id ? String(item.menu_item_id) : null,
+      name: item.name,
+      price_rwf: item.price_rwf,
+      quantity: item.quantity,
+      subtotal_rwf: item.subtotal_rwf,
+      image_url: item.image_url || null,
+      options: (item.options || []).map((option) => ({
+        group_name: option.group_name || 'Options',
+        name: option.name,
+        additional_price_rwf: option.additional_price_rwf || 0,
+      })),
+    })),
+    status_history: (delivery.status_history || []).map((entry) => ({
+      status: entry.status,
+      label: deliveryStatusLabel(entry.status),
+      at: entry.at,
+      note: entry.note || '',
+      by: entry.by || 'system',
+    })),
+  };
+}
+
+function serializeNotification(notification) {
+  return {
+    id: String(notification._id),
+    type: notification.type || 'general',
+    title: notification.title,
+    body: notification.body,
+    order_id: notification.order_id ? String(notification.order_id) : null,
+    data: notification.data || {},
+    sms_status: notification.sms_status || 'pending',
+    read: Boolean(notification.read_at),
+    read_at: notification.read_at ?? null,
+    created_at: notification.created_at,
+  };
+}
+
 function serializeWithdrawal(withdrawal) {
   return {
     id: String(withdrawal._id),
@@ -298,4 +456,7 @@ module.exports = {
   serializeVendorOrder,
   serializeVendorDashboard,
   serializeWithdrawal,
+  serializeDriverAccount,
+  serializeDelivery,
+  serializeNotification,
 };

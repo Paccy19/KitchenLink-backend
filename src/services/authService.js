@@ -3,6 +3,7 @@ const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { signToken } = require('../utils/jwt');
 const { normalizePhone, parseName } = require('../utils/validators');
+const { resolveImageUrl } = require('../utils/uploads');
 const customerRepository = require('../repositories/customerRepository');
 const otpRepository = require('../repositories/otpRepository');
 
@@ -10,6 +11,7 @@ const serializeCustomer = (customer) => ({
   id: String(customer._id),
   name: customer.name,
   phone_number: customer.phone_number,
+  profile_image_url: customer.profile_image_url || null,
 });
 
 class AuthService {
@@ -130,6 +132,42 @@ class AuthService {
 
   async me(customer) {
     return { customer: serializeCustomer(customer) };
+  }
+
+  async updateProfile(customer, body = {}, file) {
+    const payload = {};
+
+    if (body.name !== undefined) {
+      payload.name = parseName(body.name);
+    }
+
+    if (body.phone_number !== undefined) {
+      const phone = normalizePhone(body.phone_number);
+      const existing = await customerRepository.findByPhone(phone);
+      if (existing && String(existing._id) !== String(customer._id)) {
+        throw ApiError.conflict(
+          'A customer with this phone number is already registered.',
+          'PHONE_ALREADY_REGISTERED'
+        );
+      }
+      payload.phone_number = phone;
+    }
+
+    const profileImageUrl = resolveImageUrl({
+      file,
+      image_url: body.profile_image_url,
+      image_base64: body.profile_image_base64,
+    });
+    if (profileImageUrl !== undefined) payload.profile_image_url = profileImageUrl;
+
+    if (Object.keys(payload).length === 0) {
+      throw ApiError.badRequest('No supported profile fields were provided.', {
+        body: 'expected name, phone_number or profile_image',
+      });
+    }
+
+    const updated = await customerRepository.update(customer._id, payload);
+    return { customer: serializeCustomer(updated) };
   }
 }
 

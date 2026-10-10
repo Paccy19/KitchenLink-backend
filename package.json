@@ -7,7 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "migrate:vendors": "node src/scripts/migrateVendorAccounts.js"
+    "migrate:vendors": "node src/scripts/migrateVendorAccounts.js",
+    "seed:drivers": "node src/scripts/seedDrivers.js"
   },
   "keywords": [],
   "author": "",
