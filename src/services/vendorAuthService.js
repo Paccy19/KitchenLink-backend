@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
