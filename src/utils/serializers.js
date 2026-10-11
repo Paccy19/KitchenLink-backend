@@ -71,7 +71,35 @@ function serializeMenuItem(item) {
     description: item.description || '',
     price_rwf: item.price_rwf,
     is_available: Boolean(item.is_available),
+    is_preorder: Boolean(item.is_preorder),
+    preorder_cutoff: item.preorder_cutoff || '',
     image_url: item.image_url || null,
+  };
+}
+
+/** A vendor's "Tomorrow's Special" announcement. */
+function serializeVendorSpecial(special) {
+  if (!special || (!special.text && !special.delivery_at)) return null;
+  const cutoffAt = special.cutoff_at ?? null;
+  const isActive = Boolean(special.is_active);
+  return {
+    text: special.text || '',
+    cutoff_at: cutoffAt,
+    delivery_at: special.delivery_at ?? null,
+    is_active: isActive,
+    is_orderable: Boolean(
+      isActive && cutoffAt && new Date(cutoffAt).getTime() > Date.now()
+    ),
+    updated_at: special.updated_at ?? null,
+  };
+}
+
+/** Vendor card tailored for the "Tomorrow's Specials" feed. */
+function serializeVendorSpecialCard(vendor) {
+  return {
+    ...serializeVendorCard(vendor, { distanceKm: vendor.distance_km }),
+    neighborhood: vendor.neighborhood || null,
+    special: serializeVendorSpecial(vendor.special),
   };
 }
 
@@ -93,6 +121,7 @@ function serializeVendorStorefront(vendor, { menu, distanceKm } = {}) {
     banner_image_url: vendor.banner_image_url || null,
     avatar_url: vendor.profile_image_url || null,
     distance_km: typeof distanceKm === 'number' ? round1(distanceKm) : null,
+    special: serializeVendorSpecial(vendor.special),
     menu,
   };
 }
@@ -123,6 +152,7 @@ function serializeVendorAccount(vendor) {
       close_time: entry.close_time || '',
       is_closed: Boolean(entry.is_closed),
     })),
+    special: serializeVendorSpecial(vendor.special),
     payment_information: vendor.payment_information || {},
     verification_status: vendor.verification_status || 'pending',
     verification_documents: (vendor.verification_documents || []).map((doc) => ({
@@ -228,6 +258,11 @@ function serializeVendorOrder(order, { customer } = {}) {
     total_amount_rwf: order.total_rwf,
     payment_method: order.payment_method,
     payment_status: order.payment_status,
+    order_type: order.order_type || 'immediate',
+    order_type_label:
+      config.orders.orderTypeLabels[order.order_type || 'immediate'] || 'Immediate Order',
+    scheduled_for: order.scheduled_for ?? null,
+    special_text: order.special_text || '',
     delivery_location: { ...order.delivery_location },
     eta_minutes: order.eta_minutes ?? null,
     estimated_delivery_at: order.estimated_delivery_at ?? null,
@@ -581,6 +616,11 @@ function serializeAdminOrder(order) {
     total_amount_rwf: order.total_rwf,
     payment_method: order.payment_method,
     payment_status: order.payment_status,
+    order_type: order.order_type || 'immediate',
+    order_type_label:
+      config.orders.orderTypeLabels[order.order_type || 'immediate'] || 'Immediate Order',
+    scheduled_for: order.scheduled_for ?? null,
+    special_text: order.special_text || '',
     delivery_location: { ...order.delivery_location },
     eta_minutes: order.eta_minutes ?? null,
     estimated_delivery_at: order.estimated_delivery_at ?? null,
@@ -714,6 +754,8 @@ function serializeAdminAction(log) {
 module.exports = {
   serializeCategory,
   serializeVendorCard,
+  serializeVendorSpecial,
+  serializeVendorSpecialCard,
   serializeNearbyVendor,
   serializePopularDish,
   serializeSearchDish,

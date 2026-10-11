@@ -118,6 +118,25 @@ const config = {
         description: 'Use your Online Food Kitchen wallet balance',
       },
     ],
+    // Order timing. Immediate = ASAP; scheduled = a slot the customer picks;
+    // preorder = ordered against a vendor's announced "Tomorrow's Special".
+    orderTypes: ['immediate', 'scheduled', 'preorder'],
+    orderTypeLabels: {
+      immediate: 'Immediate Order',
+      scheduled: 'Scheduled Order',
+      preorder: 'Pre-order',
+    },
+    schedule: {
+      minLeadMinutes: Number(process.env.SCHEDULE_MIN_LEAD_MINUTES) || 45,
+      maxDaysAhead: Number(process.env.SCHEDULE_MAX_DAYS_AHEAD) || 7,
+      // A scheduled order may only be marked "ready" this close to its slot so
+      // drivers are dispatched near the delivery time, not hours in advance.
+      readyWindowMinutes: Number(process.env.SCHEDULE_READY_WINDOW_MINUTES) || 60,
+    },
+    special: {
+      textMax: 160,
+      maxDaysAhead: Number(process.env.SPECIAL_MAX_DAYS_AHEAD) || 14,
+    },
   },
   vendor: {
     // Role claim embedded in vendor JWT access tokens.

@@ -6,6 +6,7 @@ const { distanceFromCoords } = require('../utils/geo');
 const {
   serializeMenuItem,
   serializeVendorStorefront,
+  serializeVendorSpecialCard,
 } = require('../utils/serializers');
 
 class VendorService {
@@ -54,6 +55,20 @@ class VendorService {
       : null;
 
     return serializeVendorStorefront(vendor, { menu, distanceKm });
+  }
+
+  /** Public feed of active "Tomorrow's Special" pre-order announcements. */
+  async listSpecials(coords) {
+    const vendors = await vendorRepository.findActiveSpecials(30);
+    const specials = vendors
+      .map((vendor) => {
+        const distanceKm = coords
+          ? distanceFromCoords(coords, vendor.location?.coordinates)
+          : null;
+        return serializeVendorSpecialCard({ ...vendor, distance_km: distanceKm });
+      })
+      .filter((entry) => entry.special && entry.special.is_orderable);
+    return { specials };
   }
 }
 

@@ -9,4 +9,9 @@ const getVendor = asyncHandler(async (req, res) => {
   );
 });
 
-module.exports = { getVendor };
+const getSpecials = asyncHandler(async (req, res) => {
+  const coords = parseOptionalCoords(req.query);
+  res.json(await vendorService.listSpecials(coords));
+});
+
+module.exports = { getVendor, getSpecials };

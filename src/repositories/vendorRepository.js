@@ -139,6 +139,19 @@ class VendorRepository {
       .lean();
   }
 
+  /** Active vendors with an orderable "Tomorrow's Special", soonest first. */
+  async findActiveSpecials(limit = 30) {
+    return Vendor.find({
+      is_active: true,
+      deleted_at: null,
+      'special.is_active': true,
+      'special.cutoff_at': { $gt: new Date() },
+    })
+      .sort({ 'special.delivery_at': 1, rating: -1 })
+      .limit(limit)
+      .lean();
+  }
+
   /**
    * Vendors whose name (or neighborhood) fuzzy-matches the tokens,
    * or that own a dish matching the tokens. Limited candidate set;

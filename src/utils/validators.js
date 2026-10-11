@@ -126,6 +126,44 @@ function parsePaymentDetails(method, raw) {
   return { phone, card_number: '', card_expiry: '' };
 }
 
+function parseOrderType(raw) {
+  if (raw === undefined || raw === null || raw === '') return 'immediate';
+  const allowed = config.orders.orderTypes;
+  if (!allowed.includes(raw)) {
+    throw ApiError.badRequest('order_type is invalid.', {
+      order_type: `expected one of: ${allowed.join(', ')}`,
+    });
+  }
+  return raw;
+}
+
+/**
+ * Validates a customer-chosen delivery slot. Must be a real date at least
+ * `minLeadMinutes` from now and no more than `maxDaysAhead` days out.
+ */
+function parseScheduledFor(raw, { minLeadMinutes, maxDaysAhead } = {}) {
+  const value = typeof raw === 'string' || raw instanceof Date ? new Date(raw) : null;
+  if (!value || Number.isNaN(value.getTime())) {
+    throw ApiError.badRequest('scheduled_for is invalid.', {
+      scheduled_for: 'expected an ISO date-time, e.g. 2026-05-01T12:30:00+02:00',
+    });
+  }
+  const now = Date.now();
+  const lead = Number(minLeadMinutes) || 0;
+  if (value.getTime() < now + lead * 60 * 1000) {
+    throw ApiError.badRequest('scheduled_for is too soon.', {
+      scheduled_for: `expected at least ${lead} minutes from now`,
+    });
+  }
+  const maxAhead = Number(maxDaysAhead) || 7;
+  if (value.getTime() > now + maxAhead * 24 * 60 * 60 * 1000) {
+    throw ApiError.badRequest('scheduled_for is too far ahead.', {
+      scheduled_for: `expected within the next ${maxAhead} days`,
+    });
+  }
+  return value;
+}
+
 function parseDeliveryLocation(raw) {
   if (!raw || typeof raw !== 'object') {
     throw ApiError.badRequest('delivery_location is required.', {
@@ -166,4 +204,6 @@ module.exports = {
   parsePaymentMethod,
   parsePaymentDetails,
   parseDeliveryLocation,
+  parseOrderType,
+  parseScheduledFor,
 };

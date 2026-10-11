@@ -79,6 +79,16 @@ const vendorSchema = new mongoose.Schema(
         is_closed: { type: Boolean, default: false },
       },
     ],
+    // "Tomorrow's Special" announcement. A vendor announces a dish/meal with an
+    // order-before cutoff and an intended serving/delivery time; customers can
+    // pre-order it until the cutoff.
+    special: {
+      text: { type: String, default: '', trim: true },
+      cutoff_at: { type: Date, default: null },
+      delivery_at: { type: Date, default: null },
+      is_active: { type: Boolean, default: false },
+      updated_at: { type: Date, default: null },
+    },
     // Payout details (mobile money or bank transfer).
     payment_information: {
       payout_method: { type: String, default: '' },
@@ -117,6 +127,7 @@ vendorSchema.index({ location: '2dsphere' });
 vendorSchema.index({ is_active: 1, rating: -1 });
 vendorSchema.index({ is_active: 1, is_featured: -1, rating: -1 });
 vendorSchema.index({ name: 'text', neighborhood: 'text' });
+vendorSchema.index({ 'special.is_active': 1, 'special.delivery_at': 1 });
 
 vendorSchema.virtual('latitude').get(function () {
   return this.location?.coordinates?.[1];

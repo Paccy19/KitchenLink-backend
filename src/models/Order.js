@@ -63,6 +63,16 @@ const orderSchema = new mongoose.Schema(
       card_number: { type: String, default: '' },
       card_expiry: { type: String, default: '' },
     },
+    // Order timing: immediate (ASAP), scheduled (customer-picked slot) or
+    // preorder (against a vendor's announced special). scheduled_for is the
+    // intended delivery time; special_text snapshots the vendor announcement.
+    order_type: {
+      type: String,
+      enum: config.orders.orderTypes,
+      default: 'immediate',
+    },
+    scheduled_for: { type: Date, default: null },
+    special_text: { type: String, default: '' },
     status: {
       type: String,
       enum: config.orders.statuses,
@@ -106,5 +116,6 @@ orderSchema.index({ vendor_id: 1, status: 1 });
 orderSchema.index({ vendor_id: 1, completed_at: -1 });
 orderSchema.index({ status: 1, created_at: -1 });
 orderSchema.index({ driver_id: 1, status: 1 });
+orderSchema.index({ order_type: 1, scheduled_for: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);

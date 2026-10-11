@@ -97,6 +97,23 @@ class VendorOrderService {
     }
 
     const now = new Date();
+
+    // Scheduled/pre-order orders may only be marked ready close to the
+    // scheduled slot so drivers are never dispatched far ahead of delivery.
+    const isFutureScheduled =
+      order.order_type !== 'immediate' && order.order_type && order.scheduled_for;
+    if (nextStatus === 'ready' && isFutureScheduled) {
+      const readyEarliest = new Date(
+        new Date(order.scheduled_for).getTime() -
+          config.orders.schedule.readyWindowMinutes * 60 * 1000
+      );
+      if (now.getTime() < readyEarliest.getTime()) {
+        throw ApiError.conflict(
+          `This ${order.order_type === 'preorder' ? 'pre-order' : 'scheduled order'} isn't due yet. Mark it ready within ${config.orders.schedule.readyWindowMinutes} minutes of the scheduled delivery time.`,
+          'SCHEDULED_ORDER_NOT_DUE'
+        );
+      }
+    }
     const note =
       typeof body?.note === 'string' && body.note.trim()
         ? body.note.trim().slice(0, 200)

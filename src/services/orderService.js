@@ -6,6 +6,8 @@ const {
   parseDeliveryLocation,
   parsePaymentMethod,
   parsePaymentDetails,
+  parseOrderType,
+  parseScheduledFor,
 } = require('../utils/validators');
 const orderRepository = require('../repositories/orderRepository');
 const paymentRepository = require('../repositories/paymentRepository');
@@ -97,6 +99,11 @@ const serializePaymentDetails = (order) => {
 const serializeDetail = (order, vendor, payment, delivery) => ({
   id: String(order._id),
   order_number: order.order_number,
+  order_type: order.order_type || 'immediate',
+  order_type_label:
+    orders.orderTypeLabels[order.order_type || 'immediate'] || 'Immediate Order',
+  scheduled_for: order.scheduled_for ?? null,
+  special_text: order.special_text || '',
   status: order.status,
   status_label: orders.statusLabels[order.status],
   payment_method: order.payment_method,
@@ -166,6 +173,11 @@ const serializeTracking = (order, vendor, payment, delivery) => {
   return {
     order_id: String(order._id),
     order_number: order.order_number,
+    order_type: order.order_type || 'immediate',
+    order_type_label:
+      orders.orderTypeLabels[order.order_type || 'immediate'] || 'Immediate Order',
+    scheduled_for: order.scheduled_for ?? null,
+    special_text: order.special_text || '',
     status: order.status,
     status_label: orders.statusLabels[order.status],
     placed_at: order.created_at,
@@ -263,6 +275,16 @@ class OrderService {
     const paymentMethod = parsePaymentMethod(body?.payment_method);
     const paymentDetails = parsePaymentDetails(paymentMethod, body?.payment_details);
     const simulate = body?.payment_simulate;
+    const orderType = parseOrderType(body?.order_type);
+    let scheduledFor = null;
+    let specialText = '';
+
+    if (orderType === 'scheduled') {
+      scheduledFor = parseScheduledFor(body?.scheduled_for, {
+        minLeadMinutes: orders.schedule.minLeadMinutes,
+        maxDaysAhead: orders.schedule.maxDaysAhead,
+      });
+    }
 
     const entries = (await cartRepository.list(customerId)).filter(
       (entry) => entry.menu_item_id
@@ -294,6 +316,30 @@ class OrderService {
       throw ApiError.conflict('This kitchen is currently closed.', 'VENDOR_UNAVAILABLE');
     }
 
+    if (orderType === 'preorder') {
+      const special = vendor.special || {};
+      if (!special.is_active || !special.text) {
+        throw ApiError.conflict(
+          'This kitchen has no pre-order special right now.',
+          'SPECIAL_NOT_AVAILABLE'
+        );
+      }
+      if (!special.cutoff_at || new Date(special.cutoff_at).getTime() <= Date.now()) {
+        throw ApiError.conflict(
+          "This kitchen's pre-order special has passed its order-before time.",
+          'SPECIAL_CUTOFF_PASSED'
+        );
+      }
+      if (!special.delivery_at) {
+        throw ApiError.conflict(
+          'This special is missing a delivery time.',
+          'SPECIAL_MISSING_DELIVERY_AT'
+        );
+      }
+      scheduledFor = new Date(special.delivery_at);
+      specialText = special.text;
+    }
+
     const items = entries.map((entry) => ({
       menu_item_id: entry.menu_item_id._id,
       name: entry.menu_item_id.name,
@@ -321,10 +367,22 @@ class OrderService {
       payment_method: paymentMethod,
       payment_details: paymentDetails,
       payment_status: 'pending',
+      order_type: orderType,
+      scheduled_for: scheduledFor,
+      special_text: specialText,
       status: 'placed',
-      status_history: [{ status: 'placed', at: now, note: 'Order placed' }],
-      eta_minutes: etaMinutes,
-      estimated_delivery_at: new Date(now.getTime() + etaMinutes * 60 * 1000),
+      status_history: [
+        {
+          status: 'placed',
+          at: now,
+          note: `Order placed (${orders.orderTypeLabels[orderType] || 'Immediate Order'})`,
+        },
+      ],
+      eta_minutes: orderType === 'immediate' ? etaMinutes : null,
+      estimated_delivery_at:
+        orderType === 'immediate'
+          ? new Date(now.getTime() + etaMinutes * 60 * 1000)
+          : scheduledFor,
     });
 
     const { paymentStatus, payment } = await this.#initiatePayment(
@@ -352,6 +410,8 @@ class OrderService {
           vendor_name: vendor.name || null,
           total_rwf: total,
           payment_status: paymentStatus,
+          order_type: orderType,
+          scheduled_for: scheduledFor ? scheduledFor.toISOString() : null,
         },
       })
       .catch(() => null);
