@@ -56,9 +56,12 @@ const driverSchema = new mongoose.Schema(
     profile_image_url: { type: String, default: '' },
     verification_status: {
       type: String,
-      enum: ['pending', 'approved', 'rejected'],
+      enum: ['pending', 'approved', 'rejected', 'suspended'],
       default: 'approved',
     },
+    rejection_reason: { type: String, default: '' },
+    suspension_reason: { type: String, default: '' },
+    suspended_at: { type: Date, default: null },
     is_active: { type: Boolean, default: true },
     // Soft delete.
     deleted_at: { type: Date, default: null },

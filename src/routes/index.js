@@ -14,6 +14,8 @@ const notificationRoutes = require('./notificationRoutes');
 const driverAuthRoutes = require('./driverAuthRoutes');
 const driverRoutes = require('./driverRoutes');
 const internalDeliveryRoutes = require('./internalDeliveryRoutes');
+const adminAuthRoutes = require('./adminAuthRoutes');
+const adminRoutes = require('./adminRoutes');
 
 const router = Router();
 
@@ -36,6 +38,8 @@ router.use('/notifications', notificationRoutes);
 router.use('/driver/auth', driverAuthRoutes);
 router.use('/driver', driverRoutes);
 router.use('/internal/deliveries', internalDeliveryRoutes);
+router.use('/admin/auth', adminAuthRoutes);
+router.use('/admin', adminRoutes);
 
 // Discovery routes remain public; customer routes apply authentication locally.
 

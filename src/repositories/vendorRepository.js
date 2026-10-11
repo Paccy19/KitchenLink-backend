@@ -1,5 +1,8 @@
 const { Vendor } = require('../models');
 
+const escapeRegex = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const toPoint = ({ lat, lng }) => ({
   type: 'Point',
   coordinates: [lng, lat],
@@ -155,6 +158,77 @@ class VendorRepository {
       .sort({ rating: -1 })
       .limit(limit)
       .lean();
+  }
+
+  /* ------------------------------- admin ------------------------------- */
+
+  async adminList({ status, search, isActive, limit, offset }) {
+    const filter = { deleted_at: null };
+    if (status) filter.verification_status = status;
+    if (isActive !== undefined) filter.is_active = isActive;
+    if (search) {
+      const regex = new RegExp(escapeRegex(search), 'i');
+      filter.$or = [
+        { name: regex },
+        { owner_name: regex },
+        { phone: regex },
+        { email: regex },
+        { neighborhood: regex },
+      ];
+    }
+
+    const [vendors, total] = await Promise.all([
+      Vendor.find(filter).sort({ created_at: -1 }).skip(offset).limit(limit).lean(),
+      Vendor.countDocuments(filter),
+    ]);
+    return { vendors, total };
+  }
+
+  async countsByVerification() {
+    const rows = await Vendor.aggregate([
+      { $match: { deleted_at: null } },
+      { $group: { _id: '$verification_status', count: { $sum: 1 } } },
+    ]);
+    return rows.reduce((acc, row) => {
+      acc[row._id] = row.count;
+      return acc;
+    }, {});
+  }
+
+  async countActive() {
+    return Vendor.countDocuments({ is_active: true, deleted_at: null });
+  }
+
+  async countSince(date) {
+    return Vendor.countDocuments({ created_at: { $gte: date }, deleted_at: null });
+  }
+
+  async platformTotals() {
+    const [row] = await Vendor.aggregate([
+      { $match: { deleted_at: null } },
+      {
+        $group: {
+          _id: null,
+          total_sales: { $sum: '$total_sales' },
+          available_balance: { $sum: '$available_balance' },
+        },
+      },
+    ]);
+    return row || { total_sales: 0, available_balance: 0 };
+  }
+
+  async listBalances({ sort = 'balance', limit, offset }) {
+    const sortSpec =
+      sort === 'sales' ? { total_sales: -1 } : { available_balance: -1 };
+    const [vendors, total] = await Promise.all([
+      Vendor.find({ deleted_at: null })
+        .sort(sortSpec)
+        .skip(offset)
+        .limit(limit)
+        .lean(),
+      Vendor.countDocuments({ deleted_at: null }),
+    ]);
+    return { vendors, total };
   }
 }
 

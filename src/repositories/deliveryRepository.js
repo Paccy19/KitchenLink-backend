@@ -214,6 +214,57 @@ class DeliveryRepository {
       total: allTime[0] || { count: 0, earnings: 0 },
     };
   }
+
+  /* ------------------------------- admin ------------------------------- */
+
+  async adminList({ statuses, driverId, vendorId, limit, offset }) {
+    const filter = {};
+    if (statuses && statuses.length > 0) filter.status = { $in: statuses };
+    if (driverId) filter.driver_id = driverId;
+    if (vendorId) filter.vendor_id = vendorId;
+
+    const [deliveries, total] = await Promise.all([
+      Delivery.find(filter)
+        .sort({ created_at: -1 })
+        .skip(offset)
+        .limit(limit)
+        .populate(POPULATE)
+        .lean(),
+      Delivery.countDocuments(filter),
+    ]);
+    return { deliveries, total };
+  }
+
+  async countActive(activeStatuses) {
+    return Delivery.countDocuments({ status: { $in: activeStatuses } });
+  }
+
+  async countsByStatus() {
+    const rows = await Delivery.aggregate([
+      { $group: { _id: '$status', count: { $sum: 1 } } },
+    ]);
+    return rows.reduce((acc, row) => {
+      acc[row._id] = row.count;
+      return acc;
+    }, {});
+  }
+
+  async findByDriver(driverId, statuses) {
+    return Delivery.find({ driver_id: driverId, status: { $in: statuses } }).lean();
+  }
+
+  async handback(deliveryId, { status, note }) {
+    return Delivery.findOneAndUpdate(
+      { _id: deliveryId },
+      {
+        $set: { status, driver_id: null, assigned_at: null },
+        $push: {
+          status_history: { status, at: new Date(), note: note || 'Reassigned by admin', by: 'admin' },
+        },
+      },
+      { new: true }
+    ).lean();
+  }
 }
 
 module.exports = new DeliveryRepository();

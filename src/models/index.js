@@ -12,6 +12,10 @@ const Withdrawal = require('./Withdrawal');
 const Driver = require('./Driver');
 const Delivery = require('./Delivery');
 const Notification = require('./Notification');
+const Admin = require('./Admin');
+const Complaint = require('./Complaint');
+const AdminActionLog = require('./AdminActionLog');
+const Commission = require('./Commission');
 
 module.exports = {
   Vendor,
@@ -28,4 +32,8 @@ module.exports = {
   Driver,
   Delivery,
   Notification,
+  Admin,
+  Complaint,
+  AdminActionLog,
+  Commission,
 };

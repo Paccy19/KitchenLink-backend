@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 const { Order } = require('../models');
 
+const escapeRegex = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 class OrderRepository {
   async create(doc) {
     const order = await Order.create(doc);
@@ -17,6 +20,14 @@ class OrderRepository {
 
   async findByVendorAndId(vendorId, orderId) {
     return Order.findOne({ _id: orderId, vendor_id: vendorId }).lean();
+  }
+
+  async findDetailedById(orderId) {
+    return Order.findById(orderId)
+      .populate('vendor_id', 'name neighborhood')
+      .populate('customer_id', 'name phone_number')
+      .populate('driver_id', 'name phone')
+      .lean();
   }
 
   async listByVendor(vendorId, { statuses, limit, offset, sort }) {
@@ -145,6 +156,167 @@ class OrderRepository {
       { _id: orderId },
       { $push: { status_history: entry } }
     );
+  }
+
+  /* ------------------------------- admin ------------------------------- */
+
+  async adminList({ statuses, vendorId, customerId, driverId, from, to, search, limit, offset }) {
+    const filter = {};
+    if (statuses && statuses.length > 0) filter.status = { $in: statuses };
+    if (vendorId) filter.vendor_id = vendorId;
+    if (customerId) filter.customer_id = customerId;
+    if (driverId) filter.driver_id = driverId;
+    if (from || to) {
+      filter.created_at = {};
+      if (from) filter.created_at.$gte = from;
+      if (to) filter.created_at.$lte = to;
+    }
+    if (search) {
+      filter.order_number = new RegExp(escapeRegex(search), 'i');
+    }
+
+    const [orders, total] = await Promise.all([
+      Order.find(filter)
+        .sort({ created_at: -1 })
+        .skip(offset)
+        .limit(limit)
+        .populate('vendor_id', 'name neighborhood')
+        .populate('customer_id', 'name phone_number')
+        .populate('driver_id', 'name phone')
+        .lean(),
+      Order.countDocuments(filter),
+    ]);
+    return { orders, total };
+  }
+
+  async countByStatuses(statuses) {
+    const rows = await Order.aggregate([
+      { $match: { status: { $in: statuses } } },
+      { $group: { _id: '$status', count: { $sum: 1 } } },
+    ]);
+    return rows.reduce((acc, row) => {
+      acc[row._id] = row.count;
+      return acc;
+    }, {});
+  }
+
+  async countCreatedBetween(start, end) {
+    return Order.countDocuments({ created_at: { $gte: start, $lt: end } });
+  }
+
+  async salesTotalsBetween({ start, end, completedStatuses }) {
+    const [row] = await Order.aggregate([
+      {
+        $match: {
+          status: { $in: completedStatuses },
+          created_at: { $gte: start, $lt: end },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          orders: { $sum: 1 },
+          gross: { $sum: '$total_rwf' },
+          delivery_fees: { $sum: '$delivery_fee_rwf' },
+        },
+      },
+    ]);
+    return row || { orders: 0, gross: 0, delivery_fees: 0 };
+  }
+
+  async salesSeries({ start, end, completedStatuses, granularity = 'day', timezoneOffsetHours = 2 }) {
+    const format = granularity === 'hour' ? '%Y-%m-%d %H:00' : '%Y-%m-%d';
+    const rows = await Order.aggregate([
+      {
+        $match: {
+          status: { $in: completedStatuses },
+          created_at: { $gte: start, $lt: end },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: {
+              format,
+              date: '$created_at',
+              timezone: `+${String(timezoneOffsetHours).padStart(2, '0')}:00`,
+            },
+          },
+          orders: { $sum: 1 },
+          gross: { $sum: '$total_rwf' },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+    return rows.map((row) => ({
+      bucket: row._id,
+      orders: row.orders,
+      gross_rwf: row.gross,
+    }));
+  }
+
+  async listOpenByVendor(vendorId, statuses) {
+    return Order.find({ vendor_id: vendorId, status: { $in: statuses } }).lean();
+  }
+
+  async cancelOpenByVendor(vendorId, statuses, reason) {
+    const now = new Date();
+    const result = await Order.updateMany(
+      { vendor_id: vendorId, status: { $in: statuses } },
+      {
+        $set: {
+          status: 'cancelled',
+          cancelled_at: now,
+          cancel_reason: reason || 'Cancelled by admin',
+          updated_at: now,
+        },
+        $push: {
+          status_history: {
+            status: 'cancelled',
+            at: now,
+            note: reason || 'Cancelled by admin',
+          },
+        },
+      }
+    );
+    return result.modifiedCount ?? 0;
+  }
+
+  async topVendors({ start, end, completedStatuses, limit = 5 }) {
+    return Order.aggregate([
+      {
+        $match: {
+          status: { $in: completedStatuses },
+          created_at: { $gte: start, $lt: end },
+        },
+      },
+      {
+        $group: {
+          _id: '$vendor_id',
+          orders: { $sum: 1 },
+          gross: { $sum: '$total_rwf' },
+        },
+      },
+      { $sort: { gross: -1 } },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: 'vendors',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'vendor',
+        },
+      },
+      { $unwind: { path: '$vendor', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          vendor_id: '$_id',
+          name: '$vendor.name',
+          orders: 1,
+          gross_rwf: '$gross',
+        },
+      },
+    ]);
   }
 }
 

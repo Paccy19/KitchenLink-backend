@@ -447,6 +447,270 @@ function serializeWithdrawal(withdrawal) {
   };
 }
 
+/* -------------------------------- admin -------------------------------- */
+
+function serializeAdmin(admin) {
+  return {
+    id: String(admin._id),
+    name: admin.name,
+    email: admin.email,
+    role: admin.role,
+    permissions: admin.permissions || [],
+    is_active: admin.is_active !== false,
+    last_login_at: admin.last_login_at ?? null,
+    created_at: admin.created_at,
+  };
+}
+
+function serializeAdminVendor(vendor) {
+  const [lng, lat] = vendor.location?.coordinates ?? [null, null];
+  return {
+    id: String(vendor._id),
+    name: vendor.name,
+    owner_name: vendor.owner_name || '',
+    vendor_type: vendor.vendor_type,
+    phone: vendor.phone || null,
+    email: vendor.email || null,
+    neighborhood: vendor.neighborhood || null,
+    address: vendor.address || null,
+    status: vendor.verification_status || 'approved',
+    is_active: vendor.is_active !== false,
+    is_open: vendor.is_open !== false,
+    is_featured: Boolean(vendor.is_featured),
+    rating: vendor.rating ?? 0,
+    delivery_available: Boolean(vendor.delivery_available),
+    total_sales_rwf: vendor.total_sales ?? 0,
+    available_balance_rwf: vendor.available_balance ?? 0,
+    rejection_reason: vendor.rejection_reason || '',
+    suspension_reason: vendor.suspension_reason || '',
+    profile_image_url: vendor.profile_image_url || null,
+    banner_image_url: vendor.banner_image_url || null,
+    location: {
+      latitude: typeof lat === 'number' ? lat : null,
+      longitude: typeof lng === 'number' ? lng : null,
+    },
+    created_at: vendor.created_at,
+    updated_at: vendor.updated_at,
+  };
+}
+
+function serializeAdminCustomer(customer) {
+  return {
+    id: String(customer._id),
+    name: customer.name,
+    phone_number: customer.phone_number,
+    profile_image_url: customer.profile_image_url || null,
+    is_verified: Boolean(customer.is_verified),
+    is_active: customer.is_active !== false,
+    last_login_at: customer.last_login_at ?? null,
+    created_at: customer.created_at,
+  };
+}
+
+function serializeAdminDriver(driver) {
+  const [lng, lat] = driver.location?.coordinates ?? [null, null];
+  return {
+    id: String(driver._id),
+    name: driver.name,
+    phone: driver.phone || null,
+    email: driver.email || null,
+    vehicle_type: driver.vehicle_type || 'motorcycle',
+    plate_number: driver.plate_number || '',
+    license_number: driver.license_number || '',
+    status: driver.status || 'offline',
+    verification_status: driver.verification_status || 'approved',
+    is_online: Boolean(driver.is_online),
+    is_available: Boolean(driver.is_available),
+    is_active: driver.is_active !== false,
+    rating: driver.rating ?? 5,
+    rating_count: driver.rating_count ?? 0,
+    completed_deliveries: driver.completed_deliveries ?? 0,
+    active_deliveries_count: driver.active_deliveries_count ?? 0,
+    total_earnings_rwf: driver.total_earnings_rwf ?? 0,
+    rejection_reason: driver.rejection_reason || '',
+    suspension_reason: driver.suspension_reason || '',
+    profile_image_url: driver.profile_image_url || null,
+    location: {
+      latitude: typeof lat === 'number' ? lat : null,
+      longitude: typeof lng === 'number' ? lng : null,
+    },
+    created_at: driver.created_at,
+    updated_at: driver.updated_at,
+  };
+}
+
+function serializeAdminOrder(order) {
+  const vendor = order.vendor_id && typeof order.vendor_id === 'object' ? order.vendor_id : null;
+  const customer =
+    order.customer_id && typeof order.customer_id === 'object' ? order.customer_id : null;
+  const driver = order.driver_id && typeof order.driver_id === 'object' ? order.driver_id : null;
+
+  return {
+    id: String(order._id),
+    order_number: order.order_number,
+    status: order.status,
+    status_label: config.orders.statusLabels[order.status] || order.status,
+    created_at: order.created_at,
+    updated_at: order.updated_at,
+    completed_at: order.completed_at ?? null,
+    cancelled_at: order.cancelled_at ?? null,
+    cancel_reason: order.cancel_reason || null,
+    vendor: vendor
+      ? { id: String(vendor._id), name: vendor.name, neighborhood: vendor.neighborhood || null }
+      : order.vendor_id
+        ? { id: String(order.vendor_id), name: null, neighborhood: null }
+        : null,
+    customer: customer
+      ? { id: String(customer._id), name: customer.name, phone_number: customer.phone_number }
+      : order.customer_id
+        ? { id: String(order.customer_id), name: null, phone_number: null }
+        : null,
+    driver: driver
+      ? { id: String(driver._id), name: driver.name, phone: driver.phone || null }
+      : null,
+    items: (order.items || []).map((item) => ({
+      menu_item_id: item.menu_item_id ? String(item.menu_item_id) : null,
+      name: item.name,
+      price_rwf: item.price_rwf,
+      quantity: item.quantity,
+      subtotal_rwf: item.subtotal_rwf,
+      image_url: item.image_url || null,
+    })),
+    subtotal_rwf: order.subtotal_rwf,
+    delivery_fee_rwf: order.delivery_fee_rwf,
+    total_amount_rwf: order.total_rwf,
+    payment_method: order.payment_method,
+    payment_status: order.payment_status,
+    delivery_location: { ...order.delivery_location },
+    eta_minutes: order.eta_minutes ?? null,
+    estimated_delivery_at: order.estimated_delivery_at ?? null,
+    status_history: (order.status_history || []).map((entry) => ({
+      status: entry.status,
+      label: config.orders.statusLabels[entry.status] || entry.status,
+      at: entry.at,
+      note: entry.note || '',
+    })),
+  };
+}
+
+function serializeAdminPayment(payment) {
+  const order = payment.order_id && typeof payment.order_id === 'object' ? payment.order_id : null;
+  const customer =
+    payment.customer_id && typeof payment.customer_id === 'object' ? payment.customer_id : null;
+  return {
+    id: String(payment._id),
+    order_id: order ? String(order._id) : String(payment.order_id),
+    order_number: order?.order_number ?? null,
+    customer: customer
+      ? { id: String(customer._id), name: customer.name, phone_number: customer.phone_number }
+      : null,
+    amount_rwf: payment.amount_rwf,
+    method: payment.method,
+    provider: payment.provider,
+    status: payment.status,
+    reference: payment.reference,
+    failure_reason: payment.failure_reason || '',
+    paid_at: payment.paid_at ?? null,
+    created_at: payment.created_at,
+  };
+}
+
+function serializeAdminWithdrawal(withdrawal) {
+  const vendor =
+    withdrawal.vendor_id && typeof withdrawal.vendor_id === 'object'
+      ? withdrawal.vendor_id
+      : null;
+  return {
+    id: String(withdrawal._id),
+    vendor_id: vendor ? String(vendor._id) : String(withdrawal.vendor_id),
+    vendor_name: vendor?.name ?? null,
+    amount_rwf: withdrawal.amount_rwf,
+    method: withdrawal.method,
+    method_label: withdrawal.method_label || withdrawal.method,
+    status: withdrawal.status,
+    reference: withdrawal.reference || null,
+    processed_at: withdrawal.processed_at ?? null,
+    created_at: withdrawal.created_at,
+  };
+}
+
+function serializeAdminCommission(commission) {
+  const vendor =
+    commission.vendor_id && typeof commission.vendor_id === 'object'
+      ? commission.vendor_id
+      : null;
+  const category =
+    commission.category_id && typeof commission.category_id === 'object'
+      ? commission.category_id
+      : null;
+  return {
+    id: String(commission._id),
+    name: commission.name,
+    scope: commission.scope,
+    vendor_id: commission.vendor_id ? String(commission.vendor_id._id || commission.vendor_id) : null,
+    vendor_name: vendor?.name ?? null,
+    category_id: commission.category_id
+      ? String(commission.category_id._id || commission.category_id)
+      : null,
+    category_name: category?.name ?? null,
+    vendor_type: commission.vendor_type || '',
+    percentage: commission.percentage,
+    fixed_fee_rwf: commission.fixed_fee_rwf ?? 0,
+    is_active: commission.is_active !== false,
+    created_at: commission.created_at,
+    updated_at: commission.updated_at,
+  };
+}
+
+function serializeAdminComplaint(complaint) {
+  return {
+    id: String(complaint._id),
+    reference: complaint.reference,
+    subject: complaint.subject,
+    description: complaint.description || '',
+    category: complaint.category,
+    priority: complaint.priority,
+    status: complaint.status,
+    raised_by: {
+      user_id: complaint.raised_by?.user_id ? String(complaint.raised_by.user_id) : null,
+      role: complaint.raised_by?.role || 'guest',
+      name: complaint.raised_by?.name || '',
+      phone: complaint.raised_by?.phone || '',
+    },
+    related: {
+      order_id: complaint.related?.order_id ? String(complaint.related.order_id) : null,
+      vendor_id: complaint.related?.vendor_id ? String(complaint.related.vendor_id) : null,
+      driver_id: complaint.related?.driver_id ? String(complaint.related.driver_id) : null,
+    },
+    assigned_to: complaint.assigned_to ? String(complaint.assigned_to) : null,
+    notes: (complaint.notes || []).map((note) => ({
+      author_id: note.author_id ? String(note.author_id) : null,
+      author_name: note.author_name || 'Admin',
+      body: note.body || '',
+      at: note.at,
+    })),
+    resolved_at: complaint.resolved_at ?? null,
+    created_at: complaint.created_at,
+    updated_at: complaint.updated_at,
+  };
+}
+
+function serializeAdminAction(log) {
+  return {
+    id: String(log._id),
+    admin_id: log.admin_id ? String(log.admin_id) : null,
+    admin_name: log.admin_name || '',
+    admin_email: log.admin_email || '',
+    action: log.action,
+    target_type: log.target_type,
+    target_id: log.target_id || '',
+    target_label: log.target_label || '',
+    metadata: log.metadata || {},
+    ip: log.ip || '',
+    created_at: log.created_at,
+  };
+}
+
 module.exports = {
   serializeCategory,
   serializeVendorCard,
@@ -464,4 +728,14 @@ module.exports = {
   serializeDriverAccount,
   serializeDelivery,
   serializeNotification,
+  serializeAdmin,
+  serializeAdminVendor,
+  serializeAdminCustomer,
+  serializeAdminDriver,
+  serializeAdminOrder,
+  serializeAdminPayment,
+  serializeAdminWithdrawal,
+  serializeAdminCommission,
+  serializeAdminComplaint,
+  serializeAdminAction,
 };

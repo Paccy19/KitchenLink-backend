@@ -1,0 +1,165 @@
+const { Router } = require('express');
+const requireAdminAuth = require('../middleware/requireAdminAuth');
+const adminRateLimit = require('../middleware/adminRateLimit');
+const requirePermission = require('../middleware/requirePermission');
+
+const adminUserController = require('../controllers/adminUserController');
+const adminVendorController = require('../controllers/adminVendorController');
+const adminDriverController = require('../controllers/adminDriverController');
+const adminOrderController = require('../controllers/adminOrderController');
+const adminPaymentController = require('../controllers/adminPaymentController');
+const adminCommissionController = require('../controllers/adminCommissionController');
+const adminPayoutController = require('../controllers/adminPayoutController');
+const adminCategoryController = require('../controllers/adminCategoryController');
+const adminComplaintController = require('../controllers/adminComplaintController');
+const adminDashboardController = require('../controllers/adminDashboardController');
+const adminAnalyticsController = require('../controllers/adminAnalyticsController');
+const adminNotificationController = require('../controllers/adminNotificationController');
+const adminActionLogService = require('../services/adminActionLogService');
+
+const asyncHandler = require('../utils/asyncHandler');
+
+const router = Router();
+
+router.use(requireAdminAuth);
+router.use(adminRateLimit);
+
+/* ------------------------------- dashboard ------------------------------- */
+router.get('/dashboard/overview', adminDashboardController.overview);
+
+/* ----------------------------- notifications ----------------------------- */
+router.get('/notifications', adminNotificationController.list);
+router.post('/notifications/read-all', adminNotificationController.markAllRead);
+router.post('/notifications/:notificationId/read', adminNotificationController.markRead);
+
+/* --------------------------------- users --------------------------------- */
+router.get('/users', requirePermission('users:read'), adminUserController.list);
+router.get('/users/:userId', requirePermission('users:read'), adminUserController.getById);
+router.patch(
+  '/users/:userId/status',
+  requirePermission('users:write'),
+  adminUserController.setStatus
+);
+
+/* -------------------------------- vendors -------------------------------- */
+router.get('/vendors', requirePermission('vendors:read'), adminVendorController.list);
+router.get('/vendors/counts', requirePermission('vendors:read'), adminVendorController.counts);
+router.get('/vendors/:vendorId', requirePermission('vendors:read'), adminVendorController.getById);
+router.patch(
+  '/vendors/:vendorId/status',
+  requirePermission('vendors:write'),
+  adminVendorController.setStatus
+);
+
+/* -------------------------------- drivers -------------------------------- */
+router.get('/drivers', requirePermission('drivers:read'), adminDriverController.list);
+router.get('/drivers/counts', requirePermission('drivers:read'), adminDriverController.counts);
+router.get('/drivers/:driverId', requirePermission('drivers:read'), adminDriverController.getById);
+router.patch(
+  '/drivers/:driverId/status',
+  requirePermission('drivers:write'),
+  adminDriverController.setStatus
+);
+
+/* ------------------------------ deliveries ------------------------------- */
+router.get(
+  '/deliveries/live',
+  requirePermission('deliveries:read'),
+  adminDriverController.liveDeliveries
+);
+
+/* --------------------------------- orders -------------------------------- */
+router.get('/orders', requirePermission('orders:read'), adminOrderController.list);
+router.get('/orders/:orderId', requirePermission('orders:read'), adminOrderController.getById);
+router.patch(
+  '/orders/:orderId/status',
+  requirePermission('orders:write'),
+  adminOrderController.updateStatus
+);
+router.post(
+  '/orders/:orderId/cancel',
+  requirePermission('orders:write'),
+  adminOrderController.cancel
+);
+router.post(
+  '/orders/:orderId/reassign-driver',
+  requirePermission('orders:write'),
+  adminOrderController.reassignDriver
+);
+
+/* -------------------------------- payments ------------------------------- */
+router.get('/payments', requirePermission('payments:read'), adminPaymentController.list);
+router.get('/payments/summary', requirePermission('payments:read'), adminPaymentController.summary);
+
+/* ------------------------------ commissions ------------------------------ */
+router.get('/commissions', requirePermission('payments:read'), adminCommissionController.list);
+router.post('/commissions', requirePermission('payments:write'), adminCommissionController.create);
+router.put(
+  '/commissions/:commissionId',
+  requirePermission('payments:write'),
+  adminCommissionController.update
+);
+router.delete(
+  '/commissions/:commissionId',
+  requirePermission('payments:write'),
+  adminCommissionController.remove
+);
+
+/* -------------------------------- payouts -------------------------------- */
+router.get('/payouts', requirePermission('payments:read'), adminPayoutController.list);
+router.get('/payouts/balances', requirePermission('payments:read'), adminPayoutController.balances);
+router.get('/payouts/summary', requirePermission('payments:read'), adminPayoutController.summary);
+router.patch(
+  '/payouts/:withdrawalId',
+  requirePermission('payments:write'),
+  adminPayoutController.update
+);
+
+/* ------------------------------ categories ------------------------------- */
+router.get('/categories', requirePermission('categories:read'), adminCategoryController.list);
+router.post('/categories', requirePermission('categories:write'), adminCategoryController.create);
+router.patch(
+  '/categories/reorder',
+  requirePermission('categories:write'),
+  adminCategoryController.reorder
+);
+router.put(
+  '/categories/:categoryId',
+  requirePermission('categories:write'),
+  adminCategoryController.update
+);
+router.delete(
+  '/categories/:categoryId',
+  requirePermission('categories:write'),
+  adminCategoryController.remove
+);
+
+/* ------------------------------ complaints ------------------------------- */
+router.get('/complaints', requirePermission('complaints:read'), adminComplaintController.list);
+router.get(
+  '/complaints/:complaintId',
+  requirePermission('complaints:read'),
+  adminComplaintController.getById
+);
+router.post('/complaints', requirePermission('complaints:write'), adminComplaintController.create);
+router.patch(
+  '/complaints/:complaintId',
+  requirePermission('complaints:write'),
+  adminComplaintController.update
+);
+
+/* ------------------------------- analytics ------------------------------- */
+router.get('/analytics/overview', requirePermission('analytics:read'), adminAnalyticsController.overview);
+router.get('/analytics/sales', requirePermission('analytics:read'), adminAnalyticsController.sales);
+router.get('/analytics/payouts', requirePermission('analytics:read'), adminAnalyticsController.payouts);
+
+/* ------------------------------ audit trail ------------------------------ */
+router.get(
+  '/actions',
+  requirePermission('actions:read'),
+  asyncHandler(async (req, res) => {
+    res.json(await adminActionLogService.list(req.query));
+  })
+);
+
+module.exports = router;

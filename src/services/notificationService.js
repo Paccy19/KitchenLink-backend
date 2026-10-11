@@ -186,6 +186,60 @@ class NotificationService {
     const updated = await notificationRepository.markAllReadByDriver(driverId);
     return { updated, unread_count: 0 };
   }
+
+  /* -------------------------------- admins -------------------------------- */
+
+  /**
+   * Pushes an operations alert onto the shared admin feed. `data.link` is the
+   * admin-panel route the alert should open when tapped. Best-effort: callers
+   * should tolerate it failing without breaking the originating action.
+   */
+  async notifyAdmin({ type = 'general', title, body, orderId = null, link = '', data = {} } = {}) {
+    if (!title || !body) return null;
+
+    const notification = await notificationRepository.createForAdmin({
+      type,
+      title,
+      body,
+      order_id: orderId || null,
+      data: { ...data, link: link || null },
+      sms_status: 'skipped',
+    });
+
+    return serializeNotification(notification);
+  }
+
+  async listForAdmin(query = {}) {
+    const { limit, page, offset } = parsePagination(query, {
+      defaultLimit: 30,
+      maxLimit: 50,
+    });
+
+    const [notifications, unreadCount] = await Promise.all([
+      notificationRepository.listForAdmin({ limit, offset }),
+      notificationRepository.countUnreadForAdmin(),
+    ]);
+
+    return {
+      notifications: notifications.map(serializeNotification),
+      unread_count: unreadCount,
+      meta: { limit, page, offset, unread_count: unreadCount },
+    };
+  }
+
+  async markAdminRead(notificationId) {
+    const existing = await notificationRepository.findByIdForAdmin(notificationId);
+    if (!existing) {
+      throw ApiError.notFound('Notification not found.', 'NOTIFICATION_NOT_FOUND');
+    }
+    const updated = await notificationRepository.markReadForAdmin(notificationId);
+    return { notification: serializeNotification(updated) };
+  }
+
+  async markAllAdminRead() {
+    const updated = await notificationRepository.markAllReadForAdmin();
+    return { updated, unread_count: 0 };
+  }
 }
 
 module.exports = new NotificationService();

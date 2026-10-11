@@ -279,6 +279,34 @@ const config = {
     // Statuses that count as a finished (historical) delivery.
     terminalStatuses: ['completed', 'cancelled', 'rejected'],
   },
+  admin: {
+    // Role claim embedded in admin JWT access tokens.
+    jwtRole: 'admin',
+    // Seeded super-admin credentials (override in production via env).
+    seedName: process.env.ADMIN_SEED_NAME || 'Platform Admin',
+    seedEmail: process.env.ADMIN_SEED_EMAIL || 'admin@foodkitchen.rw',
+    seedPassword: process.env.ADMIN_SEED_PASSWORD || 'Admin@12345',
+    // Default platform commission applied when no commission config matches.
+    commissionDefaultPercent: numberFromEnvOrZero(
+      process.env.PLATFORM_COMMISSION_PERCENT,
+      15
+    ),
+    // Flat handling fee shown on payout estimates (RWF).
+    payoutFeeRwf: numberFromEnvOrZero(process.env.PAYOUT_FEE_RWF, 0),
+    limits: {
+      listDefault: 20,
+      listMax: 100,
+      complaintsDefault: 20,
+      complaintsMax: 100,
+      actionsDefault: 25,
+      actionsMax: 100,
+    },
+    // Lightweight in-memory rate limiting for admin API traffic.
+    rateLimit: {
+      windowMs: numberFromEnv(process.env.ADMIN_RATE_WINDOW_MS, 60 * 1000),
+      max: numberFromEnv(process.env.ADMIN_RATE_MAX, 300),
+    },
+  },
 };
 
 module.exports = config;

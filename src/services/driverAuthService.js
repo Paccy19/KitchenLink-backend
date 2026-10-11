@@ -9,6 +9,7 @@ const { serializeDriverAccount } = require('../utils/serializers');
 const { hashPassword, comparePassword } = require('../utils/password');
 const driverRepository = require('../repositories/driverRepository');
 const otpRepository = require('../repositories/otpRepository');
+const notificationService = require('./notificationService');
 
 class DriverAuthService {
   /**
@@ -50,6 +51,16 @@ class DriverAuthService {
       completed_deliveries: 0,
       total_earnings_rwf: 0,
     });
+
+    notificationService
+      .notifyAdmin({
+        type: 'driver_application',
+        title: 'New driver application',
+        body: `${name} registered as a delivery partner and may need review.`,
+        link: `/admin-dashboard/drivers?driver=${driver._id}`,
+        data: { driver_id: String(driver._id), driver_name: name },
+      })
+      .catch(() => null);
 
     return { driver: serializeDriverAccount(driver), next: 'login' };
   }

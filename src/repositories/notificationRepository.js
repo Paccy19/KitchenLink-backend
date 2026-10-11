@@ -55,9 +55,55 @@ class NotificationRepository {
     const notification = await Notification.create({
       driver_id: driverId,
       customer_id: null,
+      audience: 'driver',
       ...doc,
     });
     return notification.toObject();
+  }
+
+  /* -------------------------------- admins -------------------------------- */
+
+  async createForAdmin(doc) {
+    const notification = await Notification.create({
+      admin_id: null,
+      customer_id: null,
+      driver_id: null,
+      audience: 'admin',
+      ...doc,
+    });
+    return notification.toObject();
+  }
+
+  async listForAdmin({ limit = 30, offset = 0 } = {}) {
+    return Notification.find({ audience: 'admin' })
+      .sort({ created_at: -1 })
+      .skip(offset)
+      .limit(limit)
+      .lean();
+  }
+
+  async countUnreadForAdmin() {
+    return Notification.countDocuments({ audience: 'admin', read_at: null });
+  }
+
+  async findByIdForAdmin(notificationId) {
+    return Notification.findOne({ _id: notificationId, audience: 'admin' }).lean();
+  }
+
+  async markReadForAdmin(notificationId) {
+    return Notification.findOneAndUpdate(
+      { _id: notificationId, audience: 'admin' },
+      { $set: { read_at: new Date() } },
+      { new: true }
+    ).lean();
+  }
+
+  async markAllReadForAdmin() {
+    const result = await Notification.updateMany(
+      { audience: 'admin', read_at: null },
+      { $set: { read_at: new Date() } }
+    );
+    return result.modifiedCount ?? 0;
   }
 
   async listByDriver(driverId, { limit = 30, offset = 0 } = {}) {

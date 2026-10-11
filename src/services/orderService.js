@@ -339,6 +339,40 @@ class OrderService {
 
     await cartRepository.clear(customerId);
 
+    notificationService
+      .notifyAdmin({
+        type: 'order_placed',
+        title: 'New order placed',
+        body: `${order.order_number} · ${Number(total).toLocaleString()} RWF at ${vendor.name || 'a vendor'}.`,
+        orderId: order._id,
+        link: `/admin-dashboard/orders?order=${order._id}`,
+        data: {
+          order_id: String(order._id),
+          order_number: order.order_number,
+          vendor_name: vendor.name || null,
+          total_rwf: total,
+          payment_status: paymentStatus,
+        },
+      })
+      .catch(() => null);
+
+    if (paymentStatus === 'failed') {
+      notificationService
+        .notifyAdmin({
+          type: 'payment_failed',
+          title: 'Payment failed',
+          body: `Payment for ${order.order_number} (${Number(total).toLocaleString()} RWF) did not go through.`,
+          orderId: order._id,
+          link: `/admin-dashboard/payments`,
+          data: {
+            order_id: String(order._id),
+            order_number: order.order_number,
+            total_rwf: total,
+          },
+        })
+        .catch(() => null);
+    }
+
     return serializeDetail({ ...order, ...updatedOrder }, vendor, payment);
   }
 

@@ -97,9 +97,13 @@ const vendorSchema = new mongoose.Schema(
     ],
     verification_status: {
       type: String,
-      enum: ['pending', 'approved', 'rejected'],
+      enum: ['pending', 'approved', 'rejected', 'suspended'],
       default: 'approved',
     },
+    // Admin moderation notes.
+    rejection_reason: { type: String, default: '' },
+    suspension_reason: { type: String, default: '' },
+    suspended_at: { type: Date, default: null },
     // Wallet (RWF).
     available_balance: { type: Number, min: 0, default: 0 },
     total_sales: { type: Number, min: 0, default: 0 },

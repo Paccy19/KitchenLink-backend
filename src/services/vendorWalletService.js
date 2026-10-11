@@ -4,6 +4,7 @@ const { serializeWithdrawal } = require('../utils/serializers');
 const vendorRepository = require('../repositories/vendorRepository');
 const withdrawalRepository = require('../repositories/withdrawalRepository');
 const orderRepository = require('../repositories/orderRepository');
+const notificationService = require('./notificationService');
 
 const METHOD_ALIASES = [
   { match: /momo|mtn|mobile|airtel/i, code: 'mobile_money' },
@@ -74,6 +75,20 @@ class VendorWalletService {
         Math.floor(1000 + Math.random() * 9000)
       )}`,
     });
+
+    notificationService
+      .notifyAdmin({
+        type: 'payout_requested',
+        title: 'Payout requested',
+        body: `${vendor.name || 'A vendor'} requested a payout of ${amount.toLocaleString()} RWF.`,
+        link: `/admin-dashboard/payouts?payout=${withdrawal._id}`,
+        data: {
+          withdrawal_id: String(withdrawal._id),
+          amount_rwf: amount,
+          vendor_id: String(vendor._id),
+        },
+      })
+      .catch(() => null);
 
     return {
       withdrawal: serializeWithdrawal(withdrawal),

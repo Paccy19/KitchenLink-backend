@@ -1,5 +1,8 @@
 const { Customer } = require('../models');
 
+const escapeRegex = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 class CustomerRepository {
   async findByPhone(phoneNumber) {
     return Customer.findOne({ phone_number: phoneNumber }).lean();
@@ -37,6 +40,40 @@ class CustomerRepository {
       { $set: update },
       { new: true }
     ).lean();
+  }
+
+  /* ------------------------------- admin ------------------------------- */
+
+  async adminList({ search, isActive, limit, offset }) {
+    const filter = {};
+    if (isActive !== undefined) filter.is_active = isActive;
+    if (search) {
+      const regex = new RegExp(escapeRegex(search), 'i');
+      filter.$or = [{ name: regex }, { phone_number: regex }];
+    }
+
+    const [customers, total] = await Promise.all([
+      Customer.find(filter).sort({ created_at: -1 }).skip(offset).limit(limit).lean(),
+      Customer.countDocuments(filter),
+    ]);
+    return { customers, total };
+  }
+
+  async countAll() {
+    return Customer.countDocuments();
+  }
+
+  async countActive() {
+    return Customer.countDocuments({ is_active: { $ne: false } });
+  }
+
+  async countSince(date) {
+    return Customer.countDocuments({ created_at: { $gte: date } });
+  }
+
+  async findByIdsWithOrders(customerIds = []) {
+    if (!customerIds || customerIds.length === 0) return [];
+    return Customer.find({ _id: { $in: customerIds } }).lean();
   }
 }
 

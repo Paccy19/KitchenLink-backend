@@ -27,6 +27,45 @@ class WithdrawalRepository {
     ]);
     return result?.total ?? 0;
   }
+
+  /* ------------------------------- admin ------------------------------- */
+
+  async findById(withdrawalId) {
+    return Withdrawal.findOne({ _id: withdrawalId, deleted_at: null }).lean();
+  }
+
+  async adminList({ status, vendorId, limit, offset }) {
+    const filter = { deleted_at: null };
+    if (status) filter.status = status;
+    if (vendorId) filter.vendor_id = vendorId;
+
+    const [withdrawals, total] = await Promise.all([
+      Withdrawal.find(filter)
+        .sort({ created_at: -1 })
+        .skip(offset)
+        .limit(limit)
+        .populate('vendor_id', 'name phone neighborhood')
+        .lean(),
+      Withdrawal.countDocuments(filter),
+    ]);
+    return { withdrawals, total };
+  }
+
+  async updateStatus(withdrawalId, update) {
+    return Withdrawal.findOneAndUpdate(
+      { _id: withdrawalId, deleted_at: null },
+      { $set: update },
+      { new: true }
+    ).lean();
+  }
+
+  async totalsByStatus() {
+    const rows = await Withdrawal.aggregate([
+      { $match: { deleted_at: null } },
+      { $group: { _id: '$status', total: { $sum: '$amount_rwf' }, count: { $sum: 1 } } },
+    ]);
+    return rows;
+  }
 }
 
 module.exports = new WithdrawalRepository();

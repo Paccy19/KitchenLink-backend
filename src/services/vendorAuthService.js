@@ -20,6 +20,7 @@ const { buildPublicUrl, resolveImageUrl } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
 const categoryRepository = require('../repositories/categoryRepository');
 const otpRepository = require('../repositories/otpRepository');
+const notificationService = require('./notificationService');
 
 class VendorAuthService {
   /**
@@ -94,6 +95,16 @@ class VendorAuthService {
       total_sales: 0,
       ...(bannerImageUrl ? { banner_image_url: bannerImageUrl } : {}),
     });
+
+    notificationService
+      .notifyAdmin({
+        type: 'vendor_application',
+        title: 'New vendor application',
+        body: `${name} (${vendorType}) applied to join the marketplace and needs verification.`,
+        link: `/admin-dashboard/vendors?vendor=${vendor._id}`,
+        data: { vendor_id: String(vendor._id), vendor_name: name },
+      })
+      .catch(() => null);
 
     return { vendor: serializeVendorAccount(vendor), next: 'login' };
   }

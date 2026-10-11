@@ -1,5 +1,8 @@
 const { Driver } = require('../models');
 
+const escapeRegex = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const toPoint = ({ lat, lng }) => ({
   type: 'Point',
   coordinates: [lng, lat],
@@ -153,6 +156,56 @@ class DriverRepository {
       },
     ]);
     return result || {};
+  }
+
+  /* ------------------------------- admin ------------------------------- */
+
+  async adminList({ status, online, search, limit, offset }) {
+    const filter = { deleted_at: null };
+    if (status) filter.verification_status = status;
+    if (online !== undefined) filter.is_online = online;
+    if (search) {
+      const regex = new RegExp(escapeRegex(search), 'i');
+      filter.$or = [
+        { name: regex },
+        { phone: regex },
+        { email: regex },
+        { plate_number: regex },
+      ];
+    }
+
+    const [drivers, total] = await Promise.all([
+      Driver.find(filter).sort({ created_at: -1 }).skip(offset).limit(limit).lean(),
+      Driver.countDocuments(filter),
+    ]);
+    return { drivers, total };
+  }
+
+  async countsByVerification() {
+    const rows = await Driver.aggregate([
+      { $match: { deleted_at: null } },
+      { $group: { _id: '$verification_status', count: { $sum: 1 } } },
+    ]);
+    return rows.reduce((acc, row) => {
+      acc[row._id] = row.count;
+      return acc;
+    }, {});
+  }
+
+  async countActive() {
+    return Driver.countDocuments({ is_active: true, deleted_at: null });
+  }
+
+  async countOnline() {
+    return Driver.countDocuments({ is_online: true, deleted_at: null });
+  }
+
+  async countSince(date) {
+    return Driver.countDocuments({ created_at: { $gte: date }, deleted_at: null });
+  }
+
+  async setVerification(driverId, update) {
+    return this.update(driverId, update);
   }
 }
 
