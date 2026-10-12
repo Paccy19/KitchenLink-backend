@@ -6,9 +6,11 @@ const otpCodeSchema = new mongoose.Schema(
     phone_number: { type: String, required: true, index: true },
     purpose: {
       type: String,
-      enum: ['customer', 'vendor', 'driver'],
+      enum: ['customer', 'vendor', 'driver', 'admin'],
       default: 'customer',
     },
+    // What an admin code authorizes (e.g. 'login', 'platform_withdrawal').
+    context: { type: String, default: '' },
     code: { type: String, required: true },
     name: { type: String, trim: true },
     attempts: { type: Number, default: 0 },

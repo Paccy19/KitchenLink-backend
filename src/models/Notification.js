@@ -41,6 +41,7 @@ const notificationSchema = new mongoose.Schema(
         'payout_update',
         'order_placed',
         'payment_failed',
+        'owner_finance',
       ],
       default: 'general',
     },

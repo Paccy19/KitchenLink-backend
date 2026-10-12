@@ -18,6 +18,10 @@ const AdminActionLog = require('./AdminActionLog');
 const Commission = require('./Commission');
 const PlatformAccount = require('./PlatformAccount');
 const Transaction = require('./Transaction');
+const PayoutDestination = require('./PayoutDestination');
+const PlatformWithdrawal = require('./PlatformWithdrawal');
+const ReconciliationCheck = require('./ReconciliationCheck');
+const OwnerPayoutSettings = require('./OwnerPayoutSettings');
 
 module.exports = {
   Vendor,
@@ -40,4 +44,8 @@ module.exports = {
   Commission,
   PlatformAccount,
   Transaction,
+  PayoutDestination,
+  PlatformWithdrawal,
+  ReconciliationCheck,
+  OwnerPayoutSettings,
 };

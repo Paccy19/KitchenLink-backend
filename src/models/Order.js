@@ -125,6 +125,9 @@ const orderSchema = new mongoose.Schema(
       default: 'unpaid',
     },
     settled_at: { type: Date, default: null },
+    // Set when the delivery fee is allocated to the rider who delivered it.
+    // Until then the fee stays held (e.g. no rider has delivered the order).
+    rider_payout_settled_at: { type: Date, default: null },
   },
   { timestamps }
 );

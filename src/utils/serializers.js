@@ -500,7 +500,7 @@ function serializeWithdrawal(withdrawal) {
 
 /* -------------------------------- admin -------------------------------- */
 
-function serializeAdmin(admin) {
+function serializeAdmin(admin, { usesDefaultPassword } = {}) {
   return {
     id: String(admin._id),
     name: admin.name,
@@ -508,6 +508,9 @@ function serializeAdmin(admin) {
     role: admin.role,
     permissions: admin.permissions || [],
     is_active: admin.is_active !== false,
+    phone: admin.phone || null,
+    two_factor_enabled: Boolean(admin.two_factor_enabled && admin.phone),
+    ...(usesDefaultPassword !== undefined ? { uses_default_password: usesDefaultPassword } : {}),
     last_login_at: admin.last_login_at ?? null,
     created_at: admin.created_at,
   };
@@ -658,15 +661,29 @@ function serializeAdminOrder(order) {
 
 /** Platform (system admin) money account summary. */
 function serializePlatformAccount(account = {}) {
+  const n = (value) => value ?? 0;
+  const unreconciled = n(account.unreconciled_rwf);
   return {
-    held_balance_rwf: account.held_balance_rwf ?? 0,
-    commission_balance_rwf: account.commission_balance_rwf ?? 0,
-    total_collected_rwf: account.total_collected_rwf ?? 0,
-    total_commission_rwf: account.total_commission_rwf ?? 0,
-    total_vendor_payouts_rwf: account.total_vendor_payouts_rwf ?? 0,
-    total_driver_payouts_rwf: account.total_driver_payouts_rwf ?? 0,
-    total_refunded_rwf: account.total_refunded_rwf ?? 0,
-    updated_at: account.updated_at ?? null,
+    // Money that should be in the platform's real account right now...
+    cash_balance_rwf: n(account.cash_balance_rwf),
+    // ...and what it is made of.
+    held_balance_rwf: n(account.held_balance_rwf),
+    vendor_payable_rwf: n(account.vendor_payable_rwf),
+    driver_payable_rwf: n(account.driver_payable_rwf),
+    commission_balance_rwf: n(account.commission_balance_rwf),
+    reconciliation: {
+      balanced: unreconciled === 0,
+      unreconciled_rwf: unreconciled,
+    },
+    total_collected_rwf: n(account.total_collected_rwf),
+    total_refunded_rwf: n(account.total_refunded_rwf),
+    total_commission_rwf: n(account.total_commission_rwf),
+    total_vendor_earnings_rwf: n(account.total_vendor_earnings_rwf),
+    total_driver_earnings_rwf: n(account.total_driver_earnings_rwf),
+    // Actually paid out to vendors / riders (completed withdrawals).
+    total_vendor_payouts_rwf: n(account.total_vendor_payouts_rwf),
+    total_driver_payouts_rwf: n(account.total_driver_payouts_rwf),
+    computed_at: account.computed_at ?? null,
   };
 }
 

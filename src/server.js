@@ -4,6 +4,10 @@ const app = require('./app');
 const adminAuthService = require('./services/adminAuthService');
 const commissionRepository = require('./repositories/commissionRepository');
 const driverRepository = require('./repositories/driverRepository');
+const platformLedgerService = require('./services/platformLedgerService');
+const platformSweepService = require('./services/platformSweepService');
+
+const DEFAULT_JWT_SECRET = 'dev-secret-change-me';
 
 const bootstrapAdmin = async () => {
   try {
@@ -51,14 +55,39 @@ const bootstrapAdmin = async () => {
   } catch (error) {
     console.error('Driver balance backfill failed:', error);
   }
+
+  try {
+    const { renamed, backfilled } = await platformLedgerService.migrateLegacyLedger();
+    if (renamed > 0) console.log(`Upgraded ${renamed} ledger entries to owed-money accounting`);
+    if (backfilled > 0) console.log(`Recorded ${backfilled} past customer payment(s) missing from the ledger`);
+    const books = await platformLedgerService.snapshot();
+    if (books.unreconciled_rwf !== 0) {
+      console.warn(
+        `[ledger] Books do not balance: ${books.unreconciled_rwf} RWF unaccounted for (see /admin/platform/wallet)`
+      );
+    }
+  } catch (error) {
+    console.error('Ledger check failed:', error);
+  }
 };
 
 const start = async () => {
+  // Signed sessions are only as safe as this secret.
+  if (config.auth.jwtSecret === DEFAULT_JWT_SECRET) {
+    if (config.env === 'production') {
+      console.error('Refusing to start: set a strong JWT_SECRET in the environment.');
+      process.exit(1);
+    }
+    console.warn('[security] JWT_SECRET is the default value. Set a strong one before going live.');
+  }
+
   try {
     await mongoose.connect(config.mongoUri);
     console.log(`MongoDB connected: ${config.mongoUri}`);
 
     await bootstrapAdmin();
+
+    platformSweepService.start();
 
     app.listen(config.port, () => {
       console.log(`API listening on http://localhost:${config.port}/api/v1`);

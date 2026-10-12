@@ -10,8 +10,17 @@ const login = asyncHandler(async (req, res) => {
   );
 });
 
+const verifyTwoFactor = asyncHandler(async (req, res) => {
+  res.json(
+    await adminAuthService.verifyTwoFactor({
+      challenge_token: req.body?.challenge_token,
+      code: req.body?.code,
+    })
+  );
+});
+
 const me = asyncHandler(async (req, res) => {
-  res.json(adminAuthService.me(req.admin));
+  res.json(await adminAuthService.me(req.admin));
 });
 
 const changePassword = asyncHandler(async (req, res) => {
@@ -23,4 +32,31 @@ const changePassword = asyncHandler(async (req, res) => {
   );
 });
 
-module.exports = { login, me, changePassword };
+const startTwoFactor = asyncHandler(async (req, res) => {
+  res.json(await adminAuthService.startTwoFactor(req.admin, { phone: req.body?.phone }));
+});
+
+const enableTwoFactor = asyncHandler(async (req, res) => {
+  res.json(
+    await adminAuthService.enableTwoFactor(req.admin, { phone: req.body?.phone, code: req.body?.code })
+  );
+});
+
+const disableTwoFactor = asyncHandler(async (req, res) => {
+  res.json(await adminAuthService.disableTwoFactor(req.admin, { code: req.body?.code }));
+});
+
+const sendActionCode = asyncHandler(async (req, res) => {
+  res.json(await adminAuthService.sendActionCode(req.admin, { purpose: req.body?.purpose }));
+});
+
+module.exports = {
+  login,
+  verifyTwoFactor,
+  me,
+  changePassword,
+  startTwoFactor,
+  enableTwoFactor,
+  disableTwoFactor,
+  sendActionCode,
+};

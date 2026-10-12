@@ -1,23 +1,25 @@
 const { OtpCode } = require('../models');
 
 class OtpRepository {
-  async create({ phoneNumber, purpose = 'customer', code, name, expiresAt }) {
+  async create({ phoneNumber, purpose = 'customer', context = '', code, name, expiresAt }) {
     return OtpCode.create({
       phone_number: phoneNumber,
       purpose,
+      context,
       code,
       name: name || undefined,
       expires_at: expiresAt,
     });
   }
 
-  async findLatestActive(phoneNumber, purpose = 'customer') {
+  async findLatestActive(phoneNumber, purpose = 'customer', context = null) {
     const purposeFilter = purpose === 'customer'
       ? { $or: [{ purpose }, { purpose: { $exists: false } }] }
       : { purpose };
     return OtpCode.findOne({
       phone_number: phoneNumber,
       ...purposeFilter,
+      ...(context ? { context } : {}),
       consumed_at: null,
       expires_at: { $gt: new Date() },
     }).sort({ created_at: -1 });
@@ -49,8 +51,8 @@ class OtpRepository {
     });
   }
 
-  async lastSentAt(phoneNumber) {
-    const latest = await OtpCode.findOne({ phone_number: phoneNumber })
+  async lastSentAt(phoneNumber, context = null) {
+    const latest = await OtpCode.findOne({ phone_number: phoneNumber, ...(context ? { context } : {}) })
       .sort({ created_at: -1 })
       .select('created_at')
       .lean();

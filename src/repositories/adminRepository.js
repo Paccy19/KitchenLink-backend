@@ -51,6 +51,10 @@ class AdminRepository {
   async count() {
     return Admin.countDocuments({ deleted_at: null });
   }
+
+  async listSuperAdmins() {
+    return Admin.find({ role: 'super_admin', is_active: { $ne: false }, deleted_at: null }).lean();
+  }
 }
 
 module.exports = new AdminRepository();

@@ -326,6 +326,30 @@ const config = {
     ),
     // Flat handling fee shown on payout estimates (RWF).
     payoutFeeRwf: numberFromEnvOrZero(process.env.PAYOUT_FEE_RWF, 0),
+    // Codes sent to the admin's phone for sign-in and money actions.
+    otpTtlMinutes: numberFromEnv(process.env.ADMIN_OTP_TTL_MINUTES, 5),
+    // The owner's own commission withdrawals.
+    owner: {
+      maxWithdrawalRwf: numberFromEnv(process.env.OWNER_MAX_WITHDRAWAL_RWF, 500000),
+      maxWeeklyRwf: numberFromEnv(process.env.OWNER_MAX_WEEKLY_RWF, 2000000),
+      // Share of the commission balance always kept back for refunds/disputes.
+      reservePercent: numberFromEnvOrZero(process.env.OWNER_RESERVE_PERCENT, 10),
+      // A newly added payout destination can only be used after this wait.
+      destinationCooldownHours: numberFromEnvOrZero(
+        process.env.OWNER_DESTINATION_COOLDOWN_HOURS,
+        48
+      ),
+      // Service that sends payouts automatically ('manual' = owner transfers).
+      payoutProvider: process.env.PAYOUT_PROVIDER || 'manual',
+      // Default schedule until the owner saves payout settings (Kigali time):
+      // weekday 0=Sun..6=Sat.
+      sweep: {
+        enabled: process.env.OWNER_SWEEP_ENABLED !== 'false',
+        weekday: numberFromEnvOrZero(process.env.OWNER_SWEEP_WEEKDAY, 5),
+        hour: numberFromEnvOrZero(process.env.OWNER_SWEEP_HOUR, 9),
+        minRwf: numberFromEnvOrZero(process.env.OWNER_SWEEP_MIN_RWF, 5000),
+      },
+    },
     limits: {
       listDefault: 20,
       listMax: 100,

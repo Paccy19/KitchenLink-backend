@@ -10,6 +10,7 @@ const { serializeAdminVendor, serializeAdminOrder } = require('../utils/serializ
 const vendorRepository = require('../repositories/vendorRepository');
 const orderRepository = require('../repositories/orderRepository');
 const adminActionLogService = require('./adminActionLogService');
+const settlementService = require('./settlementService');
 
 const VENDOR_STATUSES = ['pending', 'approved', 'rejected', 'suspended'];
 
@@ -85,11 +86,19 @@ class AdminVendorService {
       update.is_active = false;
       update.suspension_reason = note;
       update.suspended_at = new Date();
+      const openOrders = await orderRepository.listOpenByVendor(
+        vendorId,
+        config.vendor.pendingInternalStatuses
+      );
       cancelledOrders = await orderRepository.cancelOpenByVendor(
         vendorId,
         config.vendor.pendingInternalStatuses,
         note || 'Vendor suspended by admin'
       );
+      // Refund customers who had paid for the cancelled orders.
+      for (const order of openOrders) {
+        await settlementService.refundOrder(order);
+      }
     }
 
     const updated = await vendorRepository.update(vendorId, update);

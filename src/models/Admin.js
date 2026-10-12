@@ -44,6 +44,9 @@ const adminSchema = new mongoose.Schema(
     // Empty means "all permissions for the role" (super admins).
     permissions: [{ type: String, enum: ADMIN_PERMISSIONS }],
     is_active: { type: Boolean, default: true },
+    // Verified phone for SMS sign-in codes and money-action confirmations.
+    phone: { type: String, trim: true, default: '' },
+    two_factor_enabled: { type: Boolean, default: false },
     last_login_at: { type: Date },
     // Soft delete.
     deleted_at: { type: Date, default: null },

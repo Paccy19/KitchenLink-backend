@@ -5,15 +5,18 @@ const {
   serializePlatformAccount,
   serializeTransaction,
 } = require('../utils/serializers');
-const platformAccountRepository = require('../repositories/platformAccountRepository');
 const transactionRepository = require('../repositories/transactionRepository');
+const platformLedgerService = require('./platformLedgerService');
 
 const TRANSACTION_TYPES = [
   'order_payment',
-  'vendor_payout',
-  'driver_payout',
+  'vendor_earning',
+  'driver_earning',
   'commission',
   'refund',
+  'withdrawal',
+  'adjustment',
+  'platform_withdrawal',
 ];
 
 class AdminPlatformService {
@@ -26,7 +29,8 @@ class AdminPlatformService {
     const type = parseEnum(query.type, TRANSACTION_TYPES, 'type');
 
     const [account, { transactions, total }] = await Promise.all([
-      platformAccountRepository.getOrCreate(),
+      // Recomputed from the ledger, orders and balances on every request.
+      platformLedgerService.snapshot(),
       transactionRepository.list({ type, limit, offset }),
     ]);
 

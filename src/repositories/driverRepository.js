@@ -216,6 +216,12 @@ class DriverRepository {
     ).lean();
   }
 
+  /** Total the platform owes riders (their unwithdrawn balances). */
+  async totalBalances() {
+    const [row] = await Driver.aggregate([{ $group: { _id: null, total: { $sum: { $ifNull: ['$available_balance_rwf', 0] } } } }]);
+    return row?.total ?? 0;
+  }
+
   /** Return funds to the balance (e.g. a failed payout). */
   async incrementBalance(driverId, amountRwf) {
     return Driver.findOneAndUpdate(

@@ -27,6 +27,11 @@ const adminActionLogSchema = new mongoose.Schema(
         'complaint',
         'admin',
         'system',
+        // The owner's platform money.
+        'platform_withdrawal',
+        'payout_destination',
+        'transaction',
+        'reconciliation',
       ],
       default: 'system',
     },

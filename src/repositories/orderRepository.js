@@ -258,6 +258,56 @@ class OrderRepository {
     }));
   }
 
+  /**
+   * Customer money the platform is still holding: paid orders not yet
+   * completed, plus delivery fees of completed orders no rider has been
+   * credited for yet.
+   */
+  async heldTotal() {
+    const [row] = await Order.aggregate([
+      { $match: { settlement_status: { $in: ['held', 'settled'] } } },
+      {
+        $group: {
+          _id: null,
+          total: {
+            $sum: {
+              $cond: [
+                { $eq: ['$settlement_status', 'held'] },
+                '$total_rwf',
+                { $cond: [{ $ifNull: ['$rider_payout_settled_at', false] }, 0, '$delivery_fee_rwf'] },
+              ],
+            },
+          },
+        },
+      },
+    ]);
+    return row?.total ?? 0;
+  }
+
+  /**
+   * Atomically moves an order's settlement from one state to the next. Returns
+   * the updated order, or null if another request already moved it, so each
+   * money step (hold, settle, refund) happens exactly once.
+   */
+  async claimSettlement(orderId, from, to, extra = {}) {
+    return Order.findOneAndUpdate(
+      { _id: orderId, settlement_status: from },
+      { $set: { settlement_status: to, ...extra } },
+      { new: true }
+    ).lean();
+  }
+
+  async listPaidExcept(orderIds = []) {
+    return Order.find({ payment_status: 'paid', _id: { $nin: orderIds } }).lean();
+  }
+
+  async markRiderSettled(orderId, at = new Date()) {
+    return Order.updateOne(
+      { _id: orderId, rider_payout_settled_at: null },
+      { $set: { rider_payout_settled_at: at } }
+    );
+  }
+
   async listOpenByVendor(vendorId, statuses) {
     return Order.find({ vendor_id: vendorId, status: { $in: statuses } }).lean();
   }

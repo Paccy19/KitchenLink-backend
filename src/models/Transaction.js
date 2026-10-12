@@ -2,16 +2,31 @@ const mongoose = require('mongoose');
 const timestamps = require('./timestamps');
 
 /**
- * Immutable money ledger. Every movement around the platform account is
- * recorded here: customer payments held, vendor/rider payouts released,
- * commission retained, and refunds.
+ * Immutable money ledger.
+ *
+ * Cash movements (`credit` = money into the platform's account, `debit` = money
+ * out of it): customer payments (`order_payment`), refunds (`refund`) and
+ * payouts actually sent to vendors/riders (`withdrawal`).
+ *
+ * Allocations (`internal`, no cash moves): when an order completes, held money
+ * is split into the platform's `commission`, what the platform now owes the
+ * vendor (`vendor_earning`) and, once a rider delivers it, what it owes the
+ * rider (`driver_earning`). Owed money leaves only when it is withdrawn.
  */
 const TRANSACTION_TYPES = [
   'order_payment',
-  'vendor_payout',
-  'driver_payout',
+  'vendor_earning',
+  'driver_earning',
   'commission',
   'refund',
+  // Owner's corrections to the platform's commission (e.g. writing off a
+  // loss); signed amount, applied to the commission balance.
+  'adjustment',
+  // Commission the owner actually withdrew from the platform's account.
+  'platform_withdrawal',
+  // Legacy names of vendor_earning / driver_earning (migrated at startup).
+  'vendor_payout',
+  'driver_payout',
   // Money actually sent out to a vendor/driver when an admin completes a
   // withdrawal (their earnings were booked as payouts at order completion).
   'withdrawal',
@@ -20,8 +35,8 @@ const TRANSACTION_TYPES = [
 const transactionSchema = new mongoose.Schema(
   {
     type: { type: String, enum: TRANSACTION_TYPES, required: true, index: true },
-    // credit = money into the platform account, debit = money out of it.
-    direction: { type: String, enum: ['credit', 'debit'], required: true },
+    // credit/debit = cash into/out of the platform account; internal = allocation.
+    direction: { type: String, enum: ['credit', 'debit', 'internal'], required: true },
     status: {
       type: String,
       enum: ['held', 'settled', 'refunded'],

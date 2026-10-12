@@ -1,23 +1,26 @@
 const orderRepository = require('../repositories/orderRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
-const platformAccountRepository = require('../repositories/platformAccountRepository');
 const transactionRepository = require('../repositories/transactionRepository');
 const commissionService = require('./commissionService');
 
 const roundRwf = (value) => Math.max(0, Math.round(Number(value) || 0));
 
 /**
- * Money flow for orders:
+ * Money flow for orders (see platformLedgerService for the resulting books):
  *
- *  1. Customer pays  -> the full amount (food + delivery) is held by the
- *     platform (`onPaymentSuccess`).
- *  2. Order completes -> the platform keeps the commission (calculated on the
- *     food subtotal ONLY), credits the vendor `subtotal - commission`, and the
- *     rider keeps the entire delivery fee (`releaseOrder`).
+ *  1. Customer pays   -> food + delivery is held by the platform
+ *                        (`onPaymentSuccess`, cash in).
+ *  2. Order completes -> the food part is allocated: the platform keeps its
+ *                        commission (on the food subtotal only) and now OWES
+ *                        the vendor `subtotal - commission` (`releaseOrder`).
+ *  3. Rider delivers  -> the delivery fee is allocated: the platform now OWES
+ *                        the rider the full fee (`recordDriverPayout`).
+ *  4. Withdrawal paid -> owed money actually leaves (adminPayoutService).
+ *  Cancelled before completion -> the held amount is refunded (`refundOrder`).
  *
- * Every step is idempotent so the vendor "mark completed" path and the rider
- * OTP-confirmation path can both call it safely.
+ * Only money that was actually received is ever allocated, and every step is
+ * idempotent so the vendor, rider, admin and agent paths can all call it.
  */
 class SettlementService {
   /** Compute the payout split for an order (commission is on food only). */
@@ -58,8 +61,8 @@ class SettlementService {
   }
 
   /**
-   * Customer payment succeeded: snapshot the split and hold the full amount on
-   * the platform account in escrow.
+   * Customer payment succeeded: snapshot the split and hold the full amount.
+   * If the order was already completed while unpaid, settle it right away.
    */
   async onPaymentSuccess(order) {
     if (!order) return null;
@@ -69,15 +72,13 @@ class SettlementService {
 
     const split = await this.#computeSplit(order, null);
 
-    await orderRepository.update(order._id, {
+    const claimed = await orderRepository.claimSettlement(order._id, 'unpaid', 'held', {
       commission_percent: split.percent,
       commission_rwf: split.commissionRwf,
       vendor_payout_rwf: split.vendorPayout,
       rider_payout_rwf: split.riderPayout,
-      settlement_status: 'held',
     });
-
-    await platformAccountRepository.hold({ amountRwf: split.total });
+    if (!claimed) return orderRepository.findById(order._id);
 
     await transactionRepository.create({
       type: 'order_payment',
@@ -96,33 +97,35 @@ class SettlementService {
       },
     });
 
-    return orderRepository.findById(order._id);
+    const fresh = await orderRepository.findById(order._id);
+    if (fresh?.status === 'delivered') {
+      return this.releaseOrder(order._id);
+    }
+    return fresh;
   }
 
   /**
-   * Order completed: release held funds. Credits the vendor and books the
-   * platform commission. Idempotent via the order's settlement_status.
+   * Order completed: allocate the held food money. The platform keeps its
+   * commission and owes the vendor the rest (credited to their balance). The
+   * delivery fee stays held until a rider is credited for it. Unpaid orders
+   * are not settled: nothing was received to pay anyone with.
    */
-  async releaseOrder(orderId, { driverId = null } = {}) {
+  async releaseOrder(orderId) {
     const order = await orderRepository.findById(orderId);
     if (!order) return null;
-    if (order.settlement_status === 'settled' || order.settlement_status === 'refunded') {
-      return order;
-    }
+    if (order.settlement_status !== 'held') return order;
 
     const split = await this.#computeSplit(order, null);
-    const wasHeld = order.settlement_status === 'held';
+    const claimed = await orderRepository.claimSettlement(order._id, 'held', 'settled', {
+      commission_percent: split.percent,
+      commission_rwf: split.commissionRwf,
+      vendor_payout_rwf: split.vendorPayout,
+      rider_payout_rwf: split.riderPayout,
+      settled_at: order.settled_at || new Date(),
+    });
+    if (!claimed) return orderRepository.findById(order._id);
 
-    if (wasHeld) {
-      await platformAccountRepository.settle({
-        heldRwf: split.total,
-        commissionRwf: split.commissionRwf,
-        vendorPayoutRwf: split.vendorPayout,
-        riderPayoutRwf: split.riderPayout,
-      });
-    }
-
-    // Vendor earns its food revenue (subtotal) and is credited net of commission.
+    // Vendor earns its food revenue (subtotal) and is owed it net of commission.
     await vendorRepository.incrementSales(order.vendor_id, {
       totalRwf: split.subtotal,
       balanceRwf: split.vendorPayout,
@@ -134,28 +137,26 @@ class SettlementService {
       )
     );
 
-    if (wasHeld) {
-      await transactionRepository.create({
-        type: 'commission',
-        direction: 'credit',
-        status: 'settled',
-        amount_rwf: split.commissionRwf,
-        order_id: order._id,
-        reference: order.order_number || '',
-        description: `Platform commission (${split.percent}%) for ${order.order_number}`,
-        metadata: { commission_percent: split.percent, subtotal_rwf: split.subtotal },
-      });
-    }
+    await transactionRepository.create({
+      type: 'commission',
+      direction: 'internal',
+      status: 'settled',
+      amount_rwf: split.commissionRwf,
+      order_id: order._id,
+      reference: order.order_number || '',
+      description: `Platform commission (${split.percent}%) for ${order.order_number}`,
+      metadata: { commission_percent: split.percent, subtotal_rwf: split.subtotal },
+    });
 
     await transactionRepository.create({
-      type: 'vendor_payout',
-      direction: 'debit',
+      type: 'vendor_earning',
+      direction: 'internal',
       status: 'settled',
       amount_rwf: split.vendorPayout,
       order_id: order._id,
       vendor_id: order.vendor_id,
       reference: order.order_number || '',
-      description: `Vendor payout for ${order.order_number}`,
+      description: `Owed to vendor for ${order.order_number}`,
       metadata: {
         subtotal_rwf: split.subtotal,
         commission_rwf: split.commissionRwf,
@@ -163,58 +164,52 @@ class SettlementService {
       },
     });
 
-    await orderRepository.update(order._id, {
-      commission_percent: split.percent,
-      commission_rwf: split.commissionRwf,
-      vendor_payout_rwf: split.vendorPayout,
-      rider_payout_rwf: split.riderPayout,
-      settlement_status: 'settled',
-      settled_at: order.settled_at || new Date(),
-    });
-
     return orderRepository.findById(order._id);
   }
 
   /**
-   * Rider completed a delivery: the rider keeps the whole delivery fee. Records
-   * the ledger entry; the driver's earnings counter is updated by the caller.
+   * Rider delivered: the platform now owes them the full delivery fee (their
+   * balance is credited by the caller). Records the allocation once per order.
    */
   async recordDriverPayout(order, { driverId, amountRwf }) {
     if (!order || !driverId) return null;
     const amount = roundRwf(amountRwf);
     if (amount <= 0) return null;
+
+    const marked = await orderRepository.markRiderSettled(order._id);
+    if (!marked?.modifiedCount) return null;
+
     return transactionRepository.create({
-      type: 'driver_payout',
-      direction: 'debit',
+      type: 'driver_earning',
+      direction: 'internal',
       status: 'settled',
       amount_rwf: amount,
       order_id: order._id,
       driver_id: driverId,
       reference: order.order_number || '',
-      description: `Rider delivery fee for ${order.order_number}`,
+      description: `Owed to rider for delivering ${order.order_number}`,
       metadata: { delivery_fee_rwf: amount },
     });
   }
 
-  /** Order cancelled/refunded: return the held amount. Idempotent. */
+  /** Order cancelled before completion: return the held amount. Idempotent. */
   async refundOrder(order) {
     if (!order) return null;
-    if (order.settlement_status !== 'held') return order;
+    const fresh = await orderRepository.claimSettlement(order._id, 'held', 'refunded');
+    if (!fresh) return orderRepository.findById(order._id);
 
-    const amount = roundRwf(order.total_rwf);
-    await platformAccountRepository.refund({ amountRwf: amount });
+    const amount = roundRwf(fresh.total_rwf);
     await transactionRepository.create({
       type: 'refund',
       direction: 'debit',
       status: 'refunded',
       amount_rwf: amount,
-      order_id: order._id,
-      customer_id: order.customer_id,
-      reference: order.order_number || '',
-      description: `Refund for ${order.order_number}`,
+      order_id: fresh._id,
+      customer_id: fresh.customer_id,
+      reference: fresh.order_number || '',
+      description: `Refund for ${fresh.order_number}`,
     });
-    await orderRepository.update(order._id, { settlement_status: 'refunded' });
-    return order;
+    return fresh;
   }
 }
 

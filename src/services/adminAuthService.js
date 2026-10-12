@@ -1,6 +1,19 @@
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
-const { signToken } = require('../utils/jwt');
+const { signToken, signShortToken, verifyToken } = require('../utils/jwt');
+const { normalizePhone } = require('../utils/validators');
+const adminOtpService = require('./adminOtpService');
+
+const CHALLENGE_ROLE = 'admin_2fa';
+// Money/security actions that need a fresh SMS code.
+const ACTION_CONTEXTS = [
+  'platform_withdrawal',
+  'payout_destination',
+  'remove_destination',
+  'adjustment',
+  'payout_settings',
+  'disable_2fa',
+];
 const { hashPassword, comparePassword } = require('../utils/password');
 const { parseEmail, parsePassword } = require('../utils/vendorValidators');
 const { serializeAdmin } = require('../utils/serializers');
@@ -33,12 +46,104 @@ class AdminAuthService {
       throw ApiError.unauthorized('Invalid email or password.', 'INVALID_CREDENTIALS');
     }
 
+    const usesDefaultPassword = await this.#isDefaultPassword(admin.password_hash);
+
+    // Second step: a code sent to the admin's verified phone.
+    if (admin.two_factor_enabled && admin.phone) {
+      const sent = await adminOtpService.send(admin.phone, 'login');
+      return {
+        two_factor_required: true,
+        challenge_token: signShortToken({ sub: String(admin._id), role: CHALLENGE_ROLE }),
+        ...sent,
+      };
+    }
+
     await adminRepository.touchLogin(admin._id);
-    return this.#issueSession({ ...admin, last_login_at: new Date() });
+    return this.#issueSession({ ...admin, last_login_at: new Date() }, { usesDefaultPassword });
   }
 
-  me(admin) {
-    return { admin: serializeAdmin(admin) };
+  /** Completes a sign-in that required an SMS code. */
+  async verifyTwoFactor({ challenge_token, code }) {
+    let payload;
+    try {
+      payload = verifyToken(String(challenge_token || ''));
+    } catch {
+      throw ApiError.unauthorized('Your sign-in attempt expired. Please sign in again.', 'CHALLENGE_EXPIRED');
+    }
+    if (payload.role !== CHALLENGE_ROLE) {
+      throw ApiError.unauthorized('Invalid sign-in attempt.', 'INVALID_CHALLENGE');
+    }
+    const admin = await adminRepository.findById(payload.sub);
+    if (!admin || admin.is_active === false || !admin.phone) {
+      throw ApiError.unauthorized('Invalid sign-in attempt.', 'INVALID_CHALLENGE');
+    }
+    await adminOtpService.verify(admin.phone, 'login', code);
+    const withPassword = await adminRepository.findByEmailWithPassword(admin.email);
+    const usesDefaultPassword = await this.#isDefaultPassword(withPassword?.password_hash);
+    await adminRepository.touchLogin(admin._id);
+    return this.#issueSession({ ...admin, last_login_at: new Date() }, { usesDefaultPassword });
+  }
+
+  async me(admin) {
+    return { admin: serializeAdmin(admin, { usesDefaultPassword: await this.usesDefaultPassword(admin) }) };
+  }
+
+  async usesDefaultPassword(admin) {
+    const withPassword = await adminRepository.findByEmailWithPassword(admin.email);
+    return this.#isDefaultPassword(withPassword?.password_hash);
+  }
+
+  async #isDefaultPassword(hash) {
+    if (!hash || !config.admin.seedPassword) return false;
+    return comparePassword(config.admin.seedPassword, hash);
+  }
+
+  /* --------------------------- SMS codes (2FA) --------------------------- */
+
+  /** Step 1 of turning on SMS codes: send a code to the new phone. */
+  async startTwoFactor(admin, { phone }) {
+    return adminOtpService.send(normalizePhone(phone), 'enable_2fa');
+  }
+
+  /** Step 2: prove the phone works, then require codes from now on. */
+  async enableTwoFactor(admin, { phone, code }) {
+    const normalized = normalizePhone(phone);
+    await adminOtpService.verify(normalized, 'enable_2fa', code);
+    const updated = await adminRepository.update(admin._id, { phone: normalized, two_factor_enabled: true });
+    return { admin: serializeAdmin(updated) };
+  }
+
+  async disableTwoFactor(admin, { code }) {
+    if (!admin.two_factor_enabled || !admin.phone) {
+      return { admin: serializeAdmin(admin) };
+    }
+    await adminOtpService.verify(admin.phone, 'disable_2fa', code);
+    const updated = await adminRepository.update(admin._id, { two_factor_enabled: false });
+    return { admin: serializeAdmin(updated) };
+  }
+
+  /** Sends a code for a money/security action to the admin's verified phone. */
+  async sendActionCode(admin, { purpose }) {
+    if (!ACTION_CONTEXTS.includes(purpose)) {
+      throw ApiError.badRequest('purpose is invalid.', { purpose: `expected one of: ${ACTION_CONTEXTS.join(', ')}` });
+    }
+    this.assertTwoFactor(admin);
+    return adminOtpService.send(admin.phone, purpose);
+  }
+
+  /** Verifies an action code (the admin must have a verified phone). */
+  async verifyActionCode(admin, purpose, code) {
+    this.assertTwoFactor(admin);
+    return adminOtpService.verify(admin.phone, purpose, code);
+  }
+
+  assertTwoFactor(admin) {
+    if (!admin.two_factor_enabled || !admin.phone) {
+      throw ApiError.forbidden(
+        'Turn on SMS codes in Settings first: money actions are confirmed with a code sent to your phone.',
+        'TWO_FACTOR_REQUIRED'
+      );
+    }
   }
 
   async changePassword(admin, { current_password, new_password }) {
@@ -46,6 +151,11 @@ class AdminAuthService {
       field: 'current_password',
     });
     const newPassword = parsePassword(new_password, { field: 'new_password' });
+    if (newPassword === config.admin.seedPassword) {
+      throw ApiError.badRequest('Choose a password different from the default one.', {
+        new_password: 'must not be the default password',
+      });
+    }
 
     const fresh = await adminRepository.findByEmailWithPassword(admin.email);
     const ok = await comparePassword(currentPassword, fresh?.password_hash || '');
@@ -82,7 +192,7 @@ class AdminAuthService {
     return { created: true, admin };
   }
 
-  #issueSession(admin) {
+  #issueSession(admin, { usesDefaultPassword = false } = {}) {
     const token = signToken({
       sub: String(admin._id),
       role: config.admin.jwtRole,
@@ -91,7 +201,7 @@ class AdminAuthService {
       token,
       token_type: 'Bearer',
       expires_in: config.auth.jwtExpiresIn,
-      admin: serializeAdmin(admin),
+      admin: serializeAdmin(admin, { usesDefaultPassword }),
     };
   }
 }

@@ -13,6 +13,12 @@ class PaymentRepository {
     return Payment.findById(paymentId).lean();
   }
 
+  async findSuccessfulByOrder(orderId) {
+    return Payment.findOne({ order_id: orderId, status: 'successful' })
+      .sort({ paid_at: -1, created_at: -1 })
+      .lean();
+  }
+
   async findLatestByOrder(orderId) {
     return Payment.findOne({ order_id: orderId })
       .sort({ created_at: -1 })

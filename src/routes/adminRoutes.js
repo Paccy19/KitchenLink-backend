@@ -2,6 +2,7 @@ const { Router } = require('express');
 const requireAdminAuth = require('../middleware/requireAdminAuth');
 const adminRateLimit = require('../middleware/adminRateLimit');
 const requirePermission = require('../middleware/requirePermission');
+const requireSuperAdmin = require('../middleware/requireSuperAdmin');
 
 const adminUserController = require('../controllers/adminUserController');
 const adminVendorController = require('../controllers/adminVendorController');
@@ -123,6 +124,29 @@ router.get(
   requirePermission('payments:read'),
   adminPlatformController.transactions
 );
+
+/* ------------------- owner's money (super admin only) ------------------- */
+router.get('/platform/owner', requireSuperAdmin, adminPlatformController.ownerOverview);
+router.post('/platform/owner/withdrawals', requireSuperAdmin, adminPlatformController.requestWithdrawal);
+router.post(
+  '/platform/owner/withdrawals/:withdrawalId/complete',
+  requireSuperAdmin,
+  adminPlatformController.completeWithdrawal
+);
+router.post(
+  '/platform/owner/withdrawals/:withdrawalId/cancel',
+  requireSuperAdmin,
+  adminPlatformController.cancelWithdrawal
+);
+router.post('/platform/owner/destinations', requireSuperAdmin, adminPlatformController.addDestination);
+router.post(
+  '/platform/owner/destinations/:destinationId/remove',
+  requireSuperAdmin,
+  adminPlatformController.removeDestination
+);
+router.post('/platform/owner/adjustments', requireSuperAdmin, adminPlatformController.recordAdjustment);
+router.put('/platform/owner/payout-settings', requireSuperAdmin, adminPlatformController.savePayoutSettings);
+router.post('/platform/owner/reconciliations', requireSuperAdmin, adminPlatformController.recordReconciliation);
 
 /* ------------------------------ categories ------------------------------- */
 router.get('/categories', requirePermission('categories:read'), adminCategoryController.list);

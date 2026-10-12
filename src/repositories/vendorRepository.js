@@ -125,6 +125,12 @@ class VendorRepository {
     ).lean();
   }
 
+  /** Total the platform owes vendors (their unwithdrawn balances). */
+  async totalBalances() {
+    const [row] = await Vendor.aggregate([{ $group: { _id: null, total: { $sum: { $ifNull: ['$available_balance', 0] } } } }]);
+    return row?.total ?? 0;
+  }
+
   /** Return funds to the balance (e.g. a failed payout). */
   async incrementBalance(vendorId, amountRwf) {
     return Vendor.findOneAndUpdate(

@@ -88,6 +88,15 @@ class VendorOrderService {
 
     const currentStatus = vendorConfig.internalToVendorStatus[order.status];
     const allowed = vendorConfig.orderTransitions[currentStatus] || [];
+
+    // Kitchens only work on orders the customer has paid for; an unpaid order
+    // can only be cancelled (paying the vendor/rider would use other money).
+    if (nextStatus !== 'cancelled' && order.payment_status !== 'paid') {
+      throw ApiError.conflict(
+        "The customer hasn't paid for this order yet. Wait for payment before accepting it.",
+        'PAYMENT_PENDING'
+      );
+    }
     if (!allowed.includes(nextStatus)) {
       throw ApiError.conflict(
         `Cannot move order from "${currentStatus}" to "${nextStatus}".`,
@@ -137,6 +146,10 @@ class VendorOrderService {
 
     if (nextStatus === 'completed') {
       await this.#applyCompletionPayout(order);
+    }
+    if (nextStatus === 'cancelled') {
+      // Return the customer's held payment.
+      await settlementService.refundOrder(order);
     }
 
     // When the kitchen signals the food is ready, a delivery is created and

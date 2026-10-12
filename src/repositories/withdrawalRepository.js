@@ -29,6 +29,12 @@ class WithdrawalRepository {
     return this.#sumByStatus({ driver_id: driverId, payee_type: 'driver' }, ['processing', 'completed']);
   }
 
+  /** Requested but not yet paid: still owed, just reserved. */
+  async totalProcessing(payeeType) {
+    const owner = payeeType === 'driver' ? { payee_type: 'driver' } : { payee_type: { $ne: 'driver' } };
+    return this.#sumByStatus(owner, ['processing']);
+  }
+
   async totalProcessingByDriver(driverId) {
     return this.#sumByStatus({ driver_id: driverId, payee_type: 'driver' }, ['processing']);
   }

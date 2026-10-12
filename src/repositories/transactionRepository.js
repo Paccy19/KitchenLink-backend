@@ -30,6 +30,35 @@ class TransactionRepository {
     return { transactions, total };
   }
 
+  /** Sum of amounts matching a filter (e.g. all commission entries). */
+  async sum(filter = {}) {
+    const [row] = await Transaction.aggregate([
+      { $match: filter },
+      { $group: { _id: null, total: { $sum: '$amount_rwf' } } },
+    ]);
+    return row?.total ?? 0;
+  }
+
+  /** Rename legacy entry types/directions (idempotent). */
+  async migrateLegacyTypes() {
+    const renamed = await Promise.all([
+      Transaction.updateMany({ type: 'vendor_payout' }, { $set: { type: 'vendor_earning', direction: 'internal' } }),
+      Transaction.updateMany({ type: 'driver_payout' }, { $set: { type: 'driver_earning', direction: 'internal' } }),
+      Transaction.updateMany({ type: 'commission', direction: { $ne: 'internal' } }, { $set: { direction: 'internal' } }),
+    ]);
+    return renamed.reduce((count, result) => count + (result.modifiedCount ?? 0), 0);
+  }
+
+  async orderIdsWithType(type) {
+    return Transaction.distinct('order_id', { type, order_id: { $ne: null } });
+  }
+
+  async listDriverEarningOrders() {
+    return Transaction.find({ type: 'driver_earning', order_id: { $ne: null } })
+      .select({ order_id: 1, created_at: 1 })
+      .lean();
+  }
+
   async totalsByType() {
     return Transaction.aggregate([
       { $match: { status: { $ne: 'refunded' } } },

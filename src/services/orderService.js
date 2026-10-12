@@ -683,6 +683,10 @@ class OrderService {
           : orders.statusLabels[nextStatus],
     });
 
+    // Keep the money in step with the status change.
+    if (nextStatus === 'cancelled') await settlementService.refundOrder(order);
+    if (nextStatus === 'delivered') await settlementService.releaseOrder(order._id);
+
     const refreshed = await orderRepository.findById(order._id);
     const vendor = await vendorRepository.findById(refreshed.vendor_id);
     const delivery = await deliveryRepository.findByOrderId(refreshed._id);
