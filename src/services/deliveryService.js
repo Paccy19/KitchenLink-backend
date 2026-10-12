@@ -18,8 +18,9 @@ const driverRepository = require('../repositories/driverRepository');
 const orderRepository = require('../repositories/orderRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const customerRepository = require('../repositories/customerRepository');
-const menuItemRepository = require('../repositories/menuItemRepository');
 const notificationService = require('./notificationService');
+const settlementService = require('./settlementService');
+const deliveryPricingService = require('./deliveryPricingService');
 
 const { delivery: deliveryConfig } = config;
 
@@ -45,7 +46,9 @@ class DeliveryService {
       longitude: vendorDoc?.location?.coordinates?.[0] ?? order.delivery_location.longitude,
     };
 
-    const distanceKm = this.#routeDistance(vendorDoc, order.delivery_location);
+    // Prefer the distance the customer was charged for; older orders predate it.
+    const distanceKm =
+      order.delivery_distance_km ?? this.#routeDistance(vendorDoc, order.delivery_location);
     const { fee, earnings } = this.#computeFees(distanceKm, order.delivery_fee_rwf);
 
     const delivery = await deliveryRepository.create({
@@ -238,7 +241,15 @@ class DeliveryService {
         { field: 'location', required: false }
       ) || this.#driverCoords(driver);
 
-    const radiusKm = this.#parseRadius(query.radius);
+    // The board shows every ready delivery (sorted by distance); a radius is
+    // only applied when the caller explicitly asks for one. Using the dispatch
+    // radius (3 km) here hid nearby orders whenever the driver's location was
+    // stale or fell back to the city-centre default.
+    const requestedRadius = Number(query.radius);
+    const radiusKm =
+      Number.isFinite(requestedRadius) && requestedRadius > 0
+        ? Math.min(requestedRadius, config.geo.maxRadiusKm)
+        : null;
 
     const raw = await deliveryRepository.listAvailable({
       statuses: deliveryConfig.availableStatuses,
@@ -257,7 +268,7 @@ class DeliveryService {
           : null;
         return { delivery, distance };
       })
-      .filter((entry) => (coords ? entry.distance <= radiusKm : true))
+      .filter((entry) => (coords && radiusKm ? entry.distance <= radiusKm : true))
       .sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
 
     const orders = await this.#loadOrders(items.map((entry) => entry.delivery));
@@ -534,6 +545,16 @@ class DeliveryService {
     const fresh = await driverRepository.recordCompletion(driver._id, {
       earningsRwf: delivery.promised_earnings_rwf || 0,
     });
+
+    // The rider keeps the full delivery fee; record it on the platform ledger.
+    await settlementService
+      .recordDriverPayout(
+        { _id: delivery.order_id, order_number: delivery.order_number },
+        { driverId: driver._id, amountRwf: delivery.promised_earnings_rwf || 0 }
+      )
+      .catch((error) =>
+        console.log(`[delivery] could not record driver payout: ${error?.message}`)
+      );
     const active = fresh?.active_deliveries_count ?? 0;
     if (!fresh?.is_online) {
       await driverRepository.setAvailability(driver._id, { status: 'offline' });
@@ -663,32 +684,7 @@ class DeliveryService {
     // the vendor's manual "mark completed" did, so the kitchen never has to come
     // back: the vendor is credited and dish counts bump.
     if (completed) {
-      await this.#applyVendorCompletion(order, delivery);
-    }
-  }
-
-  /**
-   * Vendor-side completion side-effects, credited exactly once per order (the
-   * delivery is terminal after OTP confirmation, so it can never re-run).
-   */
-  async #applyVendorCompletion(order, delivery) {
-    const vendorId = order.vendor_id || delivery.vendor_id;
-    if (!vendorId) return;
-    try {
-      const commission = config.vendor.commissionPercent / 100;
-      const balanceRwf = Math.round(order.total_rwf * (1 - commission));
-      await vendorRepository.incrementSales(vendorId, {
-        totalRwf: order.total_rwf,
-        balanceRwf,
-      });
-
-      await Promise.all(
-        (order.items || []).map((item) =>
-          menuItemRepository.incrementOrdersCount(item.menu_item_id, item.quantity)
-        )
-      );
-    } catch (error) {
-      console.log(`[delivery] vendor completion side-effects failed: ${error?.message}`);
+      await settlementService.releaseOrder(order._id);
     }
   }
 
@@ -698,12 +694,6 @@ class DeliveryService {
     const [lng, lat] = coordinates;
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
     return { lat, lng };
-  }
-
-  #parseRadius(raw) {
-    const value = Number(raw);
-    if (!Number.isFinite(value) || value <= 0) return deliveryConfig.defaultRadiusKm;
-    return Math.min(value, config.geo.maxRadiusKm);
   }
 
   #routeDistance(vendor, deliveryLocation) {
@@ -721,13 +711,10 @@ class DeliveryService {
   }
 
   #computeFees(distanceKm, fallbackFee) {
-    const { baseFeeRwf, perKmFeeRwf, minFeeRwf, driverSharePercent } = deliveryConfig;
-    const computed = Math.max(
-      minFeeRwf,
-      Math.round(baseFeeRwf + perKmFeeRwf * (distanceKm || 0))
-    );
+    // The rider is paid exactly what the customer was charged at checkout.
+    const computed = deliveryPricingService.feeForDistance(distanceKm);
     const fee = Number(fallbackFee) > 0 ? Number(fallbackFee) : computed;
-    const earnings = Math.round(fee * (driverSharePercent / 100));
+    const earnings = deliveryPricingService.driverEarnings(fee);
     return { fee, earnings, computed };
   }
 

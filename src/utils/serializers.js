@@ -255,7 +255,13 @@ function serializeVendorOrder(order, { customer } = {}) {
     })),
     subtotal_rwf: order.subtotal_rwf,
     delivery_fee_rwf: order.delivery_fee_rwf,
+    delivery_distance_km: order.delivery_distance_km ?? null,
     total_amount_rwf: order.total_rwf,
+    commission_percent: order.commission_percent ?? 0,
+    commission_rwf: order.commission_rwf ?? 0,
+    vendor_payout_rwf: order.vendor_payout_rwf ?? 0,
+    rider_payout_rwf: order.rider_payout_rwf ?? 0,
+    settlement_status: order.settlement_status || 'unpaid',
     payment_method: order.payment_method,
     payment_status: order.payment_status,
     order_type: order.order_type || 'immediate',
@@ -613,7 +619,13 @@ function serializeAdminOrder(order) {
     })),
     subtotal_rwf: order.subtotal_rwf,
     delivery_fee_rwf: order.delivery_fee_rwf,
+    delivery_distance_km: order.delivery_distance_km ?? null,
     total_amount_rwf: order.total_rwf,
+    commission_percent: order.commission_percent ?? 0,
+    commission_rwf: order.commission_rwf ?? 0,
+    vendor_payout_rwf: order.vendor_payout_rwf ?? 0,
+    rider_payout_rwf: order.rider_payout_rwf ?? 0,
+    settlement_status: order.settlement_status || 'unpaid',
     payment_method: order.payment_method,
     payment_status: order.payment_status,
     order_type: order.order_type || 'immediate',
@@ -630,6 +642,44 @@ function serializeAdminOrder(order) {
       at: entry.at,
       note: entry.note || '',
     })),
+  };
+}
+
+/** Platform (system admin) money account summary. */
+function serializePlatformAccount(account = {}) {
+  return {
+    held_balance_rwf: account.held_balance_rwf ?? 0,
+    commission_balance_rwf: account.commission_balance_rwf ?? 0,
+    total_collected_rwf: account.total_collected_rwf ?? 0,
+    total_commission_rwf: account.total_commission_rwf ?? 0,
+    total_vendor_payouts_rwf: account.total_vendor_payouts_rwf ?? 0,
+    total_driver_payouts_rwf: account.total_driver_payouts_rwf ?? 0,
+    total_refunded_rwf: account.total_refunded_rwf ?? 0,
+    updated_at: account.updated_at ?? null,
+  };
+}
+
+/** A single platform money-ledger entry. */
+function serializeTransaction(transaction = {}) {
+  const order =
+    transaction.order_id && typeof transaction.order_id === 'object'
+      ? transaction.order_id
+      : null;
+  return {
+    id: String(transaction._id),
+    type: transaction.type,
+    direction: transaction.direction,
+    status: transaction.status,
+    amount_rwf: transaction.amount_rwf,
+    order_id: order ? String(order._id) : transaction.order_id ? String(transaction.order_id) : null,
+    order_number: order?.order_number ?? null,
+    vendor_id: transaction.vendor_id ? String(transaction.vendor_id) : null,
+    driver_id: transaction.driver_id ? String(transaction.driver_id) : null,
+    customer_id: transaction.customer_id ? String(transaction.customer_id) : null,
+    reference: transaction.reference || '',
+    description: transaction.description || '',
+    metadata: transaction.metadata || {},
+    created_at: transaction.created_at,
   };
 }
 
@@ -780,4 +830,6 @@ module.exports = {
   serializeAdminCommission,
   serializeAdminComplaint,
   serializeAdminAction,
+  serializePlatformAccount,
+  serializeTransaction,
 };

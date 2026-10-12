@@ -39,6 +39,9 @@ const orderSchema = new mongoose.Schema(
     ],
     subtotal_rwf: { type: Number, required: true },
     delivery_fee_rwf: { type: Number, required: true },
+    // Road distance kitchen -> drop-off used to price delivery at checkout.
+    delivery_distance_km: { type: Number, min: 0, default: null },
+    delivery_distance_source: { type: String, enum: ['google', 'estimate', null], default: null },
     total_rwf: { type: Number, required: true },
     delivery_location: {
       address: { type: String, required: true },
@@ -107,6 +110,21 @@ const orderSchema = new mongoose.Schema(
     completed_at: { type: Date },
     cancelled_at: { type: Date },
     cancel_reason: { type: String, default: '' },
+    // Settlement snapshot. Captured when the customer pays (funds held by the
+    // platform) and released to the vendor/rider when the order completes.
+    // Commission is calculated on the food subtotal only, never the delivery
+    // fee: the vendor receives subtotal - commission, the rider receives the
+    // full delivery fee.
+    commission_percent: { type: Number, min: 0, max: 100, default: 0 },
+    commission_rwf: { type: Number, min: 0, default: 0 },
+    vendor_payout_rwf: { type: Number, min: 0, default: 0 },
+    rider_payout_rwf: { type: Number, min: 0, default: 0 },
+    settlement_status: {
+      type: String,
+      enum: ['unpaid', 'held', 'settled', 'refunded'],
+      default: 'unpaid',
+    },
+    settled_at: { type: Date, default: null },
   },
   { timestamps }
 );

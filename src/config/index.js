@@ -49,6 +49,16 @@ const config = {
     otpRateWindowMinutes: 10,
     otpRateMaxSends: 5,
   },
+  maps: {
+    // Server-side Google Maps key used for real road distances (Routes API).
+    // When empty, distances fall back to straight-line km x roadFactor.
+    googleApiKey: process.env.GOOGLE_MAPS_API_KEY || '',
+    // DRIVE works everywhere; TWO_WHEELER is closer to moto delivery where
+    // Google supports it.
+    travelMode: process.env.GOOGLE_MAPS_TRAVEL_MODE || 'DRIVE',
+    timeoutMs: numberFromEnv(process.env.GOOGLE_MAPS_TIMEOUT_MS, 4000),
+    cacheTtlSeconds: numberFromEnv(process.env.GOOGLE_MAPS_CACHE_TTL_SECONDS, 600),
+  },
   notifications: {
     sms: {
       // When disabled (or missing credentials) messages are logged in dev.
@@ -62,8 +72,6 @@ const config = {
   },
   orders: {
     agentKey: process.env.AGENT_API_KEY || 'dev-agent-key',
-    deliveryFeeRwf: Number(process.env.DELIVERY_FEE_RWF) || 1000,
-    freeDeliveryOverRwf: Number(process.env.FREE_DELIVERY_OVER_RWF) || 15000,
     statuses: [
       'placed',
       'confirmed',
@@ -141,8 +149,9 @@ const config = {
   vendor: {
     // Role claim embedded in vendor JWT access tokens.
     jwtRole: 'vendor',
-    // Platform commission retained from each completed order payout (percent).
-    commissionPercent: numberFromEnvOrZero(process.env.PLATFORM_COMMISSION_PERCENT, 0),
+    // Platform commission retained from each completed order's food subtotal
+    // (percent). The delivery fee is never commissioned — the rider keeps it.
+    commissionPercent: numberFromEnvOrZero(process.env.PLATFORM_COMMISSION_PERCENT, 15),
     // Rwanda (CAT / UTC+2, no DST) is used for "today" dashboard calculations.
     timezoneOffsetHours: Number(process.env.TZ_OFFSET_HOURS) || 2,
     uploads: {
@@ -243,10 +252,11 @@ const config = {
     baseFeeRwf: numberFromEnvOrZero(process.env.DELIVERY_BASE_FEE_RWF, 500),
     perKmFeeRwf: numberFromEnvOrZero(process.env.DELIVERY_PER_KM_FEE_RWF, 200),
     minFeeRwf: numberFromEnvOrZero(process.env.DELIVERY_MIN_FEE_RWF, 800),
-    // Share of the delivery fee paid to the driver (percent).
+    // Share of the delivery fee paid to the driver (percent). Drivers keep the
+    // entire delivery fee — no platform commission is taken from it.
     driverSharePercent: numberFromEnvOrZero(
       process.env.DELIVERY_DRIVER_SHARE_PERCENT,
-      80
+      100
     ),
     // Delivery lifecycle statuses (guarded by `transitions`).
     statuses: [

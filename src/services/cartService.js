@@ -3,9 +3,8 @@ const config = require('../config');
 const { parseQuantity } = require('../utils/validators');
 const cartRepository = require('../repositories/cartRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
-
-const deliveryFee = (subtotalRwf) =>
-  subtotalRwf >= config.orders.freeDeliveryOverRwf ? 0 : config.orders.deliveryFeeRwf;
+const vendorRepository = require('../repositories/vendorRepository');
+const deliveryPricingService = require('./deliveryPricingService');
 
 const serializeCartEntry = (entry) => {
   const item = entry.menu_item_id;
@@ -26,15 +25,27 @@ const serializeCartEntry = (entry) => {
 };
 
 class CartService {
-  async getCart(customerId) {
+  /**
+   * @param {{lat:number, lng:number}|null} coords drop-off point; when given,
+   *   delivery is priced by distance, otherwise it is left for checkout.
+   */
+  async getCart(customerId, coords = null) {
     const entries = (await cartRepository.list(customerId)).filter(
       (entry) => entry.menu_item_id
     );
 
     const items = entries.map(serializeCartEntry);
     const subtotal = items.reduce((sum, item) => sum + item.subtotal_rwf, 0);
-    const fee = deliveryFee(subtotal);
     const vendor = entries[0]?.vendor_id ?? null;
+
+    let quote = null;
+    if (coords && vendor) {
+      const vendorDoc = await vendorRepository.findById(vendor._id);
+      quote = await deliveryPricingService
+        .quote(vendorDoc, { latitude: coords.lat, longitude: coords.lng })
+        .catch(() => null);
+    }
+    const fee = quote ? quote.delivery_fee_rwf : null;
 
     return {
       vendor: vendor
@@ -50,7 +61,8 @@ class CartService {
       item_count: items.reduce((sum, item) => sum + item.quantity, 0),
       subtotal_rwf: subtotal,
       delivery_fee_rwf: fee,
-      total_rwf: subtotal + fee,
+      delivery_distance_km: quote ? quote.distance_km : null,
+      total_rwf: subtotal + (fee ?? 0),
     };
   }
 

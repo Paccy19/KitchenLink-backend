@@ -9,10 +9,9 @@ const {
 } = require('../utils/vendorValidators');
 const { serializeVendorOrder } = require('../utils/serializers');
 const orderRepository = require('../repositories/orderRepository');
-const vendorRepository = require('../repositories/vendorRepository');
 const customerRepository = require('../repositories/customerRepository');
-const menuItemRepository = require('../repositories/menuItemRepository');
 const deliveryService = require('./deliveryService');
+const settlementService = require('./settlementService');
 
 const { vendor: vendorConfig } = config;
 
@@ -137,7 +136,7 @@ class VendorOrderService {
     });
 
     if (nextStatus === 'completed') {
-      await this.#applyCompletionPayout(vendor, order);
+      await this.#applyCompletionPayout(order);
     }
 
     // When the kitchen signals the food is ready, a delivery is created and
@@ -155,22 +154,12 @@ class VendorOrderService {
   }
 
   /**
-   * Credited exactly once per order: total sales always, and the payable
-   * balance net of platform commission.
+   * Releases the order payout exactly once: the platform retains its commission
+   * (on the food subtotal only), the vendor receives the remainder, and the
+   * rider keeps the full delivery fee.
    */
-  async #applyCompletionPayout(vendor, order) {
-    const commission = vendorConfig.commissionPercent / 100;
-    const balanceRwf = Math.round(order.total_rwf * (1 - commission));
-
-    await Promise.all([
-      vendorRepository.incrementSales(vendor._id, {
-        totalRwf: order.total_rwf,
-        balanceRwf,
-      }),
-      ...(order.items || []).map((item) =>
-        menuItemRepository.incrementOrdersCount(item.menu_item_id, item.quantity)
-      ),
-    ]);
+  async #applyCompletionPayout(order) {
+    await settlementService.releaseOrder(order._id);
   }
 }
 

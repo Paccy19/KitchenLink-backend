@@ -1,8 +1,9 @@
 const asyncHandler = require('../utils/asyncHandler');
 const cartService = require('../services/cartService');
+const { parseOptionalCoords } = require('../utils/geo');
 
 const getCart = asyncHandler(async (req, res) => {
-  res.json(await cartService.getCart(req.customer._id));
+  res.json(await cartService.getCart(req.customer._id, parseOptionalCoords(req.query)));
 });
 
 const add = asyncHandler(async (req, res) => {

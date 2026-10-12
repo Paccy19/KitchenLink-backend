@@ -74,7 +74,9 @@ class AdminDashboardService {
         sales_rwf: salesToday.gross,
         completed_orders: salesToday.orders,
         delivery_fees_rwf: salesToday.delivery_fees,
-        commission_rwf: Math.round(salesToday.gross * (commissionPercent / 100)),
+        commission_rwf: Math.round(
+          Math.max(0, salesToday.gross - salesToday.delivery_fees) * (commissionPercent / 100)
+        ),
       },
       orders: {
         pending: pendingCount,

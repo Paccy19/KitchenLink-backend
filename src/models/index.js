@@ -16,6 +16,8 @@ const Admin = require('./Admin');
 const Complaint = require('./Complaint');
 const AdminActionLog = require('./AdminActionLog');
 const Commission = require('./Commission');
+const PlatformAccount = require('./PlatformAccount');
+const Transaction = require('./Transaction');
 
 module.exports = {
   Vendor,
@@ -36,4 +38,6 @@ module.exports = {
   Complaint,
   AdminActionLog,
   Commission,
+  PlatformAccount,
+  Transaction,
 };

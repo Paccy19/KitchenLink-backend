@@ -89,7 +89,7 @@ class VendorAuthService {
       payment_information: paymentInformation,
       verification_documents: documents,
       verification_status: 'pending',
-      is_active: true,
+      is_active: false,
       delivery_available: true,
       available_balance: 0,
       total_sales: 0,

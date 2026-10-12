@@ -24,6 +24,19 @@ const bootstrapAdmin = async () => {
       console.log(
         `Seeded default global commission (${config.admin.commissionDefaultPercent}%)`
       );
+    } else if (
+      globalCommission.name === 'Default platform commission' &&
+      globalCommission.fixed_fee_rwf === 0 &&
+      globalCommission.percentage !== config.admin.commissionDefaultPercent &&
+      globalCommission.percentage === 0
+    ) {
+      // Upgrade the untouched legacy default (0%) to the configured rate.
+      await commissionRepository.update(globalCommission._id, {
+        percentage: config.admin.commissionDefaultPercent,
+      });
+      console.log(
+        `Updated default global commission to ${config.admin.commissionDefaultPercent}%`
+      );
     }
   } catch (error) {
     console.error('Admin bootstrap failed:', error);

@@ -5,6 +5,7 @@ const vendorRepository = require('../repositories/vendorRepository');
 const withdrawalRepository = require('../repositories/withdrawalRepository');
 const orderRepository = require('../repositories/orderRepository');
 const notificationService = require('./notificationService');
+const commissionService = require('./commissionService');
 
 const METHOD_ALIASES = [
   { match: /momo|mtn|mobile|airtel/i, code: 'mobile_money' },
@@ -42,14 +43,15 @@ class VendorWalletService {
       withdrawalRepository.listByVendor(vendor._id),
     ]);
 
-    const commissionRate = config.vendor.commissionPercent / 100;
+    const commissionPercent = await commissionService.globalPercent();
+    const commissionRate = commissionPercent / 100;
 
     return {
       available_balance_rwf: vendor.available_balance ?? 0,
       total_sales_rwf: vendor.total_sales ?? 0,
       withdrawn_rwf: withdrawnRwf,
       pending_balance_rwf: Math.round(activeSalesRwf * (1 - commissionRate)),
-      commission_percent: config.vendor.commissionPercent,
+      commission_percent: commissionPercent,
       withdrawals: withdrawals.map(serializeWithdrawal),
     };
   }

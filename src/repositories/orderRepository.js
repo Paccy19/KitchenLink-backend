@@ -85,7 +85,7 @@ class OrderRepository {
       Order.countDocuments({ vendor_id: vendorObjectId, status: 'cancelled' }),
       Order.aggregate([
         { $match: { vendor_id: vendorObjectId, status: { $in: pendingStatuses } } },
-        { $group: { _id: null, total: { $sum: '$total_rwf' } } },
+        { $group: { _id: null, total: { $sum: '$subtotal_rwf' } } },
       ]),
       Order.aggregate([
         { $match: { vendor_id: vendorObjectId, status: 'delivered' } },
@@ -99,7 +99,7 @@ class OrderRepository {
           $group: {
             _id: null,
             count: { $sum: 1 },
-            sales: { $sum: '$total_rwf' },
+            sales: { $sum: '$subtotal_rwf' },
           },
         },
       ]),
@@ -122,12 +122,15 @@ class OrderRepository {
     };
   }
 
-  /** Gross value of orders still in-flight (not completed/cancelled). */
+  /**
+   * Food-subtotal value of orders still in-flight (not completed/cancelled).
+   * The delivery fee is excluded so vendor pending balances reflect food only.
+   */
   async activeSalesTotal(vendorId, statuses) {
     const vendorObjectId = new mongoose.Types.ObjectId(String(vendorId));
     const [result] = await Order.aggregate([
       { $match: { vendor_id: vendorObjectId, status: { $in: statuses } } },
-      { $group: { _id: null, total: { $sum: '$total_rwf' } } },
+      { $group: { _id: null, total: { $sum: '$subtotal_rwf' } } },
     ]);
     return result?.total ?? 0;
   }

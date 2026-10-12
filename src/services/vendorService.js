@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const ApiError = require('../utils/ApiError');
 const vendorRepository = require('../repositories/vendorRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
+const deliveryPricingService = require('./deliveryPricingService');
 const { distanceFromCoords } = require('../utils/geo');
 const {
   serializeMenuItem,
@@ -69,6 +70,26 @@ class VendorService {
       })
       .filter((entry) => entry.special && entry.special.is_orderable);
     return { specials };
+  }
+
+  /** Distance-based delivery fee from this kitchen to the given point. */
+  async getDeliveryQuote(vendorId, coords) {
+    if (!mongoose.isValidObjectId(vendorId)) {
+      throw ApiError.badRequest('vendor_id must be a valid id.', {
+        vendor_id: 'expected a valid MongoDB id',
+      });
+    }
+
+    const vendor = await vendorRepository.findActiveById(vendorId);
+    if (!vendor) {
+      throw ApiError.notFound('Vendor not found.', 'VENDOR_NOT_FOUND');
+    }
+
+    const quote = await deliveryPricingService.quote(vendor, {
+      latitude: coords.lat,
+      longitude: coords.lng,
+    });
+    return { vendor_id: String(vendor._id), ...quote };
   }
 }
 

@@ -56,7 +56,9 @@ class AdminAnalyticsService {
         gross_rwf: sales.gross,
         orders: sales.orders,
         delivery_fees_rwf: sales.delivery_fees,
-        commission_rwf: Math.round(sales.gross * (commissionPercent / 100)),
+        commission_rwf: Math.round(
+          Math.max(0, sales.gross - sales.delivery_fees) * (commissionPercent / 100)
+        ),
         commission_percent: commissionPercent,
       },
       orders_created: ordersCreated,

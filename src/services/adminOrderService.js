@@ -14,6 +14,7 @@ const paymentRepository = require('../repositories/paymentRepository');
 const deliveryRepository = require('../repositories/deliveryRepository');
 const driverRepository = require('../repositories/driverRepository');
 const adminActionLogService = require('./adminActionLogService');
+const settlementService = require('./settlementService');
 
 class AdminOrderService {
   async list(query = {}) {
@@ -91,6 +92,14 @@ class AdminOrderService {
       at: now,
       note: reason || `Status set to ${nextStatus} by admin`,
     });
+
+    // Admin marking an order delivered/complete releases the held payout.
+    if (nextStatus === 'delivered') {
+      await settlementService.releaseOrder(orderId);
+    }
+    if (nextStatus === 'cancelled' && order.payment_status === 'paid') {
+      await settlementService.refundOrder(order);
+    }
 
     await adminActionLogService.record(
       admin,

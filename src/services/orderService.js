@@ -17,6 +17,8 @@ const vendorRepository = require('../repositories/vendorRepository');
 const deliveryRepository = require('../repositories/deliveryRepository');
 const notificationRepository = require('../repositories/notificationRepository');
 const notificationService = require('./notificationService');
+const settlementService = require('./settlementService');
+const deliveryPricingService = require('./deliveryPricingService');
 
 const { orders } = config;
 
@@ -32,9 +34,6 @@ const methodLabel = (code) =>
 
 const isCancellable = (status) =>
   ['placed', 'confirmed', 'preparing', 'ready'].includes(status);
-
-const deliveryFee = (subtotalRwf) =>
-  subtotalRwf >= orders.freeDeliveryOverRwf ? 0 : orders.deliveryFeeRwf;
 
 const generateOrderNumber = () => {
   const date = new Date();
@@ -131,6 +130,7 @@ const serializeDetail = (order, vendor, payment, delivery) => ({
   })),
   subtotal_rwf: order.subtotal_rwf,
   delivery_fee_rwf: order.delivery_fee_rwf,
+  delivery_distance_km: order.delivery_distance_km ?? null,
   total_rwf: order.total_rwf,
   delivery_location: { ...order.delivery_location },
   payment: serializePayment(payment),
@@ -267,6 +267,11 @@ class OrderService {
       status: 'successful',
       paid_at: new Date(),
     });
+
+    // The customer paid the order + delivery fee together. Hold the full amount
+    // on the platform account and snapshot the commission/payout split.
+    await settlementService.onPaymentSuccess(order);
+
     return { paymentStatus: 'paid', payment };
   }
 
@@ -350,9 +355,12 @@ class OrderService {
     }));
 
     const subtotal = items.reduce((sum, item) => sum + item.subtotal_rwf, 0);
-    const fee = deliveryFee(subtotal);
+    // Delivery is priced by road distance from the kitchen to the drop-off and
+    // charged on top of the food; the rider receives it in full.
+    const quote = await deliveryPricingService.quote(vendor, deliveryLocation);
+    const fee = quote.delivery_fee_rwf;
     const total = subtotal + fee;
-    const etaMinutes = (vendor.estimated_prep_time ?? 30) + 15;
+    const etaMinutes = (vendor.estimated_prep_time ?? 30) + (quote.duration_minutes ?? 15);
     const now = new Date();
 
     const order = await orderRepository.create({
@@ -362,6 +370,8 @@ class OrderService {
       items,
       subtotal_rwf: subtotal,
       delivery_fee_rwf: fee,
+      delivery_distance_km: quote.distance_km,
+      delivery_distance_source: quote.distance_source,
       total_rwf: total,
       delivery_location: deliveryLocation,
       payment_method: paymentMethod,
@@ -538,6 +548,8 @@ class OrderService {
         status: 'refunded',
       });
       paymentStatus = 'refunded';
+      // Return the held customer payment from the platform account.
+      await settlementService.refundOrder(order);
     }
 
     const cancelledAt = new Date();

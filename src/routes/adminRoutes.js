@@ -10,6 +10,7 @@ const adminOrderController = require('../controllers/adminOrderController');
 const adminPaymentController = require('../controllers/adminPaymentController');
 const adminCommissionController = require('../controllers/adminCommissionController');
 const adminPayoutController = require('../controllers/adminPayoutController');
+const adminPlatformController = require('../controllers/adminPlatformController');
 const adminCategoryController = require('../controllers/adminCategoryController');
 const adminComplaintController = require('../controllers/adminComplaintController');
 const adminDashboardController = require('../controllers/adminDashboardController');
@@ -113,6 +114,14 @@ router.patch(
   '/payouts/:withdrawalId',
   requirePermission('payments:write'),
   adminPayoutController.update
+);
+
+/* --------------------------- platform wallet ----------------------------- */
+router.get('/platform/wallet', requirePermission('payments:read'), adminPlatformController.wallet);
+router.get(
+  '/platform/transactions',
+  requirePermission('payments:read'),
+  adminPlatformController.transactions
 );
 
 /* ------------------------------ categories ------------------------------- */
