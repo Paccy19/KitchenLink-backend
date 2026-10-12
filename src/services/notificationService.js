@@ -155,6 +155,38 @@ class NotificationService {
     return serializeNotification({ ...notification, sms_status: smsResult.status });
   }
 
+  /** Tell a rider their withdrawal was paid out or failed (in-app + SMS). */
+  async notifyDriverPayout(driverId, { status, amountRwf, accountNumber, reference, reason } = {}) {
+    if (!driverId) return null;
+    const amount = `${Number(amountRwf || 0).toLocaleString()} RWF`;
+    const paid = status === 'completed';
+    const title = paid ? 'Payout sent' : 'Payout failed';
+    const body = paid
+      ? `${amount} was sent to ${accountNumber || 'your mobile money'}${reference ? ` (ref ${reference})` : ''}.`
+      : `Your ${amount} payout could not be sent${reason ? `: ${reason}` : ''}. The money is back in your balance.`;
+
+    const notification = await notificationRepository.createForDriver(driverId, {
+      type: 'payout_update',
+      title,
+      body,
+      data: { status, amount_rwf: amountRwf, reference: reference || null },
+      sms_status: 'pending',
+    });
+
+    let smsResult = { status: 'skipped' };
+    try {
+      const driver = await driverRepository.findById(driverId);
+      if (driver?.phone) smsResult = await sendSms(driver.phone, `FoodKitchen: ${body}`);
+      await notificationRepository.setSmsStatus(notification._id, {
+        status: smsResult.status,
+        error: smsResult.error,
+      });
+    } catch {
+      /* SMS bookkeeping is best-effort */
+    }
+    return serializeNotification({ ...notification, sms_status: smsResult.status });
+  }
+
   async listForDriver(driverId, query = {}) {
     const { limit, page, offset } = parsePagination(query, {
       defaultLimit: 30,

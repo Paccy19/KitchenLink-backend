@@ -9,7 +9,7 @@ const update = asyncHandler(async (req, res) => {
   res.json(
     await adminPayoutService.updateWithdrawal(
       req.params.withdrawalId,
-      { status: req.body?.status, reference: req.body?.reference },
+      { status: req.body?.status, reference: req.body?.reference, reason: req.body?.reason },
       req.admin,
       req
     )

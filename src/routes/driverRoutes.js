@@ -28,4 +28,8 @@ router.post('/deliveries/:delivery_id/confirm-delivery', driverController.confir
 router.patch('/location', driverController.updateLocation);
 router.patch('/availability', driverController.setAvailability);
 
+// Wallet: balance from completed deliveries, withdrawals to mobile money.
+router.get('/wallet', driverController.getWallet);
+router.post('/wallet/withdrawals', driverController.requestWithdrawal);
+
 module.exports = router;

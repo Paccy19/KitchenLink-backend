@@ -53,6 +53,9 @@ const driverSchema = new mongoose.Schema(
     rating_count: { type: Number, min: 0, default: 0 },
     completed_deliveries: { type: Number, min: 0, default: 0 },
     total_earnings_rwf: { type: Number, min: 0, default: 0 },
+    // Withdrawable earnings: credited per completed delivery, reserved when a
+    // withdrawal is requested and returned if the payout fails.
+    available_balance_rwf: { type: Number, min: 0, default: 0 },
     profile_image_url: { type: String, default: '' },
     verification_status: {
       type: String,

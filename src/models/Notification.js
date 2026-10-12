@@ -38,6 +38,7 @@ const notificationSchema = new mongoose.Schema(
         'driver_application',
         'complaint_opened',
         'payout_requested',
+        'payout_update',
         'order_placed',
         'payment_failed',
       ],

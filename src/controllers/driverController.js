@@ -2,6 +2,15 @@ const asyncHandler = require('../utils/asyncHandler');
 const deliveryService = require('../services/deliveryService');
 const driverProfileService = require('../services/driverProfileService');
 const notificationService = require('../services/notificationService');
+const driverWalletService = require('../services/driverWalletService');
+
+const getWallet = asyncHandler(async (req, res) => {
+  res.json(await driverWalletService.getWallet(req.driver));
+});
+
+const requestWithdrawal = asyncHandler(async (req, res) => {
+  res.status(201).json(await driverWalletService.requestWithdrawal(req.driver, req.body));
+});
 
 const updateProfile = asyncHandler(async (req, res) => {
   res.json(
@@ -87,4 +96,6 @@ module.exports = {
   history,
   earnings,
   stats,
+  getWallet,
+  requestWithdrawal,
 };

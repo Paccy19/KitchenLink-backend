@@ -6,31 +6,7 @@ const withdrawalRepository = require('../repositories/withdrawalRepository');
 const orderRepository = require('../repositories/orderRepository');
 const notificationService = require('./notificationService');
 const commissionService = require('./commissionService');
-
-const METHOD_ALIASES = [
-  { match: /momo|mtn|mobile|airtel/i, code: 'mobile_money' },
-  { match: /bank|transfer/i, code: 'bank_transfer' },
-  { match: /cash/i, code: 'cash' },
-];
-
-const normalizeMethod = (raw) => {
-  const value = String(raw ?? '').trim();
-  if (!value) return { code: 'mobile_money', label: 'MTN Mobile Money' };
-  const alias = METHOD_ALIASES.find((entry) => entry.match.test(value));
-  const code = alias?.code ?? 'other';
-  const label = value.length <= 40 ? value : value.slice(0, 40);
-  return { code, label };
-};
-
-const parseAmount = (raw) => {
-  const amount = Number(raw);
-  if (!Number.isInteger(amount) || amount <= 0) {
-    throw ApiError.badRequest('amount_rwf must be a positive whole number.', {
-      amount_rwf: 'expected an integer greater than 0',
-    });
-  }
-  return amount;
-};
+const { normalizeMethod, parseAmount, generateReference } = require('../utils/withdrawals');
 
 class VendorWalletService {
   async getWallet(vendor) {
@@ -68,14 +44,13 @@ class VendorWalletService {
     }
 
     const withdrawal = await withdrawalRepository.create({
+      payee_type: 'vendor',
       vendor_id: vendor._id,
       amount_rwf: amount,
       method: code,
       method_label: label,
       status: 'processing',
-      reference: `WD-${new Date().getFullYear()}-${String(
-        Math.floor(1000 + Math.random() * 9000)
-      )}`,
+      reference: generateReference('WD'),
     });
 
     notificationService

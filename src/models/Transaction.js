@@ -12,6 +12,9 @@ const TRANSACTION_TYPES = [
   'driver_payout',
   'commission',
   'refund',
+  // Money actually sent out to a vendor/driver when an admin completes a
+  // withdrawal (their earnings were booked as payouts at order completion).
+  'withdrawal',
 ];
 
 const transactionSchema = new mongoose.Schema(

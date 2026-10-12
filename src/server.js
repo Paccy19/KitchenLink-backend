@@ -3,6 +3,7 @@ const config = require('./config');
 const app = require('./app');
 const adminAuthService = require('./services/adminAuthService');
 const commissionRepository = require('./repositories/commissionRepository');
+const driverRepository = require('./repositories/driverRepository');
 
 const bootstrapAdmin = async () => {
   try {
@@ -40,6 +41,15 @@ const bootstrapAdmin = async () => {
     }
   } catch (error) {
     console.error('Admin bootstrap failed:', error);
+  }
+
+  try {
+    const backfilled = await driverRepository.backfillAvailableBalances();
+    if (backfilled > 0) {
+      console.log(`Opened withdrawable balances for ${backfilled} existing driver(s)`);
+    }
+  } catch (error) {
+    console.error('Driver balance backfill failed:', error);
   }
 };
 

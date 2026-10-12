@@ -352,6 +352,7 @@ function serializeDriverAccount(driver) {
     max_active_deliveries: driver.max_active_deliveries ?? config.delivery.maxActiveDeliveries,
     completed_deliveries: driver.completed_deliveries ?? 0,
     total_earnings_rwf: driver.total_earnings_rwf ?? 0,
+    available_balance_rwf: driver.available_balance_rwf ?? 0,
     profile_image_url: driver.profile_image_url || null,
     verification_status: driver.verification_status || 'approved',
     current_location: {
@@ -488,8 +489,10 @@ function serializeWithdrawal(withdrawal) {
     amount_rwf: withdrawal.amount_rwf,
     method: withdrawal.method,
     method_label: withdrawal.method_label || withdrawal.method,
+    account_number: withdrawal.account_number || null,
     status: withdrawal.status,
     reference: withdrawal.reference || null,
+    failure_reason: withdrawal.failure_reason || null,
     processed_at: withdrawal.processed_at ?? null,
     created_at: withdrawal.created_at,
   };
@@ -575,6 +578,7 @@ function serializeAdminDriver(driver) {
     completed_deliveries: driver.completed_deliveries ?? 0,
     active_deliveries_count: driver.active_deliveries_count ?? 0,
     total_earnings_rwf: driver.total_earnings_rwf ?? 0,
+    available_balance_rwf: driver.available_balance_rwf ?? 0,
     rejection_reason: driver.rejection_reason || '',
     suspension_reason: driver.suspension_reason || '',
     profile_image_url: driver.profile_image_url || null,
@@ -713,19 +717,37 @@ function serializeAdminPayment(payment) {
 }
 
 function serializeAdminWithdrawal(withdrawal) {
-  const vendor =
-    withdrawal.vendor_id && typeof withdrawal.vendor_id === 'object'
-      ? withdrawal.vendor_id
-      : null;
+  const populated = (ref) => (ref && typeof ref === 'object' && ref._id ? ref : null);
+  const vendor = populated(withdrawal.vendor_id);
+  const driver = populated(withdrawal.driver_id);
+  const payeeType = withdrawal.payee_type === 'driver' ? 'driver' : 'vendor';
+  const payee = payeeType === 'driver' ? driver : vendor;
+  const idOf = (ref) => (ref ? String(ref._id || ref) : null);
   return {
     id: String(withdrawal._id),
-    vendor_id: vendor ? String(vendor._id) : String(withdrawal.vendor_id),
+    payee_type: payeeType,
+    payee_id: idOf(payeeType === 'driver' ? withdrawal.driver_id : withdrawal.vendor_id),
+    payee_name: payee?.name ?? null,
+    payee_phone: payee?.phone ?? null,
+    // Where to send the money: the number given on the request, falling back
+    // to the vendor's saved payout details.
+    account_number:
+      withdrawal.account_number ||
+      vendor?.payment_information?.mobile_money_number ||
+      vendor?.payment_information?.account_number ||
+      null,
+    account_name:
+      withdrawal.account_name || vendor?.payment_information?.account_name || payee?.name || null,
+    vendor_id: idOf(withdrawal.vendor_id),
     vendor_name: vendor?.name ?? null,
+    driver_id: idOf(withdrawal.driver_id),
+    driver_name: driver?.name ?? null,
     amount_rwf: withdrawal.amount_rwf,
     method: withdrawal.method,
     method_label: withdrawal.method_label || withdrawal.method,
     status: withdrawal.status,
     reference: withdrawal.reference || null,
+    failure_reason: withdrawal.failure_reason || null,
     processed_at: withdrawal.processed_at ?? null,
     created_at: withdrawal.created_at,
   };

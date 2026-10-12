@@ -90,6 +90,7 @@ class DriverRepository {
         $inc: {
           completed_deliveries: 1,
           total_earnings_rwf: earningsRwf,
+          available_balance_rwf: earningsRwf,
           active_deliveries_count: -1,
         },
       },
@@ -202,6 +203,51 @@ class DriverRepository {
 
   async countSince(date) {
     return Driver.countDocuments({ created_at: { $gte: date }, deleted_at: null });
+  }
+
+  /* ------------------------------ wallet ------------------------------ */
+
+  /** Reserve funds for a withdrawal; null when the balance is too low. */
+  async decrementBalance(driverId, amountRwf) {
+    return Driver.findOneAndUpdate(
+      { _id: driverId, deleted_at: null, available_balance_rwf: { $gte: amountRwf } },
+      { $inc: { available_balance_rwf: -amountRwf } },
+      { new: true }
+    ).lean();
+  }
+
+  /** Return funds to the balance (e.g. a failed payout). */
+  async incrementBalance(driverId, amountRwf) {
+    return Driver.findOneAndUpdate(
+      { _id: driverId },
+      { $inc: { available_balance_rwf: amountRwf } },
+      { new: true }
+    ).lean();
+  }
+
+  async listBalances({ limit, offset }) {
+    const [drivers, total] = await Promise.all([
+      Driver.find({ deleted_at: null })
+        .sort({ available_balance_rwf: -1, total_earnings_rwf: -1 })
+        .skip(offset)
+        .limit(limit)
+        .lean(),
+      Driver.countDocuments({ deleted_at: null }),
+    ]);
+    return { drivers, total };
+  }
+
+  /**
+   * One-off backfill for drivers created before withdrawals existed: their
+   * whole earnings history is still unpaid, so it becomes their balance.
+   */
+  async backfillAvailableBalances() {
+    const result = await Driver.updateMany(
+      { available_balance_rwf: { $exists: false } },
+      [{ $set: { available_balance_rwf: { $ifNull: ['$total_earnings_rwf', 0] } } }],
+      { updatePipeline: true }
+    );
+    return result.modifiedCount ?? 0;
   }
 
   async setVerification(driverId, update) {

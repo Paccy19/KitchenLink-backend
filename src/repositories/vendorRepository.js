@@ -125,6 +125,15 @@ class VendorRepository {
     ).lean();
   }
 
+  /** Return funds to the balance (e.g. a failed payout). */
+  async incrementBalance(vendorId, amountRwf) {
+    return Vendor.findOneAndUpdate(
+      { _id: vendorId },
+      { $inc: { available_balance: amountRwf } },
+      { new: true }
+    ).lean();
+  }
+
   async softDelete(vendorId) {
     return Vendor.findOneAndUpdate(
       { _id: vendorId, deleted_at: null },
