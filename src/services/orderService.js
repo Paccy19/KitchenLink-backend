@@ -19,6 +19,7 @@ const notificationRepository = require('../repositories/notificationRepository')
 const notificationService = require('./notificationService');
 const settlementService = require('./settlementService');
 const deliveryPricingService = require('./deliveryPricingService');
+const { isVendorLive } = require('../utils/vendorPresence');
 
 const { orders } = config;
 
@@ -319,6 +320,14 @@ class OrderService {
     const vendor = await vendorRepository.findById(vendorIds[0]);
     if (!vendor || !vendor.is_active) {
       throw ApiError.conflict('This kitchen is currently closed.', 'VENDOR_UNAVAILABLE');
+    }
+    // Immediate orders need the kitchen open right now; scheduled orders and
+    // pre-orders are for later, when the vendor will have opened again.
+    if (orderType === 'immediate' && !isVendorLive(vendor)) {
+      throw ApiError.conflict(
+        'This kitchen is closed right now. Schedule your order for later instead.',
+        'VENDOR_CLOSED'
+      );
     }
 
     if (orderType === 'preorder') {

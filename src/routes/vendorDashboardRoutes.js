@@ -20,5 +20,6 @@ router.patch(
   ]),
   vendorProfileController.update
 );
+router.patch('/availability', requireVendorAuth, vendorProfileController.setAvailability);
 
 module.exports = router;

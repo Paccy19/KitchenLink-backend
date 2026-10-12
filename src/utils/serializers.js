@@ -1,4 +1,5 @@
 const config = require('../config');
+const { isVendorLive } = require('./vendorPresence');
 
 const round1 = (value) =>
   typeof value === 'number' ? Math.round(value * 10) / 10 : null;
@@ -24,6 +25,7 @@ function serializeVendorCard(vendor, { distanceKm } = {}) {
     banner_image_url: vendor.banner_image_url || null,
     avatar_url: vendor.profile_image_url || null,
     delivery_available: Boolean(vendor.delivery_available),
+    is_open: isVendorLive(vendor),
     location: {
       latitude: typeof lat === 'number' ? lat : null,
       longitude: typeof lng === 'number' ? lng : null,
@@ -112,6 +114,7 @@ function serializeVendorStorefront(vendor, { menu, distanceKm } = {}) {
     rating: vendor.rating,
     estimated_prep_time: vendor.estimated_prep_time,
     delivery_available: Boolean(vendor.delivery_available),
+    is_open: isVendorLive(vendor),
     location: {
       neighborhood: vendor.neighborhood || null,
       address: vendor.address || null,
@@ -141,6 +144,8 @@ function serializeVendorAccount(vendor) {
     estimated_prep_time: vendor.estimated_prep_time,
     is_active: Boolean(vendor.is_active),
     is_open: vendor.is_open === undefined ? true : Boolean(vendor.is_open),
+    // Open AND location shared recently, i.e. what customers actually see.
+    is_live: isVendorLive(vendor),
     delivery_available: Boolean(vendor.delivery_available),
     banner_image_url: vendor.banner_image_url || null,
     profile_image_url: vendor.profile_image_url || null,
@@ -168,6 +173,8 @@ function serializeVendorAccount(vendor) {
       address: vendor.address || null,
       latitude: lat,
       longitude: lng,
+      updated_at: vendor.location_updated_at ?? null,
+      accuracy_m: vendor.location_accuracy_m ?? null,
     },
     created_at: vendor.created_at,
     updated_at: vendor.updated_at,

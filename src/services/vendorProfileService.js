@@ -10,6 +10,7 @@ const {
 const { serializeVendorAccount } = require('../utils/serializers');
 const { resolveImageUrl } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
+const { parseRequiredCoords } = require('../utils/geo');
 
 class VendorProfileService {
   async update(vendor, body = {}, files = {}) {
@@ -32,9 +33,6 @@ class VendorProfileService {
       payload.description =
         parseOptionalText(body.description, { field: 'description', max: 1000 }) ||
         '';
-    }
-    if (body.is_open !== undefined) {
-      payload.is_open = parseBooleanValue(body.is_open, { field: 'is_open' });
     }
     if (body.phone !== undefined) {
       const phone = normalizePhone(body.phone);
@@ -72,11 +70,45 @@ class VendorProfileService {
 
     if (Object.keys(payload).length === 0) {
       throw ApiError.badRequest('No supported profile fields were provided.', {
-        body: 'expected name, owner_name, description, phone, is_open, operating_hours, payment_information, banner_image or profile_image',
+        body: 'expected name, owner_name, description, phone, operating_hours, payment_information, banner_image or profile_image',
       });
     }
 
     const updated = await vendorRepository.update(vendor._id, payload);
+    return { vendor: serializeVendorAccount(updated) };
+  }
+
+  /**
+   * Opens or closes the store. Opening requires the vendor's live GPS position
+   * so customers see where the kitchen actually is right now; while open, the
+   * dashboard calls this again to refresh the position (e.g. food trucks).
+   */
+  async setAvailability(vendor, body = {}) {
+    const isOpen = parseBooleanValue(body.is_open, { field: 'is_open' });
+    if (isOpen === undefined) {
+      throw ApiError.badRequest('is_open is required.', { is_open: 'expected true or false' });
+    }
+
+    if (!isOpen) {
+      const updated = await vendorRepository.update(vendor._id, { is_open: false });
+      return { vendor: serializeVendorAccount(updated) };
+    }
+
+    if (body.latitude === undefined || body.longitude === undefined) {
+      throw new ApiError(400, 'LOCATION_REQUIRED', 'Share your current location to open your store.', {
+        latitude: 'required',
+        longitude: 'required',
+      });
+    }
+    const { lat, lng } = parseRequiredCoords({ lat: body.latitude, lng: body.longitude });
+    const accuracy = Number(body.accuracy_m);
+
+    const updated = await vendorRepository.update(vendor._id, {
+      is_open: true,
+      location: { type: 'Point', coordinates: [lng, lat] },
+      location_updated_at: new Date(),
+      location_accuracy_m: Number.isFinite(accuracy) && accuracy >= 0 ? Math.round(accuracy) : null,
+    });
     return { vendor: serializeVendorAccount(updated) };
   }
 }

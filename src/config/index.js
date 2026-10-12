@@ -154,6 +154,10 @@ const config = {
     commissionPercent: numberFromEnvOrZero(process.env.PLATFORM_COMMISSION_PERCENT, 15),
     // Rwanda (CAT / UTC+2, no DST) is used for "today" dashboard calculations.
     timezoneOffsetHours: Number(process.env.TZ_OFFSET_HOURS) || 2,
+    // A vendor must share their live location when opening the store. An open
+    // store whose location is older than this stops showing to customers
+    // until the vendor shares it again (0 disables the expiry).
+    locationMaxAgeHours: numberFromEnvOrZero(process.env.VENDOR_LOCATION_MAX_AGE_HOURS, 12),
     uploads: {
       dir: process.env.UPLOAD_DIR || 'uploads',
       publicPath: '/uploads',

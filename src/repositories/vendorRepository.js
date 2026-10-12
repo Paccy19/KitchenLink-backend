@@ -1,4 +1,5 @@
 const { Vendor } = require('../models');
+const { liveVendorFilter } = require('../utils/vendorPresence');
 
 const escapeRegex = (value) =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -21,7 +22,7 @@ class VendorRepository {
     limit,
     offset = 0,
   }) {
-    const baseQuery = { is_active: true, deleted_at: null };
+    const baseQuery = { is_active: true, deleted_at: null, ...liveVendorFilter() };
     if (categoryVendorIds) baseQuery._id = { $in: categoryVendorIds };
 
     let pipeline;
@@ -133,7 +134,7 @@ class VendorRepository {
   }
 
   async findTopRated(limit) {
-    return Vendor.find({ is_active: true, deleted_at: null })
+    return Vendor.find({ is_active: true, deleted_at: null, ...liveVendorFilter() })
       .sort({ rating: -1, estimated_prep_time: 1, name: 1 })
       .limit(limit)
       .lean();
@@ -166,6 +167,7 @@ class VendorRepository {
     return Vendor.find({
       is_active: true,
       deleted_at: null,
+      ...liveVendorFilter(),
       $or: orClauses,
     })
       .sort({ rating: -1 })

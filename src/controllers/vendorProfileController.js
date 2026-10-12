@@ -5,4 +5,8 @@ const update = asyncHandler(async (req, res) => {
   res.json(await vendorProfileService.update(req.vendor, req.body, req.files));
 });
 
-module.exports = { update };
+const setAvailability = asyncHandler(async (req, res) => {
+  res.json(await vendorProfileService.setAvailability(req.vendor, req.body));
+});
+
+module.exports = { update, setAvailability };

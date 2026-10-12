@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const { MenuItem } = require('../models');
 const { buildTokenFilter } = require('../utils/search');
+const { liveVendorFilter } = require('../utils/vendorPresence');
 
 const escapeRegex = (value) =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -48,7 +49,7 @@ class MenuItemRepository {
         },
       },
       { $unwind: '$vendor' },
-      { $match: { 'vendor.is_active': true } },
+      { $match: { 'vendor.is_active': true, ...liveVendorFilter('vendor') } },
       { $sort: { orders_count: -1, 'vendor.rating': -1, name: 1 } },
       { $limit: limit },
     ]);
@@ -166,7 +167,7 @@ class MenuItemRepository {
         },
       },
       { $unwind: '$vendor' },
-      { $match: { 'vendor.is_active': true } },
+      { $match: { 'vendor.is_active': true, ...liveVendorFilter('vendor') } },
       {
         $lookup: {
           from: 'categories',
