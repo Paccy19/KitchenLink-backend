@@ -187,7 +187,7 @@ class SettlementService {
       order_id: order._id,
       driver_id: driverId,
       reference: order.order_number || '',
-      description: `Owed to rider for delivering ${order.order_number}`,
+      description: `Owed to delivery worker for delivering ${order.order_number}`,
       metadata: { delivery_fee_rwf: amount },
     });
   }

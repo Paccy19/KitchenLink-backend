@@ -43,7 +43,7 @@ class AdminDriverService {
     parseObjectId(driverId, 'driver_id');
     const driver = await driverRepository.findById(driverId);
     if (!driver) {
-      throw ApiError.notFound('Driver not found.', 'DRIVER_NOT_FOUND');
+      throw ApiError.notFound('Delivery worker not found.', 'DRIVER_NOT_FOUND');
     }
     return { driver: serializeAdminDriver(driver) };
   }
@@ -60,7 +60,7 @@ class AdminDriverService {
 
     const driver = await driverRepository.findById(driverId);
     if (!driver) {
-      throw ApiError.notFound('Driver not found.', 'DRIVER_NOT_FOUND');
+      throw ApiError.notFound('Delivery worker not found.', 'DRIVER_NOT_FOUND');
     }
 
     const update = { verification_status: nextStatus };
@@ -153,7 +153,7 @@ class AdminDriverService {
     for (const delivery of deliveries) {
       await deliveryRepository.handback(delivery._id, {
         status: 'ready_for_pickup',
-        note: 'Driver suspended by admin — delivery released',
+        note: 'Delivery worker suspended by admin — delivery released',
       });
       released += 1;
     }

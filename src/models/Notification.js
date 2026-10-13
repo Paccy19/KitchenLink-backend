@@ -8,7 +8,9 @@ const { ObjectId } = mongoose.Schema.Types;
  * same message can also be dispatched over SMS when a provider is configured
  * (see the `sms_*` bookkeeping fields).
  *
- * Recipients are either a customer (`customer_id`) or a driver (`driver_id`).
+ * Recipients are a customer (`customer_id`), a delivery worker (`driver_id`) or
+ * a vendor (`vendor_id`). Every notification carries `data.link`: the page the
+ * app opens when it is tapped.
  * `type: 'delivery_code'` notifications carry the proof-of-delivery code in
  * `data.otp_code`. `type: 'delivery_offer'` notifications are the nearby-order
  * alerts pushed to drivers when a delivery is dispatched.
@@ -21,9 +23,10 @@ const notificationSchema = new mongoose.Schema(
     customer_id: { type: ObjectId, ref: 'Customer', default: null, index: true },
     driver_id: { type: ObjectId, ref: 'Driver', default: null, index: true },
     admin_id: { type: ObjectId, ref: 'Admin', default: null, index: true },
+    vendor_id: { type: ObjectId, ref: 'Vendor', default: null, index: true },
     audience: {
       type: String,
-      enum: ['customer', 'driver', 'admin'],
+      enum: ['customer', 'driver', 'admin', 'vendor'],
       default: 'customer',
       index: true,
     },
@@ -42,6 +45,7 @@ const notificationSchema = new mongoose.Schema(
         'order_placed',
         'payment_failed',
         'owner_finance',
+        'account_update',
       ],
       default: 'general',
     },
@@ -64,6 +68,8 @@ notificationSchema.index({ customer_id: 1, created_at: -1 });
 notificationSchema.index({ customer_id: 1, read_at: 1 });
 notificationSchema.index({ driver_id: 1, created_at: -1 });
 notificationSchema.index({ driver_id: 1, read_at: 1 });
+notificationSchema.index({ vendor_id: 1, created_at: -1 });
+notificationSchema.index({ vendor_id: 1, read_at: 1 });
 notificationSchema.index({ audience: 1, created_at: -1 });
 notificationSchema.index({ audience: 1, read_at: 1 });
 

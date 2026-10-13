@@ -12,6 +12,7 @@ const orderRepository = require('../repositories/orderRepository');
 const customerRepository = require('../repositories/customerRepository');
 const deliveryService = require('./deliveryService');
 const settlementService = require('./settlementService');
+const orderNotifications = require('./orderNotifications');
 
 const { vendor: vendorConfig } = config;
 
@@ -122,6 +123,9 @@ class VendorOrderService {
         );
       }
     }
+    if (nextStatus === 'cancelled') {
+      await deliveryService.assertCancellable(order._id);
+    }
     const note =
       typeof body?.note === 'string' && body.note.trim()
         ? body.note.trim().slice(0, 200)
@@ -133,10 +137,6 @@ class VendorOrderService {
       update.cancel_reason = note;
     }
 
-    if (nextStatus === 'completed') {
-      update.completed_at = now;
-    }
-
     const updated = await orderRepository.update(order._id, update);
     await orderRepository.pushHistory(order._id, {
       status: update.status,
@@ -144,13 +144,13 @@ class VendorOrderService {
       note,
     });
 
-    if (nextStatus === 'completed') {
-      await this.#applyCompletionPayout(order);
-    }
     if (nextStatus === 'cancelled') {
-      // Return the customer's held payment.
+      // Return the customer's held payment and withdraw any delivery offer.
       await settlementService.refundOrder(order);
+      await deliveryService.cancelOpenDelivery(order._id, 'Order cancelled by the kitchen');
+      orderNotifications.kitchenCancelled(updated, typeof body?.note === 'string' ? body.note.trim() : '');
     }
+    if (nextStatus === 'accepted') orderNotifications.kitchenAccepted(updated);
 
     // When the kitchen signals the food is ready, a delivery is created and
     // broadcast to online drivers automatically (driver gets the notification).
@@ -164,15 +164,6 @@ class VendorOrderService {
 
     const customer = await customerRepository.findById(order.customer_id);
     return serializeVendorOrder(updated, { customer });
-  }
-
-  /**
-   * Releases the order payout exactly once: the platform retains its commission
-   * (on the food subtotal only), the vendor receives the remainder, and the
-   * rider keeps the full delivery fee.
-   */
-  async #applyCompletionPayout(order) {
-    await settlementService.releaseOrder(order._id);
   }
 }
 

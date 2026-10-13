@@ -21,6 +21,7 @@ const customerRepository = require('../repositories/customerRepository');
 const notificationService = require('./notificationService');
 const settlementService = require('./settlementService');
 const deliveryPricingService = require('./deliveryPricingService');
+const orderNotifications = require('./orderNotifications');
 
 const { delivery: deliveryConfig } = config;
 
@@ -74,7 +75,7 @@ class DeliveryService {
         {
           status: 'ready_for_pickup',
           at: new Date(),
-          note: 'Food ready at vendor — awaiting driver',
+          note: 'Food ready at vendor — awaiting a delivery worker',
           by: 'vendor',
         },
       ],
@@ -96,6 +97,30 @@ class DeliveryService {
     }
 
     return delivery;
+  }
+
+  /**
+   * Before a vendor or customer cancels an order: once a delivery worker has
+   * accepted it, it can no longer be cancelled (the worker completes it by
+   * confirming the customer's code).
+   */
+  async assertCancellable(orderId) {
+    const delivery = await deliveryRepository.findByOrderId(orderId);
+    if (!delivery) return;
+    if ([...deliveryConfig.activeStatuses, 'delivered', 'completed'].includes(delivery.status)) {
+      throw ApiError.conflict(
+        'A delivery worker is already delivering this order, so it can no longer be cancelled.',
+        'DELIVERY_IN_PROGRESS'
+      );
+    }
+  }
+
+  /** After an order is cancelled: withdraw its open delivery offer. */
+  async cancelOpenDelivery(orderId, note = 'Order cancelled') {
+    const delivery = await deliveryRepository.findByOrderId(orderId);
+    if (!delivery || !deliveryConfig.availableStatuses.includes(delivery.status)) return;
+    await deliveryRepository.update(delivery._id, { status: 'cancelled' });
+    await deliveryRepository.pushHistory(delivery._id, { status: 'cancelled', at: new Date(), note, by: 'system' });
   }
 
   /** Called by the vendor order flow when an order becomes "ready". */
@@ -168,7 +193,7 @@ class DeliveryService {
       return {
         delivery: await this.#serialize(delivery._id),
         notified: [],
-        message: 'No available drivers found within range.',
+        message: 'No available delivery workers found within range.',
       };
     }
 
@@ -208,7 +233,7 @@ class DeliveryService {
     const notified = eligible.map((driver) => String(driver._id));
     if (config.env !== 'production') {
       console.log(
-        `[delivery] broadcast ${delivery.order_number} → ${notified.length} driver(s): ${notified.join(', ')}`
+        `[delivery] broadcast ${delivery.order_number} → ${notified.length} delivery worker(s): ${notified.join(', ')}`
       );
     }
 
@@ -369,7 +394,7 @@ class DeliveryService {
       }
       if (current.driver_id) {
         throw ApiError.conflict(
-          'This delivery has already been accepted by another driver.',
+          'This delivery has already been accepted by another delivery worker.',
           'DELIVERY_ALREADY_ASSIGNED'
         );
       }
@@ -394,8 +419,12 @@ class DeliveryService {
     await orderRepository.pushHistory(delivery.order_id, {
       status: 'assigned',
       at: now,
-      note: `Driver ${driver.name} assigned`,
+      note: `Delivery worker ${driver.name} assigned`,
     });
+    orderRepository
+      .findById(delivery.order_id)
+      .then((order) => order && orderNotifications.deliveryAccepted(order, driver.name))
+      .catch(() => null);
 
     return {
       delivery: await this.#serialize(delivery._id, {}, { revealCustomer: true }),
@@ -443,7 +472,7 @@ class DeliveryService {
 
     const delivery = await deliveryRepository.findByDriverAndId(driver._id, id);
     if (!delivery) {
-      throw ApiError.notFound('Delivery not found for this driver.', 'DELIVERY_NOT_FOUND');
+      throw ApiError.notFound('Delivery not found for this delivery worker.', 'DELIVERY_NOT_FOUND');
     }
 
     assertTransition(delivery.status, nextStatus);
@@ -471,7 +500,7 @@ class DeliveryService {
       await orderRepository.pushHistory(delivery.order_id, {
         status: 'picked_up',
         at: now,
-        note: 'Picked up by rider',
+        note: 'Picked up by the delivery worker',
       });
     }
     if (nextStatus === 'out_for_delivery') {
@@ -482,7 +511,12 @@ class DeliveryService {
         note: 'Out for delivery',
       });
       // Remind the customer of the confirmation code as the rider heads over.
-      await this.#notifyCustomerDeliveryCode(delivery, delivery, { reminder: true });
+      // Link the reminder to the order (not the delivery) so it opens tracking.
+      await this.#notifyCustomerDeliveryCode(
+        { _id: delivery.order_id, order_number: delivery.order_number, customer_id: delivery.customer_id },
+        delivery,
+        { reminder: true }
+      );
     }
     if (nextStatus === 'delivered') {
       await this.#settleOrderDelivered(delivery);
@@ -497,7 +531,7 @@ class DeliveryService {
     const id = parseObjectId(deliveryId, 'delivery_id');
     const delivery = await deliveryRepository.findByDriverAndId(driver._id, id);
     if (!delivery) {
-      throw ApiError.notFound('Delivery not found for this driver.', 'DELIVERY_NOT_FOUND');
+      throw ApiError.notFound('Delivery not found for this delivery worker.', 'DELIVERY_NOT_FOUND');
     }
     if (['completed', 'cancelled', 'rejected'].includes(delivery.status)) {
       throw ApiError.conflict(
@@ -627,7 +661,7 @@ class DeliveryService {
       await deliveryRepository.pushHistory(delivery._id, {
         status: 'ready_for_pickup',
         at: new Date(),
-        note: 'Driver went offline — re-broadcast',
+        note: 'Delivery worker went offline — re-broadcast',
         by: 'system',
       });
       await deliveryRepository.addRejection(delivery._id, driverId);
@@ -684,7 +718,8 @@ class DeliveryService {
     // the vendor's manual "mark completed" did, so the kitchen never has to come
     // back: the vendor is credited and dish counts bump.
     if (completed) {
-      await settlementService.releaseOrder(order._id);
+      const settled = await settlementService.releaseOrder(order._id);
+      if (settled) orderNotifications.completed(settled);
     }
   }
 

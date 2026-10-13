@@ -139,6 +139,49 @@ class NotificationRepository {
   }
 
   /** A driver may hold several unread order-offer alerts at once. */
+  /* -------------------------------- vendors -------------------------------- */
+
+  async createForVendor(vendorId, doc) {
+    const notification = await Notification.create({
+      vendor_id: vendorId,
+      customer_id: null,
+      driver_id: null,
+      audience: 'vendor',
+      sms_status: 'skipped',
+      ...doc,
+    });
+    return notification.toObject();
+  }
+
+  async listByVendor(vendorId, { limit = 30, offset = 0, unreadOnly = false } = {}) {
+    const filter = { vendor_id: vendorId, audience: 'vendor', ...(unreadOnly ? { read_at: null } : {}) };
+    const [items, total] = await Promise.all([
+      Notification.find(filter).sort({ created_at: -1 }).skip(offset).limit(limit).lean(),
+      Notification.countDocuments(filter),
+    ]);
+    return { items, total };
+  }
+
+  async countUnreadByVendor(vendorId) {
+    return Notification.countDocuments({ vendor_id: vendorId, audience: 'vendor', read_at: null });
+  }
+
+  async markReadByVendor(vendorId, notificationId) {
+    return Notification.findOneAndUpdate(
+      { _id: notificationId, vendor_id: vendorId, audience: 'vendor' },
+      { $set: { read_at: new Date() } },
+      { new: true }
+    ).lean();
+  }
+
+  async markAllReadByVendor(vendorId) {
+    const result = await Notification.updateMany(
+      { vendor_id: vendorId, audience: 'vendor', read_at: null },
+      { $set: { read_at: new Date() } }
+    );
+    return result.modifiedCount ?? 0;
+  }
+
   async findOfferForDriver(driverId, orderId, type = 'delivery_offer') {
     return Notification.findOne({ driver_id: driverId, order_id: orderId, type })
       .sort({ created_at: -1 })

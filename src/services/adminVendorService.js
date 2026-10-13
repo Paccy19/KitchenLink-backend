@@ -11,6 +11,7 @@ const vendorRepository = require('../repositories/vendorRepository');
 const orderRepository = require('../repositories/orderRepository');
 const adminActionLogService = require('./adminActionLogService');
 const settlementService = require('./settlementService');
+const orderNotifications = require('./orderNotifications');
 
 const VENDOR_STATUSES = ['pending', 'approved', 'rejected', 'suspended'];
 
@@ -102,6 +103,7 @@ class AdminVendorService {
     }
 
     const updated = await vendorRepository.update(vendorId, update);
+    if (nextStatus !== vendor.verification_status) orderNotifications.vendorAccount(vendorId, nextStatus, note);
 
     await adminActionLogService.record(
       admin,

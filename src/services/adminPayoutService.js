@@ -14,6 +14,7 @@ const driverRepository = require('../repositories/driverRepository');
 const transactionRepository = require('../repositories/transactionRepository');
 const adminActionLogService = require('./adminActionLogService');
 const notificationService = require('./notificationService');
+const orderNotifications = require('./orderNotifications');
 
 const WITHDRAWAL_STATUSES = ['processing', 'completed', 'failed'];
 const PAYEE_TYPES = ['vendor', 'driver'];
@@ -117,13 +118,16 @@ class AdminPayoutService {
         amount_rwf: withdrawal.amount_rwf,
         ...(isDriver ? { driver_id: payeeId } : { vendor_id: payeeId }),
         reference: cleanReference,
-        description: `${isDriver ? 'Rider' : 'Vendor'} withdrawal paid via ${
+        description: `${isDriver ? 'Delivery worker' : 'Vendor'} withdrawal paid via ${
           withdrawal.method_label || withdrawal.method
         }${withdrawal.account_number ? ` to ${withdrawal.account_number}` : ''}`,
         metadata: { withdrawal_id: String(withdrawal._id), payee_type: withdrawal.payee_type || 'vendor' },
       });
     }
 
+    if (!isDriver) {
+      orderNotifications.vendorPayout(withdrawal, { status: nextStatus, reference: cleanReference, reason: failureReason });
+    }
     if (isDriver) {
       notificationService
         .notifyDriverPayout(payeeId, {

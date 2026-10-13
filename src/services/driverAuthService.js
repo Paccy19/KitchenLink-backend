@@ -32,7 +32,7 @@ class DriverAuthService {
     const existing = await driverRepository.findByPhone(phone);
     if (existing) {
       throw ApiError.conflict(
-        'A driver with this phone number is already registered.',
+        'A delivery worker with this phone number is already registered.',
         'PHONE_ALREADY_REGISTERED'
       );
     }
@@ -55,8 +55,8 @@ class DriverAuthService {
     notificationService
       .notifyAdmin({
         type: 'driver_application',
-        title: 'New driver application',
-        body: `${name} registered as a delivery partner and may need review.`,
+        title: 'New delivery worker application',
+        body: `${name} registered as a delivery worker and may need review.`,
         link: `/admin-dashboard/drivers?driver=${driver._id}`,
         data: { driver_id: String(driver._id), driver_name: name },
       })
@@ -70,7 +70,7 @@ class DriverAuthService {
     const driver = await driverRepository.findByPhone(normalizedPhone);
     if (!driver) {
       throw ApiError.notFound(
-        'No driver account is registered with this phone number.',
+        'No delivery worker account is registered with this phone number.',
         'DRIVER_NOT_FOUND'
       );
     }
@@ -163,7 +163,7 @@ class DriverAuthService {
     const driver = await driverRepository.findByPhone(normalizedPhone);
     if (!driver) {
       throw ApiError.notFound(
-        'This driver account is no longer available.',
+        'This delivery worker account is no longer available.',
         'DRIVER_NOT_FOUND'
       );
     }
@@ -199,7 +199,7 @@ class DriverAuthService {
   #assertCanLogin(driver) {
     if (driver.verification_status === 'rejected') {
       throw ApiError.forbidden(
-        'This driver account was rejected. Contact support.',
+        'This delivery worker account was rejected. Contact support.',
         'DRIVER_REJECTED'
       );
     }

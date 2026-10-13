@@ -46,7 +46,9 @@ function parseBoolean(raw, { field, fallback }) {
 }
 
 /** Only these statuses may be set through the driver status endpoint. */
-const DRIVER_SETTABLE_STATUSES = ['picked_up', 'out_for_delivery', 'delivered'];
+// 'delivered' is not settable: a delivery is finished only by confirming the
+// customer's code (confirm-delivery), which also completes the order.
+const DRIVER_SETTABLE_STATUSES = ['picked_up', 'out_for_delivery'];
 
 function parseDriverStatus(raw) {
   if (!DRIVER_SETTABLE_STATUSES.includes(raw)) {

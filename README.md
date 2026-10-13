@@ -202,17 +202,20 @@ curl -X PATCH http://localhost:4000/api/v1/vendor/orders/$ORDER_ID/status \
 | `new` | `accepted`, `cancelled` |
 | `accepted` | `preparing`, `cancelled` |
 | `preparing` | `ready`, `cancelled` |
-| `ready` | `completed`, `cancelled` |
+| `ready` | `cancelled` (only until a delivery worker accepts the order) |
 | `completed` | — (terminal) |
 | `cancelled` | — (terminal) |
 
 Any other transition returns `409 INVALID_STATUS_TRANSITION`. Each response
 includes `allowed_next_statuses` so the UI can render only valid actions.
 
-When an order moves to `completed`, the backend sets `completed_at`, increments
-each item's `orders_count`, and credits the vendor's `total_sales` (and
-`available_balance`, net of `PLATFORM_COMMISSION_PERCENT`). Completion is
-idempotent because `completed` is a terminal state.
+Vendors never complete orders. An order becomes `completed` only when the
+delivery worker confirms the code the customer gives them
+(`POST /driver/deliveries/{id}/confirm-delivery`). The backend then sets
+`completed_at`, increments each item's `orders_count`, and credits the vendor's
+`total_sales` and `available_balance` (net of `PLATFORM_COMMISSION_PERCENT`).
+Once a delivery worker has accepted an order, neither the vendor nor the
+customer can cancel it (`409 DELIVERY_IN_PROGRESS`).
 
 > The vendor lifecycle is a translation layer over the shared customer order
 > statuses (`new→placed`, `accepted→confirmed`, `completed→delivered`), so a

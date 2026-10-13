@@ -49,7 +49,7 @@ class DriverWalletService {
     // Riders are paid by mobile money; default to their login number.
     const accountNumber = parsePayoutPhone(body.phone ?? driver.phone, 'phone');
     if (code !== 'mobile_money') {
-      throw ApiError.badRequest('Riders are paid by mobile money (MTN or Airtel).', {
+      throw ApiError.badRequest('Delivery workers are paid by mobile money (MTN or Airtel).', {
         method: 'expected MTN Mobile Money or Airtel Money',
       });
     }
@@ -76,8 +76,8 @@ class DriverWalletService {
     notificationService
       .notifyAdmin({
         type: 'payout_requested',
-        title: 'Rider payout requested',
-        body: `${driver.name || 'A rider'} requested a payout of ${amount.toLocaleString()} RWF to ${label} ${accountNumber}.`,
+        title: 'Delivery worker payout requested',
+        body: `${driver.name || 'A delivery worker'} requested a payout of ${amount.toLocaleString()} RWF to ${label} ${accountNumber}.`,
         link: `/admin-dashboard/payouts?payout=${withdrawal._id}`,
         data: {
           withdrawal_id: String(withdrawal._id),

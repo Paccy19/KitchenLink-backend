@@ -55,10 +55,10 @@ const run = async () => {
       updated_at: new Date(),
     });
     created += 1;
-    console.log(`Created driver ${driver.name} (${phone})`);
+    console.log(`Created delivery worker ${driver.name} (${phone})`);
   }
 
-  console.log(`Seeded ${created} driver(s). Log in with OTP via the Driver app.`);
+  console.log(`Seeded ${created} delivery worker(s). Log in with OTP via the delivery worker app.`);
   await mongoose.disconnect();
 };
 

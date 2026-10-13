@@ -104,7 +104,7 @@ class DeliveryRepository {
           status_history: {
             status,
             at: assignedAt,
-            note: 'Delivery accepted by driver',
+            note: 'Delivery accepted by delivery worker',
             by: 'driver',
           },
         },

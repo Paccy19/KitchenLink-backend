@@ -15,6 +15,8 @@ const deliveryRepository = require('../repositories/deliveryRepository');
 const driverRepository = require('../repositories/driverRepository');
 const adminActionLogService = require('./adminActionLogService');
 const settlementService = require('./settlementService');
+const deliveryService = require('./deliveryService');
+const orderNotifications = require('./orderNotifications');
 
 class AdminOrderService {
   async list(query = {}) {
@@ -95,10 +97,13 @@ class AdminOrderService {
 
     // Admin marking an order delivered/complete releases the held payout.
     if (nextStatus === 'delivered') {
-      await settlementService.releaseOrder(orderId);
+      const settled = await settlementService.releaseOrder(orderId);
+      if (order.settlement_status === 'held' && settled) orderNotifications.completed(settled);
     }
-    if (nextStatus === 'cancelled' && order.payment_status === 'paid') {
-      await settlementService.refundOrder(order);
+    if (nextStatus === 'cancelled') {
+      if (order.payment_status === 'paid') await settlementService.refundOrder(order);
+      await deliveryService.cancelOpenDelivery(orderId, 'Order cancelled by support');
+      orderNotifications.adminCancelled(order, reason);
     }
 
     await adminActionLogService.record(
@@ -130,14 +135,14 @@ class AdminOrderService {
       throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
     }
     if (order.status === 'delivered' || order.status === 'cancelled') {
-      throw ApiError.badRequest('Cannot reassign a driver on a closed order.', {
+      throw ApiError.badRequest('Cannot reassign a delivery worker on a closed order.', {
         order_id: 'order is already completed or cancelled',
       });
     }
 
     const driver = await driverRepository.findById(driver_id);
     if (!driver) {
-      throw ApiError.notFound('Driver not found.', 'DRIVER_NOT_FOUND');
+      throw ApiError.notFound('Delivery worker not found.', 'DRIVER_NOT_FOUND');
     }
 
     const now = new Date();
@@ -148,7 +153,7 @@ class AdminOrderService {
     await orderRepository.pushHistory(orderId, {
       status: order.status,
       at: now,
-      note: note || `Driver reassigned to ${driver.name} by admin`,
+      note: note || `Delivery worker reassigned to ${driver.name} by admin`,
     });
 
     if (order.delivery_id) {
@@ -159,7 +164,7 @@ class AdminOrderService {
       await deliveryRepository.pushHistory(order.delivery_id, {
         status: 'assigned_to_driver',
         at: now,
-        note: `Driver reassigned to ${driver.name} by admin`,
+        note: `Delivery worker reassigned to ${driver.name} by admin`,
         by: 'admin',
       });
     }

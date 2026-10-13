@@ -9,13 +9,13 @@ const driverRepository = require('../repositories/driverRepository');
 const buildDeliveryCodeBody = (orderNumber, code, reminder) => {
   const orderRef = orderNumber ? `order ${orderNumber}` : 'your order';
   return reminder
-    ? `Your rider is arriving with ${orderRef}. Share this code to confirm delivery: ${code}`
-    : `Keep this code ready for ${orderRef}. Give it to the rider to confirm you received your delivery: ${code}`;
+    ? `Your delivery worker is arriving with ${orderRef}. Share this code to confirm delivery: ${code}`
+    : `Keep this code ready for ${orderRef}. Give it to the delivery worker to confirm you received your delivery: ${code}`;
 };
 
 const buildDeliveryCodeSms = (orderNumber, code) => {
   const orderRef = orderNumber ? ` for order ${orderNumber}` : '';
-  return `FoodKitchen delivery confirmation code${orderRef}: ${code}. Share it with the rider at handover, only once your food arrives.`;
+  return `FoodKitchen delivery confirmation code${orderRef}: ${code}. Share it with the delivery worker at handover, only once your food arrives.`;
 };
 
 class NotificationService {
@@ -29,9 +29,13 @@ class NotificationService {
   async notifyDeliveryCode(customerId, { orderNumber, code, orderId = null, reminder = false }) {
     if (!customerId || !code) return null;
 
-    const title = reminder ? 'Rider is arriving — delivery code' : 'Delivery confirmation code';
+    const title = reminder ? 'Delivery worker is arriving — delivery code' : 'Delivery confirmation code';
     const body = buildDeliveryCodeBody(orderNumber, code, reminder);
-    const data = { otp_code: code, order_number: orderNumber || null };
+    const data = {
+      otp_code: code,
+      order_number: orderNumber || null,
+      link: orderId ? `/track/${orderId}` : '/track',
+    };
 
     const notification = await notificationRepository.create({
       customer_id: customerId,
@@ -93,6 +97,65 @@ class NotificationService {
     return { updated, unread_count: 0 };
   }
 
+  /** Order progress for a customer (in-app); opens that order's tracking page. */
+  async notifyCustomerOrder(customerId, { orderId, orderNumber, title, body } = {}) {
+    if (!customerId || !title || !body) return null;
+    const notification = await notificationRepository.create({
+      customer_id: customerId,
+      audience: 'customer',
+      type: 'order_update',
+      title,
+      body,
+      order_id: orderId || null,
+      data: { order_number: orderNumber || null, link: orderId ? `/track/${orderId}` : '/orders' },
+      sms_status: 'skipped',
+    });
+    return serializeNotification(notification);
+  }
+
+  /* ------------------------------- vendors ------------------------------- */
+
+  /**
+   * In-app notification for a vendor. `link` is the vendor-dashboard page it
+   * opens (e.g. the order). Best-effort: callers should not await failures.
+   */
+  async notifyVendor(vendorId, { type = 'general', title, body, orderId = null, link = '/vendor-dashboard', data = {} } = {}) {
+    if (!vendorId || !title || !body) return null;
+    const notification = await notificationRepository.createForVendor(vendorId, {
+      type,
+      title,
+      body,
+      order_id: orderId || null,
+      data: { ...data, link },
+    });
+    return serializeNotification(notification);
+  }
+
+  async listForVendor(vendorId, query = {}) {
+    const { limit, page, offset } = parsePagination(query, { defaultLimit: 30, maxLimit: 100 });
+    const unreadOnly = query.unread === 'true' || query.unread === true;
+    const [{ items, total }, unreadCount] = await Promise.all([
+      notificationRepository.listByVendor(vendorId, { limit, offset, unreadOnly }),
+      notificationRepository.countUnreadByVendor(vendorId),
+    ]);
+    return {
+      notifications: items.map(serializeNotification),
+      unread_count: unreadCount,
+      meta: { limit, page, offset, total, unread_count: unreadCount },
+    };
+  }
+
+  async markVendorRead(vendorId, notificationId) {
+    const updated = await notificationRepository.markReadByVendor(vendorId, notificationId);
+    if (!updated) throw ApiError.notFound('Notification not found.', 'NOTIFICATION_NOT_FOUND');
+    return { notification: serializeNotification(updated) };
+  }
+
+  async markAllVendorRead(vendorId) {
+    const updated = await notificationRepository.markAllReadByVendor(vendorId);
+    return { updated, unread_count: 0 };
+  }
+
   /* ------------------------------ drivers ------------------------------ */
 
   /**
@@ -121,6 +184,7 @@ class NotificationService {
       order_number: orderNumber || null,
       delivery_id: deliveryId ? String(deliveryId) : null,
       earnings_rwf: earningsRwf || 0,
+      link: '/driver-dashboard',
       vendor_name: vendorName || null,
       pickup_neighborhood: pickupNeighborhood || null,
       offer_expires_at: expiresAt ? expiresAt.toISOString() : null,
@@ -141,7 +205,7 @@ class NotificationService {
       if (driver?.phone) {
         smsResult = await sendSms(
           driver.phone,
-          `FoodKitchen: ${body} Open the driver app to accept.`
+          `FoodKitchen: ${body} Open the delivery worker app to accept.`
         );
       }
       await notificationRepository.setSmsStatus(notification._id, {
@@ -169,7 +233,7 @@ class NotificationService {
       type: 'payout_update',
       title,
       body,
-      data: { status, amount_rwf: amountRwf, reference: reference || null },
+      data: { status, amount_rwf: amountRwf, reference: reference || null, link: '/driver-dashboard/earnings' },
       sms_status: 'pending',
     });
 

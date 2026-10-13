@@ -141,7 +141,7 @@ class AdminUserService {
 
     if (role === 'driver') {
       const driver = await driverRepository.findById(userId);
-      if (!driver) throw ApiError.notFound('Driver not found.', 'DRIVER_NOT_FOUND');
+      if (!driver) throw ApiError.notFound('Delivery worker not found.', 'DRIVER_NOT_FOUND');
       return { user: toDriver(driver) };
     }
 

@@ -50,10 +50,10 @@ const bootstrapAdmin = async () => {
   try {
     const backfilled = await driverRepository.backfillAvailableBalances();
     if (backfilled > 0) {
-      console.log(`Opened withdrawable balances for ${backfilled} existing driver(s)`);
+      console.log(`Opened withdrawable balances for ${backfilled} existing delivery worker(s)`);
     }
   } catch (error) {
-    console.error('Driver balance backfill failed:', error);
+    console.error('Delivery worker balance backfill failed:', error);
   }
 
   try {

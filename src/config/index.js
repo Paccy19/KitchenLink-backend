@@ -98,7 +98,7 @@ const config = {
       confirmed: 'Confirmed by kitchen',
       preparing: 'Preparing your food',
       ready: 'Ready for pickup',
-      assigned: 'Assigned to driver',
+      assigned: 'Assigned to a delivery worker',
       picked_up: 'Picked up',
       out_for_delivery: 'Out for delivery',
       delivered: 'Delivered',
@@ -198,11 +198,13 @@ const config = {
       cancelled: 'Cancelled',
     },
     // Allowed vendor-initiated transitions. Terminal states have no exits.
+    // Vendors never complete orders: an order completes only when the delivery
+    // worker confirms the code the customer gives them.
     orderTransitions: {
       new: ['accepted', 'cancelled'],
       accepted: ['preparing', 'cancelled'],
       preparing: ['ready', 'cancelled'],
-      ready: ['completed', 'cancelled'],
+      ready: ['cancelled'],
       completed: [],
       cancelled: [],
     },
@@ -281,7 +283,7 @@ const config = {
       accepted: 'Accepted',
       preparing: 'Preparing',
       ready_for_pickup: 'Ready for pickup',
-      assigned_to_driver: 'Assigned to driver',
+      assigned_to_driver: 'Assigned to a delivery worker',
       picked_up: 'Picked up',
       out_for_delivery: 'Out for delivery',
       delivered: 'Delivered',

@@ -19,6 +19,8 @@ const notificationRepository = require('../repositories/notificationRepository')
 const notificationService = require('./notificationService');
 const settlementService = require('./settlementService');
 const deliveryPricingService = require('./deliveryPricingService');
+const deliveryService = require('./deliveryService');
+const orderNotifications = require('./orderNotifications');
 const { isVendorLive } = require('../utils/vendorPresence');
 
 const { orders } = config;
@@ -413,6 +415,8 @@ class OrderService {
     const updatedOrder = await orderRepository.update(order._id, {
       payment_status: paymentStatus,
     });
+    // The kitchen only hears about orders that are paid for.
+    if (paymentStatus === 'paid') orderNotifications.newOrder({ ...order, ...updatedOrder });
 
     await cartRepository.clear(customerId);
 
@@ -545,6 +549,7 @@ class OrderService {
         'ORDER_NOT_CANCELLABLE'
       );
     }
+    await deliveryService.assertCancellable(order._id);
 
     const reason =
       typeof body?.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
@@ -561,6 +566,7 @@ class OrderService {
       await settlementService.refundOrder(order);
     }
 
+    await deliveryService.cancelOpenDelivery(order._id, 'Order cancelled by the customer');
     const cancelledAt = new Date();
     const updated = await orderRepository.update(order._id, {
       status: 'cancelled',
@@ -573,6 +579,7 @@ class OrderService {
       at: cancelledAt,
       note: reason || 'Cancelled by customer',
     });
+    orderNotifications.customerCancelled(updated, reason);
 
     const { vendor } = await this.#loadWithVendor(updated);
     return serializeDetail(updated, vendor, payment);
@@ -603,6 +610,7 @@ class OrderService {
       payment_method: method,
       payment_status: paymentStatus,
     });
+    if (paymentStatus === 'paid') orderNotifications.newOrder(updated);
 
     const { vendor } = await this.#loadWithVendor(updated);
     return serializeDetail(updated, vendor, payment);
@@ -620,6 +628,14 @@ class OrderService {
     }
 
     const nextStatus = body?.status;
+    // Completion happens only when the delivery worker confirms the
+    // customer's code (driver app), never through this endpoint.
+    if (nextStatus === 'delivered') {
+      throw ApiError.conflict(
+        `Orders are completed when the delivery worker confirms the customer's code.`,
+        'COMPLETED_BY_DELIVERY_CODE'
+      );
+    }
     if (!orders.statuses.includes(nextStatus)) {
       throw ApiError.badRequest('status is invalid.', {
         status: `expected one of: ${orders.statuses.join(', ')}`,
@@ -684,8 +700,10 @@ class OrderService {
     });
 
     // Keep the money in step with the status change.
-    if (nextStatus === 'cancelled') await settlementService.refundOrder(order);
-    if (nextStatus === 'delivered') await settlementService.releaseOrder(order._id);
+    if (nextStatus === 'cancelled') {
+      await settlementService.refundOrder(order);
+      await deliveryService.cancelOpenDelivery(order._id);
+    }
 
     const refreshed = await orderRepository.findById(order._id);
     const vendor = await vendorRepository.findById(refreshed.vendor_id);

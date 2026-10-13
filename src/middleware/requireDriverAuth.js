@@ -26,12 +26,12 @@ const requireDriverAuth = async (req, res, next) => {
     }
 
     if (payload.role !== config.delivery.jwtRole) {
-      throw ApiError.forbidden('Driver credentials are required.', 'DRIVER_ONLY');
+      throw ApiError.forbidden('Delivery worker credentials are required.', 'DRIVER_ONLY');
     }
 
     const driver = await driverRepository.findById(payload.sub);
     if (!driver) {
-      throw ApiError.unauthorized('Driver account no longer exists.', 'INVALID_TOKEN');
+      throw ApiError.unauthorized('Delivery worker account no longer exists.', 'INVALID_TOKEN');
     }
 
     req.driver = driver;
