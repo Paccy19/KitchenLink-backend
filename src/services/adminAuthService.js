@@ -57,15 +57,7 @@ class AdminAuthService {
 
     const usesDefaultPassword = await this.#isDefaultPassword(admin.password_hash);
 
-    // Team members always sign in with an SMS code.
-    if (admin.role !== OWNER_ROLE && !(admin.two_factor_enabled && admin.phone)) {
-      throw ApiError.forbidden(
-        'Your account has no phone for sign-in codes. Ask the owner to send you a new invitation.',
-        'TWO_FACTOR_REQUIRED'
-      );
-    }
-
-    // Second step: a code sent to the admin's verified phone.
+    // Second step: a code sent to the admin's verified phone (only when 2FA is on).
     if (admin.two_factor_enabled && admin.phone) {
       const sent = await adminOtpService.send(admin.phone, 'login');
       return {

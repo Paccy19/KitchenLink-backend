@@ -14,10 +14,6 @@ router.get(
   asyncHandler(async (req, res) => res.json(await teamService.getInvitation(req.params.token)))
 );
 router.post(
-  '/invitations/:token/send-code',
-  asyncHandler(async (req, res) => res.json(await teamService.sendInvitationCode(req.params.token, req.body)))
-);
-router.post(
   '/invitations/:token/accept',
   asyncHandler(async (req, res) => res.json(await teamService.acceptInvitation(req.params.token, req.body)))
 );

@@ -7,8 +7,8 @@ const { OWNER_ROLE, TEAM_ROLES, LEGACY_ROLES, ALL_PERMISSIONS } = require('../co
  * so each role keeps its own login surface and JWT audience.
  *
  * The owner is `super_admin`. Team members are invited by the owner with a
- * role (see config/adminAccess.js): they start `invited`, set their own
- * password and phone from the emailed link, then become `active`.
+ * role (see config/adminAccess.js): they start `invited` and set their own
+ * password from the emailed link, then become `active`.
  */
 const ADMIN_ROLES = [OWNER_ROLE, ...TEAM_ROLES, ...Object.keys(LEGACY_ROLES)];
 const ADMIN_PERMISSIONS = ALL_PERMISSIONS;

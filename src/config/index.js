@@ -62,8 +62,14 @@ const config = {
   // Where the website runs; used for links in emails (e.g. team invitations).
   frontendUrl: (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, ''),
   mail: {
-    // SMTP account that sends emails. Without SMTP_HOST, emails are not sent:
+    // Two delivery options. If EMAIL_PROVIDER + EMAIL_API_KEY are set, an HTTP
+    // email API (resend | sendgrid | mailgun | brevo) is used. Otherwise an
+    // SMTP account (SMTP_HOST...) is used. Without either, emails are not sent:
     // they are logged (development) and the owner gets the link to share.
+    provider: (process.env.EMAIL_PROVIDER || '').toLowerCase(),
+    apiKey: process.env.EMAIL_API_KEY || '',
+    // Optional endpoint override (e.g. Mailgun's region or a self-hosted API).
+    apiUrl: process.env.EMAIL_API_URL || '',
     host: process.env.SMTP_HOST || '',
     port: Number(process.env.SMTP_PORT) || 587,
     secure: process.env.SMTP_SECURE === 'true',

@@ -3,13 +3,11 @@ const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { parseObjectId } = require('../utils/adminValidators');
 const { parseEmail, parsePassword } = require('../utils/vendorValidators');
-const { normalizePhone } = require('../utils/validators');
 const { hashPassword } = require('../utils/password');
 const { sendEmail, escapeHtml } = require('../utils/email');
 const { Admin } = require('../models');
 const access = require('../config/adminAccess');
 const adminAuthService = require('./adminAuthService');
-const adminOtpService = require('./adminOtpService');
 const adminActionLogService = require('./adminActionLogService');
 
 const hashToken = (token) => crypto.createHash('sha256').update(String(token)).digest('hex');
@@ -54,9 +52,9 @@ const parseRole = (raw) => {
 
 /**
  * The owner's team. Only the owner (super admin) can invite, change or remove
- * members. A member is invited by email with a role, sets their own name,
- * phone (verified by SMS) and password from the link, then signs in on the
- * admin sign-in page with their email, password and an SMS code.
+ * members. A member is invited by email with a role and sets their own password
+ * from the link, then signs in on the admin sign-in page with their email and
+ * the password they set.
  */
 class TeamService {
   async list() {
@@ -99,8 +97,8 @@ class TeamService {
     const sent = await sendEmail({
       to: member.email,
       subject: `You're invited to the Online Food Kitchen admin team (${role.label})`,
-      text: `${greeting}\n\n${owner.name || 'The owner'} invited you to join the Online Food Kitchen admin team as ${role.label}.\n\nWhat you will be able to do: ${role.description}\n\nCreate your password here (the link works for ${hours} hours):\n${link}\n\nThen sign in on the website: Sign in > Admin, with this email and your password. A code will be sent to your phone each time you sign in.\n\nIf you did not expect this, ignore this email.`,
-      html: `<p>${escapeHtml(greeting)}</p><p><strong>${escapeHtml(owner.name || 'The owner')}</strong> invited you to join the Online Food Kitchen admin team as <strong>${escapeHtml(role.label)}</strong>.</p><p>${escapeHtml(role.description)}</p><p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 18px;background:#1f2937;color:#fff;border-radius:8px;text-decoration:none">Create my password</a></p><p style="color:#666">The link works for ${hours} hours. Then sign in on the website: Sign in &gt; Admin, with this email and your password. A code is sent to your phone each time you sign in.</p>`,
+      text: `${greeting}\n\n${owner.name || 'The owner'} invited you to join the Online Food Kitchen admin team as ${role.label}.\n\nWhat you will be able to do: ${role.description}\n\nCreate your password here (the link works for ${hours} hours):\n${link}\n\nThen sign in on the website: Sign in > Admin, with this email and the password you set.\n\nIf you did not expect this, ignore this email.`,
+      html: `<p>${escapeHtml(greeting)}</p><p><strong>${escapeHtml(owner.name || 'The owner')}</strong> invited you to join the Online Food Kitchen admin team as <strong>${escapeHtml(role.label)}</strong>.</p><p>${escapeHtml(role.description)}</p><p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 18px;background:#1f2937;color:#fff;border-radius:8px;text-decoration:none">Create my password</a></p><p style="color:#666">The link works for ${hours} hours. Then sign in on the website: Sign in &gt; Admin, with this email and the password you set.</p>`,
     });
     return {
       email_status: sent.status,
@@ -226,17 +224,11 @@ class TeamService {
     };
   }
 
-  /** Step 1 of accepting: a code to the phone they will sign in with. */
-  async sendInvitationCode(token, body = {}) {
-    await this.#findInvitation(token);
-    return adminOtpService.send(normalizePhone(body.phone), 'accept_invite');
-  }
-
-  /** Step 2: name, verified phone and their own password. */
+  /** The invited person sets their own password; the account is then ready. */
   async acceptInvitation(token, body = {}) {
     const member = await this.#findInvitation(token);
-    const name = typeof body.name === 'string' ? body.name.trim().slice(0, 80) : '';
-    if (name.length < 2) throw ApiError.badRequest('Enter your full name.', { name: 'required' });
+    const provided = typeof body.name === 'string' ? body.name.trim().slice(0, 80) : '';
+    const name = provided || member.name || member.email.split('@')[0] || 'Team member';
     const password = parsePassword(body.password, { field: 'password' });
     if (!/[a-zA-Z]/.test(password) || !/\d/.test(password)) {
       throw ApiError.badRequest('Use at least 8 characters with letters and numbers.', { password: 'too weak' });
@@ -244,16 +236,13 @@ class TeamService {
     if (password === config.admin.seedPassword) {
       throw ApiError.badRequest('Choose a different password.', { password: 'too common' });
     }
-    const phone = normalizePhone(body.phone);
-    await adminOtpService.verify(phone, 'accept_invite', body.code);
 
     await Admin.updateOne(
       { _id: member._id },
       {
         $set: {
           name,
-          phone,
-          two_factor_enabled: true,
+          two_factor_enabled: false,
           password_hash: await hashPassword(password),
           status: 'active',
           accepted_at: new Date(),
