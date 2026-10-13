@@ -53,6 +53,13 @@ class TransactionRepository {
     return Transaction.distinct('order_id', { type, order_id: { $ne: null } });
   }
 
+  /** Refund entries written before refunds had their own record. */
+  async listLegacyRefunds() {
+    return Transaction.find({ type: 'refund', order_id: { $ne: null }, 'metadata.refund_id': { $exists: false } })
+      .select({ order_id: 1, amount_rwf: 1, reference: 1, created_at: 1 })
+      .lean();
+  }
+
   async listDriverEarningOrders() {
     return Transaction.find({ type: 'driver_earning', order_id: { $ne: null } })
       .select({ order_id: 1, created_at: 1 })

@@ -7,6 +7,8 @@ const COMPLAINT_CATEGORIES = [
   'order',
   'delivery',
   'payment',
+  'refund',
+  'app',
   'vendor',
   'driver',
   'account',
@@ -52,6 +54,25 @@ const complaintSchema = new mongoose.Schema(
       driver_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Driver', default: null },
     },
     assigned_to: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+    // The conversation the user sees: their messages and support's replies.
+    // (`notes` below are internal to the support team.)
+    messages: [
+      {
+        author_role: {
+          type: String,
+          enum: ['customer', 'vendor', 'driver', 'admin'],
+          required: true,
+        },
+        author_id: { type: mongoose.Schema.Types.ObjectId, default: null },
+        author_name: { type: String, default: '' },
+        body: { type: String, required: true },
+        at: { type: Date, default: Date.now },
+      },
+    ],
+    last_message_at: { type: Date, default: null },
+    // Who has something new to read.
+    unread_by_user: { type: Boolean, default: false },
+    unread_by_admin: { type: Boolean, default: false },
     notes: [
       {
         author_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
@@ -69,6 +90,7 @@ const complaintSchema = new mongoose.Schema(
 
 complaintSchema.index({ status: 1, created_at: -1 });
 complaintSchema.index({ category: 1, created_at: -1 });
+complaintSchema.index({ 'raised_by.role': 1, 'raised_by.user_id': 1, last_message_at: -1 });
 
 module.exports = mongoose.model('Complaint', complaintSchema);
 module.exports.COMPLAINT_STATUSES = COMPLAINT_STATUSES;

@@ -32,6 +32,8 @@ const adminActionLogSchema = new mongoose.Schema(
         'payout_destination',
         'transaction',
         'reconciliation',
+        'refund',
+        'admin_member',
       ],
       default: 'system',
     },

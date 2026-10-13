@@ -2,6 +2,7 @@ const ApiError = require('../utils/ApiError');
 const parsePagination = require('../utils/pagination');
 const { sendSms } = require('../utils/sms');
 const { serializeNotification } = require('../utils/serializers');
+const { visibleNotificationTypes } = require('../config/adminAccess');
 const notificationRepository = require('../repositories/notificationRepository');
 const customerRepository = require('../repositories/customerRepository');
 const driverRepository = require('../repositories/driverRepository');
@@ -98,16 +99,16 @@ class NotificationService {
   }
 
   /** Order progress for a customer (in-app); opens that order's tracking page. */
-  async notifyCustomerOrder(customerId, { orderId, orderNumber, title, body } = {}) {
+  async notifyCustomerOrder(customerId, { orderId, orderNumber, title, body, type = 'order_update', link } = {}) {
     if (!customerId || !title || !body) return null;
     const notification = await notificationRepository.create({
       customer_id: customerId,
       audience: 'customer',
-      type: 'order_update',
+      type,
       title,
       body,
       order_id: orderId || null,
-      data: { order_number: orderNumber || null, link: orderId ? `/track/${orderId}` : '/orders' },
+      data: { order_number: orderNumber || null, link: link || (orderId ? `/track/${orderId}` : '/orders') },
       sms_status: 'skipped',
     });
     return serializeNotification(notification);
@@ -305,35 +306,47 @@ class NotificationService {
     return serializeNotification(notification);
   }
 
-  async listForAdmin(query = {}) {
+  /** The alerts this admin's role covers, with their own read state. */
+  async listForAdmin(admin, query = {}) {
     const { limit, page, offset } = parsePagination(query, {
       defaultLimit: 30,
       maxLimit: 50,
     });
+    const scope = { adminId: admin._id, types: visibleNotificationTypes(admin) };
 
     const [notifications, unreadCount] = await Promise.all([
-      notificationRepository.listForAdmin({ limit, offset }),
-      notificationRepository.countUnreadForAdmin(),
+      notificationRepository.listForAdmin({ ...scope, limit, offset }),
+      notificationRepository.countUnreadForAdmin(scope),
     ]);
+    const readBy = (notification) =>
+      Boolean(notification.read_at) || (notification.read_by || []).some((id) => String(id) === String(admin._id));
 
     return {
-      notifications: notifications.map(serializeNotification),
+      notifications: notifications.map((notification) => ({
+        ...serializeNotification(notification),
+        read: readBy(notification),
+      })),
       unread_count: unreadCount,
       meta: { limit, page, offset, unread_count: unreadCount },
     };
   }
 
-  async markAdminRead(notificationId) {
-    const existing = await notificationRepository.findByIdForAdmin(notificationId);
+  async markAdminRead(admin, notificationId) {
+    const existing = await notificationRepository.findByIdForAdmin(notificationId, {
+      types: visibleNotificationTypes(admin),
+    });
     if (!existing) {
       throw ApiError.notFound('Notification not found.', 'NOTIFICATION_NOT_FOUND');
     }
-    const updated = await notificationRepository.markReadForAdmin(notificationId);
-    return { notification: serializeNotification(updated) };
+    const updated = await notificationRepository.markReadForAdmin(notificationId, admin._id);
+    return { notification: { ...serializeNotification(updated), read: true } };
   }
 
-  async markAllAdminRead() {
-    const updated = await notificationRepository.markAllReadForAdmin();
+  async markAllAdminRead(admin) {
+    const updated = await notificationRepository.markAllReadForAdmin({
+      adminId: admin._id,
+      types: visibleNotificationTypes(admin),
+    });
     return { updated, unread_count: 0 };
   }
 }

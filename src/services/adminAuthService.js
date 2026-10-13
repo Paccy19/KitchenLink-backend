@@ -3,6 +3,7 @@ const ApiError = require('../utils/ApiError');
 const { signToken, signShortToken, verifyToken } = require('../utils/jwt');
 const { normalizePhone } = require('../utils/validators');
 const adminOtpService = require('./adminOtpService');
+const { OWNER_ROLE } = require('../config/adminAccess');
 
 const CHALLENGE_ROLE = 'admin_2fa';
 // Money/security actions that need a fresh SMS code.
@@ -13,6 +14,8 @@ const ACTION_CONTEXTS = [
   'adjustment',
   'payout_settings',
   'disable_2fa',
+  'team_change',
+  'large_payment',
 ];
 const { hashPassword, comparePassword } = require('../utils/password');
 const { parseEmail, parsePassword } = require('../utils/vendorValidators');
@@ -33,6 +36,12 @@ class AdminAuthService {
     if (!admin) {
       throw ApiError.unauthorized('Invalid email or password.', 'INVALID_CREDENTIALS');
     }
+    if (admin.status === 'invited' && admin.is_active !== false) {
+      throw ApiError.forbidden(
+        'Finish setting up your account first: open the invitation email and create your password.',
+        'INVITATION_PENDING'
+      );
+    }
 
     if (admin.is_active === false) {
       throw ApiError.forbidden(
@@ -47,6 +56,14 @@ class AdminAuthService {
     }
 
     const usesDefaultPassword = await this.#isDefaultPassword(admin.password_hash);
+
+    // Team members always sign in with an SMS code.
+    if (admin.role !== OWNER_ROLE && !(admin.two_factor_enabled && admin.phone)) {
+      throw ApiError.forbidden(
+        'Your account has no phone for sign-in codes. Ask the owner to send you a new invitation.',
+        'TWO_FACTOR_REQUIRED'
+      );
+    }
 
     // Second step: a code sent to the admin's verified phone.
     if (admin.two_factor_enabled && admin.phone) {
@@ -85,7 +102,11 @@ class AdminAuthService {
   }
 
   async me(admin) {
-    return { admin: serializeAdmin(admin, { usesDefaultPassword: await this.usesDefaultPassword(admin) }) };
+    return {
+      admin: serializeAdmin(admin, { usesDefaultPassword: await this.usesDefaultPassword(admin) }),
+      // Refunds/payouts of this amount or more ask for an SMS code.
+      limits: { large_money_action_rwf: config.team.largeMoneyActionRwf },
+    };
   }
 
   async usesDefaultPassword(admin) {
@@ -114,6 +135,9 @@ class AdminAuthService {
   }
 
   async disableTwoFactor(admin, { code }) {
+    if (admin.role !== OWNER_ROLE) {
+      throw ApiError.forbidden('SMS sign-in codes are required for team members.', 'TWO_FACTOR_REQUIRED');
+    }
     if (!admin.two_factor_enabled || !admin.phone) {
       return { admin: serializeAdmin(admin) };
     }
@@ -135,6 +159,23 @@ class AdminAuthService {
   async verifyActionCode(admin, purpose, code) {
     this.assertTwoFactor(admin);
     return adminOtpService.verify(admin.phone, purpose, code);
+  }
+
+  /**
+   * Refunds and payouts of config.team.largeMoneyActionRwf or more need a
+   * fresh SMS code (purpose `large_payment`), whoever sends them.
+   */
+  async confirmLargeMoney(admin, amountRwf, code) {
+    if (Number(amountRwf) < config.team.largeMoneyActionRwf) return;
+    if (!code) {
+      throw new ApiError(
+        403,
+        'ACTION_CODE_REQUIRED',
+        `Amounts of ${config.team.largeMoneyActionRwf.toLocaleString('en-US')} RWF or more need the SMS code sent to your phone.`,
+        { purpose: 'large_payment', large_money_action_rwf: config.team.largeMoneyActionRwf }
+      );
+    }
+    await this.verifyActionCode(admin, 'large_payment', code);
   }
 
   assertTwoFactor(admin) {

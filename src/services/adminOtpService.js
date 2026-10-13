@@ -18,6 +18,9 @@ const CONTEXT_LABELS = {
   remove_destination: 'remove a payout account',
   adjustment: 'record a books adjustment',
   payout_settings: 'save your payout settings',
+  team_change: 'change who can access the admin panel',
+  large_payment: 'confirm a large refund or payout',
+  accept_invite: 'finish joining the admin team',
 };
 const CONTEXTS = Object.keys(CONTEXT_LABELS);
 

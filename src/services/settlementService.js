@@ -192,23 +192,20 @@ class SettlementService {
     });
   }
 
-  /** Order cancelled before completion: return the held amount. Idempotent. */
-  async refundOrder(order) {
+  /**
+   * Order cancelled before completion: the held amount becomes owed back to
+   * the customer as a refund (`refundService`). The `refund` ledger entry is
+   * written when the money is actually sent. Idempotent.
+   * `context` = { by: 'customer' | 'vendor' | 'admin' | 'system', reason }.
+   */
+  async refundOrder(order, context = {}) {
     if (!order) return null;
     const fresh = await orderRepository.claimSettlement(order._id, 'held', 'refunded');
     if (!fresh) return orderRepository.findById(order._id);
 
-    const amount = roundRwf(fresh.total_rwf);
-    await transactionRepository.create({
-      type: 'refund',
-      direction: 'debit',
-      status: 'refunded',
-      amount_rwf: amount,
-      order_id: fresh._id,
-      customer_id: fresh.customer_id,
-      reference: fresh.order_number || '',
-      description: `Refund for ${fresh.order_number}`,
-    });
+    // Required here to avoid a load-order cycle (refundService -> notifications).
+    // eslint-disable-next-line global-require
+    await require('./refundService').open(fresh, context);
     return fresh;
   }
 }

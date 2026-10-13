@@ -74,34 +74,47 @@ class NotificationRepository {
     return notification.toObject();
   }
 
-  async listForAdmin({ limit = 30, offset = 0 } = {}) {
-    return Notification.find({ audience: 'admin' })
+  // The admin feed is shared, but each admin only sees the alert types their
+  // role covers (`types`) and has their own read state (`read_by`).
+  // `read_at` set by the old shared feed counts as read for everyone.
+
+  async listForAdmin({ adminId, types, limit = 30, offset = 0 } = {}) {
+    return Notification.find({ audience: 'admin', type: { $in: types } })
       .sort({ created_at: -1 })
       .skip(offset)
       .limit(limit)
       .lean();
   }
 
-  async countUnreadForAdmin() {
-    return Notification.countDocuments({ audience: 'admin', read_at: null });
+  async countUnreadForAdmin({ adminId, types }) {
+    return Notification.countDocuments({
+      audience: 'admin',
+      type: { $in: types },
+      read_at: null,
+      read_by: { $ne: adminId },
+    });
   }
 
-  async findByIdForAdmin(notificationId) {
-    return Notification.findOne({ _id: notificationId, audience: 'admin' }).lean();
+  async findByIdForAdmin(notificationId, { types } = {}) {
+    return Notification.findOne({
+      _id: notificationId,
+      audience: 'admin',
+      ...(types ? { type: { $in: types } } : {}),
+    }).lean();
   }
 
-  async markReadForAdmin(notificationId) {
+  async markReadForAdmin(notificationId, adminId) {
     return Notification.findOneAndUpdate(
       { _id: notificationId, audience: 'admin' },
-      { $set: { read_at: new Date() } },
+      { $addToSet: { read_by: adminId } },
       { new: true }
     ).lean();
   }
 
-  async markAllReadForAdmin() {
+  async markAllReadForAdmin({ adminId, types }) {
     const result = await Notification.updateMany(
-      { audience: 'admin', read_at: null },
-      { $set: { read_at: new Date() } }
+      { audience: 'admin', type: { $in: types }, read_at: null, read_by: { $ne: adminId } },
+      { $addToSet: { read_by: adminId } }
     );
     return result.modifiedCount ?? 0;
   }

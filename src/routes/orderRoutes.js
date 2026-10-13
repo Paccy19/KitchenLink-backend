@@ -11,10 +11,25 @@ const router = Router();
 router.get('/payment-methods', orderController.paymentMethods);
 router.post('/checkout', requireAuth, orderController.checkout);
 router.get('/', requireAuth, orderController.listOrders);
+router.get(
+  '/refunds',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    res.json(await orderService.listRefunds(req.customer._id));
+  })
+);
 router.get('/:order_id', requireAuth, orderController.getOrder);
 router.get('/:order_id/track', requireAuth, orderController.trackOrder);
 router.post('/:order_id/cancel', requireAuth, orderController.cancelOrder);
 router.post('/:order_id/pay', requireAuth, orderController.payOrder);
+// Where the refund of a cancelled paid order is sent (mobile money number).
+router.put(
+  '/:order_id/refund-destination',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    res.json(await orderService.changeRefundDestination(req.customer._id, req.params.order_id, req.body));
+  })
+);
 
 // Agent (vendor/rider)
 router.patch(

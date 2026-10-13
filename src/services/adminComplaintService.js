@@ -12,6 +12,7 @@ const { serializeAdminComplaint } = require('../utils/serializers');
 const complaintRepository = require('../repositories/complaintRepository');
 const adminActionLogService = require('./adminActionLogService');
 const notificationService = require('./notificationService');
+const supportService = require('./supportService');
 const {
   COMPLAINT_STATUSES,
   COMPLAINT_PRIORITIES,
@@ -37,7 +38,10 @@ class AdminComplaintService {
       offset,
     });
 
-    const counts = await complaintRepository.countsByStatus();
+    const [counts, unread] = await Promise.all([
+      complaintRepository.countsByStatus(),
+      complaintRepository.countUnreadForAdmin(),
+    ]);
     return {
       items: complaints.map(serializeAdminComplaint),
       total,
@@ -48,15 +52,20 @@ class AdminComplaintService {
         in_review: counts.in_review || 0,
         resolved: counts.resolved || 0,
         rejected: counts.rejected || 0,
+        unread,
       },
     };
   }
 
   async getById(complaintId) {
     parseObjectId(complaintId, 'complaint_id');
-    const complaint = await complaintRepository.findById(complaintId);
+    let complaint = await complaintRepository.findById(complaintId);
     if (!complaint) {
       throw ApiError.notFound('Complaint not found.', 'COMPLAINT_NOT_FOUND');
+    }
+    // Opening it means support has read the user's latest message.
+    if (complaint.unread_by_admin) {
+      complaint = await complaintRepository.update(complaintId, { unread_by_admin: false });
     }
     const actions = await adminActionLogService.listForTarget('complaint', complaintId);
     return { complaint: serializeAdminComplaint(complaint), actions };
@@ -141,8 +150,20 @@ class AdminComplaintService {
         : null;
     }
 
+    // A reply goes to the user who raised it (the internal `note` does not).
+    if (body.reply !== undefined && body.reply !== '') {
+      await supportService.adminReply(complaintId, admin, body.reply);
+    }
+
     if (Object.keys(payload).length > 0) {
-      await complaintRepository.update(complaintId, payload);
+      const updated = await complaintRepository.update(complaintId, payload);
+      if (payload.status && payload.status !== existing.status && ['resolved', 'rejected'].includes(payload.status)) {
+        supportService.notifyUser(
+          updated,
+          payload.status === 'resolved' ? 'Support request resolved' : 'Support request closed',
+          `${existing.subject} was marked ${payload.status === 'resolved' ? 'resolved' : 'closed'}. Reply if you still need help.`
+        );
+      }
     }
 
     if (body.note) {
@@ -161,7 +182,7 @@ class AdminComplaintService {
         target_type: 'complaint',
         target_id: complaintId,
         target_label: existing.reference,
-        metadata: { ...payload, note_added: Boolean(body.note) },
+        metadata: { ...payload, note_added: Boolean(body.note), replied: Boolean(body.reply) },
       },
       req
     );

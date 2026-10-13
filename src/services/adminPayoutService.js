@@ -15,6 +15,7 @@ const transactionRepository = require('../repositories/transactionRepository');
 const adminActionLogService = require('./adminActionLogService');
 const notificationService = require('./notificationService');
 const orderNotifications = require('./orderNotifications');
+const adminAuthService = require('./adminAuthService');
 
 const WITHDRAWAL_STATUSES = ['processing', 'completed', 'failed'];
 const PAYEE_TYPES = ['vendor', 'driver'];
@@ -46,7 +47,7 @@ class AdminPayoutService {
    *  - failed: the reserved amount is returned to the payee's balance.
    * A finalized request only accepts reference corrections.
    */
-  async updateWithdrawal(withdrawalId, { status, reference, reason }, admin, req) {
+  async updateWithdrawal(withdrawalId, { status, reference, reason, action_code }, admin, req) {
     parseObjectId(withdrawalId, 'withdrawal_id');
     const nextStatus = parseEnum(status, WITHDRAWAL_STATUSES, 'status');
     if (!nextStatus) {
@@ -87,6 +88,9 @@ class AdminPayoutService {
       throw ApiError.badRequest('Enter the transaction reference of the payment you sent.', {
         reference: 'required when marking a payout completed (e.g. the MoMo transaction id)',
       });
+    }
+    if (nextStatus === 'completed') {
+      await adminAuthService.confirmLargeMoney(admin, withdrawal.amount_rwf, action_code);
     }
     const failureReason =
       nextStatus === 'failed'

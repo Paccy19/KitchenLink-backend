@@ -3,6 +3,8 @@ const requireAdminAuth = require('../middleware/requireAdminAuth');
 const adminRateLimit = require('../middleware/adminRateLimit');
 const requirePermission = require('../middleware/requirePermission');
 const requireSuperAdmin = require('../middleware/requireSuperAdmin');
+const refundService = require('../services/refundService');
+const teamService = require('../services/teamService');
 
 const adminUserController = require('../controllers/adminUserController');
 const adminVendorController = require('../controllers/adminVendorController');
@@ -27,7 +29,7 @@ router.use(requireAdminAuth);
 router.use(adminRateLimit);
 
 /* ------------------------------- dashboard ------------------------------- */
-router.get('/dashboard/overview', adminDashboardController.overview);
+router.get('/dashboard/overview', requirePermission('dashboard:read'), adminDashboardController.overview);
 
 /* ----------------------------- notifications ----------------------------- */
 router.get('/notifications', adminNotificationController.list);
@@ -94,34 +96,50 @@ router.get('/payments', requirePermission('payments:read'), adminPaymentControll
 router.get('/payments/summary', requirePermission('payments:read'), adminPaymentController.summary);
 
 /* ------------------------------ commissions ------------------------------ */
-router.get('/commissions', requirePermission('payments:read'), adminCommissionController.list);
-router.post('/commissions', requirePermission('payments:write'), adminCommissionController.create);
+router.get('/commissions', requirePermission('commissions:read'), adminCommissionController.list);
+router.post('/commissions', requirePermission('commissions:write'), adminCommissionController.create);
 router.put(
   '/commissions/:commissionId',
-  requirePermission('payments:write'),
+  requirePermission('commissions:write'),
   adminCommissionController.update
 );
 router.delete(
   '/commissions/:commissionId',
-  requirePermission('payments:write'),
+  requirePermission('commissions:write'),
   adminCommissionController.remove
 );
 
 /* -------------------------------- payouts -------------------------------- */
-router.get('/payouts', requirePermission('payments:read'), adminPayoutController.list);
-router.get('/payouts/balances', requirePermission('payments:read'), adminPayoutController.balances);
-router.get('/payouts/summary', requirePermission('payments:read'), adminPayoutController.summary);
+router.get('/payouts', requirePermission('payouts:read'), adminPayoutController.list);
+router.get('/payouts/balances', requirePermission('payouts:read'), adminPayoutController.balances);
+router.get('/payouts/summary', requirePermission('payouts:read'), adminPayoutController.summary);
 router.patch(
   '/payouts/:withdrawalId',
-  requirePermission('payments:write'),
+  requirePermission('payouts:write'),
   adminPayoutController.update
 );
 
+/* -------------------------------- refunds -------------------------------- */
+router.get(
+  '/refunds',
+  requirePermission('refunds:read'),
+  asyncHandler(async (req, res) => {
+    res.json(await refundService.adminList(req.query));
+  })
+);
+router.patch(
+  '/refunds/:refundId',
+  requirePermission('refunds:write'),
+  asyncHandler(async (req, res) => {
+    res.json(await refundService.adminUpdate(req.params.refundId, req.body, req.admin, req));
+  })
+);
+
 /* --------------------------- platform wallet ----------------------------- */
-router.get('/platform/wallet', requirePermission('payments:read'), adminPlatformController.wallet);
+router.get('/platform/wallet', requirePermission('wallet:read'), adminPlatformController.wallet);
 router.get(
   '/platform/transactions',
-  requirePermission('payments:read'),
+  requirePermission('wallet:read'),
   adminPlatformController.transactions
 );
 
@@ -185,6 +203,40 @@ router.patch(
 router.get('/analytics/overview', requirePermission('analytics:read'), adminAnalyticsController.overview);
 router.get('/analytics/sales', requirePermission('analytics:read'), adminAnalyticsController.sales);
 router.get('/analytics/payouts', requirePermission('analytics:read'), adminAnalyticsController.payouts);
+
+/* --------------------------- team (owner only) --------------------------- */
+const team = requirePermission('team:manage');
+router.get('/team', team, asyncHandler(async (req, res) => res.json(await teamService.list())));
+router.post(
+  '/team/invitations',
+  team,
+  asyncHandler(async (req, res) => res.status(201).json(await teamService.invite(req.admin, req.body, req)))
+);
+router.post(
+  '/team/:memberId/resend-invitation',
+  team,
+  asyncHandler(async (req, res) => res.json(await teamService.resendInvitation(req.admin, req.params.memberId, req)))
+);
+router.patch(
+  '/team/:memberId/role',
+  team,
+  asyncHandler(async (req, res) => res.json(await teamService.changeRole(req.admin, req.params.memberId, req.body, req)))
+);
+router.post(
+  '/team/:memberId/deactivate',
+  team,
+  asyncHandler(async (req, res) => res.json(await teamService.deactivate(req.admin, req.params.memberId, req)))
+);
+router.post(
+  '/team/:memberId/reactivate',
+  team,
+  asyncHandler(async (req, res) => res.json(await teamService.reactivate(req.admin, req.params.memberId, req.body, req)))
+);
+router.delete(
+  '/team/:memberId',
+  team,
+  asyncHandler(async (req, res) => res.json(await teamService.remove(req.admin, req.params.memberId, req)))
+);
 
 /* ------------------------------ audit trail ------------------------------ */
 router.get(

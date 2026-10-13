@@ -146,7 +146,7 @@ class VendorOrderService {
 
     if (nextStatus === 'cancelled') {
       // Return the customer's held payment and withdraw any delivery offer.
-      await settlementService.refundOrder(order);
+      await settlementService.refundOrder(order, { by: 'vendor', reason: note });
       await deliveryService.cancelOpenDelivery(order._id, 'Order cancelled by the kitchen');
       orderNotifications.kitchenCancelled(updated, typeof body?.note === 'string' ? body.note.trim() : '');
     }

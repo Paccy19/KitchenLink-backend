@@ -46,6 +46,8 @@ const notificationSchema = new mongoose.Schema(
         'payment_failed',
         'owner_finance',
         'account_update',
+        'refund_update',
+        'support_message',
       ],
       default: 'general',
     },
@@ -60,6 +62,8 @@ const notificationSchema = new mongoose.Schema(
     },
     sms_error: { type: String, default: '' },
     read_at: { type: Date, default: null },
+    // Admin feed: each team member has their own read state.
+    read_by: [{ type: ObjectId, ref: 'Admin' }],
   },
   { timestamps }
 );

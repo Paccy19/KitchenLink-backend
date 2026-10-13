@@ -98,7 +98,7 @@ class AdminVendorService {
       );
       // Refund customers who had paid for the cancelled orders.
       for (const order of openOrders) {
-        await settlementService.refundOrder(order);
+        await settlementService.refundOrder(order, { by: 'admin', reason: note || 'Kitchen suspended' });
       }
     }
 

@@ -1,5 +1,6 @@
 const config = require('../config');
 const { isVendorLive } = require('./vendorPresence');
+const access = require('../config/adminAccess');
 
 const round1 = (value) =>
   typeof value === 'number' ? Math.round(value * 10) / 10 : null;
@@ -505,8 +506,11 @@ function serializeAdmin(admin, { usesDefaultPassword } = {}) {
     id: String(admin._id),
     name: admin.name,
     email: admin.email,
-    role: admin.role,
-    permissions: admin.permissions || [],
+    role: access.roleKey(admin.role),
+    role_label: access.roleLabel(admin.role),
+    is_owner: admin.role === access.OWNER_ROLE,
+    // What this admin may do (decided by their role).
+    permissions: access.permissionsFor(admin),
     is_active: admin.is_active !== false,
     phone: admin.phone || null,
     two_factor_enabled: Boolean(admin.two_factor_enabled && admin.phone),
@@ -670,6 +674,7 @@ function serializePlatformAccount(account = {}) {
     held_balance_rwf: n(account.held_balance_rwf),
     vendor_payable_rwf: n(account.vendor_payable_rwf),
     driver_payable_rwf: n(account.driver_payable_rwf),
+    refunds_owed_rwf: n(account.refunds_owed_rwf),
     commission_balance_rwf: n(account.commission_balance_rwf),
     reconciliation: {
       balanced: unreconciled === 0,
@@ -819,6 +824,16 @@ function serializeAdminComplaint(complaint) {
       driver_id: complaint.related?.driver_id ? String(complaint.related.driver_id) : null,
     },
     assigned_to: complaint.assigned_to ? String(complaint.assigned_to) : null,
+    // The conversation with the user (support replies are what the user sees).
+    messages: (complaint.messages || []).map((message) => ({
+      id: String(message._id),
+      author_role: message.author_role,
+      author_name: message.author_name || '',
+      body: message.body,
+      at: message.at,
+    })),
+    unread: Boolean(complaint.unread_by_admin),
+    last_message_at: complaint.last_message_at || complaint.created_at,
     notes: (complaint.notes || []).map((note) => ({
       author_id: note.author_id ? String(note.author_id) : null,
       author_name: note.author_name || 'Admin',

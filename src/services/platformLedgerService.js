@@ -7,6 +7,7 @@ const withdrawalRepository = require('../repositories/withdrawalRepository');
 const paymentRepository = require('../repositories/paymentRepository');
 const deliveryRepository = require('../repositories/deliveryRepository');
 const platformWithdrawalRepository = require('../repositories/platformWithdrawalRepository');
+const refundRepository = require('../repositories/refundRepository');
 
 /**
  * The platform's books, computed from the sources of truth instead of running
@@ -21,6 +22,8 @@ const platformWithdrawalRepository = require('../repositories/platformWithdrawal
  *   riders    what riders are owed  (balances + payouts being processed)
  *   commission the owner's money: commission earned + adjustments - what the
  *              owner already withdrew
+ *   refunds   cancelled paid orders whose money is not yet sent back
+ *              (a `refund` entry is written only when it is sent)
  *
  * The two sides are computed independently (ledger cash flows vs. order and
  * balance state), so `unreconciled_rwf` exposes any money that was credited
@@ -44,6 +47,7 @@ class PlatformLedgerService {
       adjustments,
       ownerPaidOut,
       ownerProcessing,
+      refundsOwed,
     ] = await Promise.all([
       transactionRepository.sum({ type: 'order_payment' }),
       transactionRepository.sum({ type: 'refund' }),
@@ -60,19 +64,21 @@ class PlatformLedgerService {
       transactionRepository.sum({ type: 'adjustment' }),
       transactionRepository.sum({ type: 'platform_withdrawal' }),
       platformWithdrawalRepository.sum({ status: 'processing' }),
+      refundRepository.totalOwed(),
     ]);
 
     const cash = collected - refunded - vendorPaidOut - driverPaidOut - ownerPaidOut;
     const vendorPayable = vendorBalances + vendorProcessing;
     const driverPayable = driverBalances + driverProcessing;
     const ownerBalance = commission + adjustments - ownerPaidOut;
-    const accountedFor = held + vendorPayable + driverPayable + ownerBalance;
+    const accountedFor = held + vendorPayable + driverPayable + ownerBalance + refundsOwed;
 
     return platformAccountRepository.saveSnapshot({
       cash_balance_rwf: cash,
       held_balance_rwf: held,
       vendor_payable_rwf: vendorPayable,
       driver_payable_rwf: driverPayable,
+      refunds_owed_rwf: refundsOwed,
       commission_balance_rwf: ownerBalance,
       unreconciled_rwf: cash - accountedFor,
       total_adjustments_rwf: adjustments,
@@ -103,7 +109,42 @@ class PlatformLedgerService {
       riderEntries.map((entry) => orderRepository.markRiderSettled(entry.order_id, entry.created_at))
     );
     const backfilled = await this.#backfillMissingPayments();
-    return { renamed, backfilled };
+    const refunds = await this.#backfillRefundRecords();
+    return { renamed, backfilled, refunds };
+  }
+
+  /**
+   * Refunds recorded before refunds were tracked were written to the ledger
+   * as already sent; give each one its completed refund record so customers
+   * and admins see it.
+   */
+  async #backfillRefundRecords() {
+    const entries = await transactionRepository.listLegacyRefunds();
+    let count = 0;
+    for (const entry of entries) {
+      if (await refundRepository.findByOrder(entry.order_id)) continue;
+      const order = await orderRepository.findById(entry.order_id);
+      if (!order) continue;
+      const card = order.payment_method === 'card';
+      await refundRepository.createOnce({
+        order_id: order._id,
+        order_number: order.order_number || '',
+        customer_id: order.customer_id,
+        vendor_id: order.vendor_id || null,
+        amount_rwf: entry.amount_rwf,
+        payment_method: order.payment_method || '',
+        destination: card
+          ? { type: 'card', card_last4: String(order.payment_details?.card_number || '').slice(-4) }
+          : { type: 'mobile_money', phone: order.payment_details?.phone || '' },
+        status: 'completed',
+        provider: 'legacy',
+        reference: entry.reference || '',
+        reason: order.cancel_reason || '',
+        completed_at: entry.created_at,
+      });
+      count += 1;
+    }
+    return count;
   }
 
   /**

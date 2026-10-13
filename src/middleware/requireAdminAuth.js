@@ -36,6 +36,9 @@ const requireAdminAuth = async (req, res, next) => {
     if (admin.is_active === false) {
       throw ApiError.forbidden('This admin account has been deactivated.', 'ADMIN_DISABLED');
     }
+    if (admin.status === 'invited') {
+      throw ApiError.forbidden('Accept your invitation first.', 'INVITATION_PENDING');
+    }
 
     req.admin = admin;
     next();

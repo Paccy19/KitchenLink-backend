@@ -59,6 +59,24 @@ const config = {
     timeoutMs: numberFromEnv(process.env.GOOGLE_MAPS_TIMEOUT_MS, 4000),
     cacheTtlSeconds: numberFromEnv(process.env.GOOGLE_MAPS_CACHE_TTL_SECONDS, 600),
   },
+  // Where the website runs; used for links in emails (e.g. team invitations).
+  frontendUrl: (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, ''),
+  mail: {
+    // SMTP account that sends emails. Without SMTP_HOST, emails are not sent:
+    // they are logged (development) and the owner gets the link to share.
+    host: process.env.SMTP_HOST || '',
+    port: Number(process.env.SMTP_PORT) || 587,
+    secure: process.env.SMTP_SECURE === 'true',
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || '',
+    from: process.env.MAIL_FROM || 'Online Food Kitchen <no-reply@foodkitchen.rw>',
+  },
+  team: {
+    // How long an invitation link works.
+    inviteValidHours: numberFromEnv(process.env.TEAM_INVITE_VALID_HOURS, 72),
+    // Refunds and payouts of this amount or more need an SMS code.
+    largeMoneyActionRwf: numberFromEnv(process.env.LARGE_MONEY_ACTION_RWF, 50000),
+  },
   notifications: {
     sms: {
       // When disabled (or missing credentials) messages are logged in dev.
@@ -313,6 +331,15 @@ const config = {
     dispatchableStatuses: ['pending', 'ready_for_pickup'],
     // Statuses that count as a finished (historical) delivery.
     terminalStatuses: ['completed', 'cancelled', 'rejected'],
+  },
+  refunds: {
+    // What customers are told about how long a refund takes to reach them.
+    expectedWithinHours: Number(process.env.REFUND_EXPECTED_HOURS) || 24,
+  },
+  support: {
+    // Longest message a user or admin can send in a support conversation.
+    maxMessageLength: 2000,
+    maxSubjectLength: 120,
   },
   admin: {
     // Role claim embedded in admin JWT access tokens.

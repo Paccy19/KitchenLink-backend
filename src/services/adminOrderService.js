@@ -101,7 +101,7 @@ class AdminOrderService {
       if (order.settlement_status === 'held' && settled) orderNotifications.completed(settled);
     }
     if (nextStatus === 'cancelled') {
-      if (order.payment_status === 'paid') await settlementService.refundOrder(order);
+      if (order.payment_status === 'paid') await settlementService.refundOrder(order, { by: 'admin', reason });
       await deliveryService.cancelOpenDelivery(orderId, 'Order cancelled by support');
       orderNotifications.adminCancelled(order, reason);
     }

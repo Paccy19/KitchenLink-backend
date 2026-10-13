@@ -1,22 +1,18 @@
 const ApiError = require('../utils/ApiError');
+const { can } = require('../config/adminAccess');
 
 /**
- * Permission gate for admin routes. Super admins (or admins with an empty
- * permissions list) bypass individual permission checks.
+ * Permission gate for admin routes. An admin may only do what their role
+ * allows (config/adminAccess.js); the owner (super admin) may do everything.
  */
 const requirePermission = (permission) => (req, res, next) => {
   const admin = req.admin;
   if (!admin) {
     return next(ApiError.unauthorized('Authentication required.'));
   }
-  if (admin.role === 'super_admin') return next();
-  const permissions = admin.permissions || [];
-  if (permissions.length === 0 || permissions.includes(permission)) return next();
+  if (can(admin, permission)) return next();
   return next(
-    ApiError.forbidden(
-      `You do not have permission to perform this action (${permission}).`,
-      'PERMISSION_DENIED'
-    )
+    new ApiError(403, 'PERMISSION_DENIED', 'Your role does not allow this. Ask the owner if you need access.', { permission })
   );
 };
 

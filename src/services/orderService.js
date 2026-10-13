@@ -21,6 +21,9 @@ const settlementService = require('./settlementService');
 const deliveryPricingService = require('./deliveryPricingService');
 const deliveryService = require('./deliveryService');
 const orderNotifications = require('./orderNotifications');
+const refundService = require('./refundService');
+const { serializeRefund } = refundService;
+const refundRepository = require('../repositories/refundRepository');
 const { isVendorLive } = require('../utils/vendorPresence');
 
 const { orders } = config;
@@ -98,7 +101,7 @@ const serializePaymentDetails = (order) => {
   };
 };
 
-const serializeDetail = (order, vendor, payment, delivery) => ({
+const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
   id: String(order._id),
   order_number: order.order_number,
   order_type: order.order_type || 'immediate',
@@ -148,6 +151,8 @@ const serializeDetail = (order, vendor, payment, delivery) => ({
   estimated_delivery_at: order.estimated_delivery_at ?? null,
   cancelled_at: order.cancelled_at ?? null,
   cancel_reason: order.cancel_reason || null,
+  // Money going back to the customer for a cancelled paid order.
+  refund,
 });
 
 const serializeTracking = (order, vendor, payment, delivery) => {
@@ -484,10 +489,16 @@ class OrderService {
       offset,
     });
 
+    const refunds = new Map(
+      (await refundRepository.listByOrders(list.map((order) => order._id))).map((refund) => [
+        String(refund.order_id),
+        serializeRefund(refund),
+      ])
+    );
     const detailed = await Promise.all(
       list.map(async (order) => {
         const { vendor, payment, delivery } = await this.#loadWithVendor(order);
-        return serializeDetail(order, vendor, payment, delivery);
+        return serializeDetail(order, vendor, payment, delivery, refunds.get(String(order._id)) || null);
       })
     );
 
@@ -527,14 +538,24 @@ class OrderService {
     const order = await this.#loadOrder(customerId, orderId);
     const { vendor, payment, delivery } = await this.#loadWithVendor(order);
     await this.#ensureDeliveryCodeNotification(order, delivery);
-    return serializeDetail(order, vendor, payment, delivery);
+    return serializeDetail(order, vendor, payment, delivery, await refundService.forOrder(order._id));
+  }
+
+  /** The customer gives the mobile money number their refund goes to. */
+  async changeRefundDestination(customerId, orderId, body) {
+    await this.#loadOrder(customerId, orderId);
+    return refundService.changeDestination(customerId, orderId, body);
+  }
+
+  async listRefunds(customerId) {
+    return refundService.listForCustomer(customerId);
   }
 
   async track(customerId, orderId) {
     const order = await this.#loadOrder(customerId, orderId);
     const { vendor, payment, delivery } = await this.#loadWithVendor(order);
     await this.#ensureDeliveryCodeNotification(order, delivery);
-    return serializeTracking(order, vendor, payment, delivery);
+    return { ...serializeTracking(order, vendor, payment, delivery), refund: await refundService.forOrder(order._id) };
   }
 
   async cancel(customerId, orderId, body) {
@@ -554,23 +575,16 @@ class OrderService {
     const reason =
       typeof body?.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
 
-    let payment = await paymentRepository.findLatestByOrder(order._id);
-    let paymentStatus = order.payment_status;
-
-    if (order.payment_status === 'paid' && payment) {
-      payment = await paymentRepository.update(payment._id, {
-        status: 'refunded',
-      });
-      paymentStatus = 'refunded';
-      // Return the held customer payment from the platform account.
-      await settlementService.refundOrder(order);
+    // A paid order's money becomes a refund owed to the customer; the payment
+    // shows "refunded" once the money has actually been sent back.
+    if (order.payment_status === 'paid') {
+      await settlementService.refundOrder(order, { by: 'customer', reason });
     }
 
     await deliveryService.cancelOpenDelivery(order._id, 'Order cancelled by the customer');
     const cancelledAt = new Date();
     const updated = await orderRepository.update(order._id, {
       status: 'cancelled',
-      payment_status: paymentStatus,
       cancelled_at: cancelledAt,
       cancel_reason: reason,
     });
@@ -582,7 +596,9 @@ class OrderService {
     orderNotifications.customerCancelled(updated, reason);
 
     const { vendor } = await this.#loadWithVendor(updated);
-    return serializeDetail(updated, vendor, payment);
+    const payment = await paymentRepository.findLatestByOrder(order._id);
+    const refund = await refundService.forOrder(order._id);
+    return serializeDetail(updated, vendor, payment, null, refund);
   }
 
   async pay(customerId, orderId, body) {
@@ -701,7 +717,7 @@ class OrderService {
 
     // Keep the money in step with the status change.
     if (nextStatus === 'cancelled') {
-      await settlementService.refundOrder(order);
+      await settlementService.refundOrder(order, { by: 'vendor', reason: update.cancel_reason });
       await deliveryService.cancelOpenDelivery(order._id);
     }
 

@@ -20,6 +20,8 @@ const platformAccountSchema = new mongoose.Schema(
     held_balance_rwf: { type: Number, default: 0 },
     vendor_payable_rwf: { type: Number, default: 0 },
     driver_payable_rwf: { type: Number, default: 0 },
+    // Cancelled paid orders whose money is not yet sent back to the customer.
+    refunds_owed_rwf: { type: Number, default: 0 },
     // The owner's money: commission + adjustments - withdrawn by the owner.
     commission_balance_rwf: { type: Number, default: 0 },
     unreconciled_rwf: { type: Number, default: 0 },
