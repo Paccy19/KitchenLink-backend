@@ -5,6 +5,17 @@ const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { uploadsDir, ensureUploadsDir } = require('../utils/uploads');
 
+// Extension is derived from the (allowlist-validated) MIME type rather than the
+// client-supplied filename, so uploads always land with a correct extension and
+// a spoofed filename can never change how the file is served.
+const EXT_BY_MIME = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'application/pdf': '.pdf',
+};
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     try {
@@ -14,9 +25,10 @@ const storage = multer.diskStorage({
     }
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    const safeExt = /^\.[a-z0-9]{1,5}$/.test(ext) ? ext : '';
-    cb(null, `upload-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${safeExt}`);
+    const originalExt = path.extname(file.originalname || '').toLowerCase();
+    const safeOriginal = /^\.[a-z0-9]{1,5}$/.test(originalExt) ? originalExt : '';
+    const ext = EXT_BY_MIME[file.mimetype] || safeOriginal;
+    cb(null, `upload-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`);
   },
 });
 

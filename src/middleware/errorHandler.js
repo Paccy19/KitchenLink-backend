@@ -26,6 +26,14 @@ const normalizeError = (err) => {
     });
   }
 
+  if (err?.type === 'entity.too.large' || err?.statusCode === 413) {
+    return new ApiError(
+      413,
+      'PAYLOAD_TOO_LARGE',
+      'Request payload is too large. Images must be under 5 MB.'
+    );
+  }
+
   if (err?.code === 11000) {
     return new ApiError(409, 'DUPLICATE_ENTRY', 'Duplicate value for a unique field.', {
       ...err.keyValue,

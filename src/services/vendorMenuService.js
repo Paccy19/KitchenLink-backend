@@ -1,7 +1,7 @@
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const parsePagination = require('../utils/pagination');
-const { buildPublicUrl, resolveImageUrl } = require('../utils/uploads');
+const { buildPublicUrl, resolveImageUrl, deleteLocalUpload } = require('../utils/uploads');
 const {
   parseObjectId,
   parseOptionalText,
@@ -137,6 +137,10 @@ class VendorMenuService {
     const categoryId = await this.#resolveCategoryId(body.category_id);
     payload.category_id = categoryId ?? null;
 
+    // Validate options before writing the image to disk so a bad payload
+    // cannot leave an orphaned upload behind.
+    const options = parseMenuOptions(body.options);
+
     const imageUrl = resolveImageUrl({
       file,
       image_url: body.image_url,
@@ -144,14 +148,18 @@ class VendorMenuService {
     });
     if (imageUrl !== undefined) payload.image_url = imageUrl;
 
-    const item = await menuItemRepository.create(payload);
+    try {
+      const item = await menuItemRepository.create(payload);
 
-    const options = parseMenuOptions(body.options);
-    if (options && options.length > 0) {
-      await menuItemOptionRepository.createMany(vendor._id, item._id, options);
+      if (options && options.length > 0) {
+        await menuItemOptionRepository.createMany(vendor._id, item._id, options);
+      }
+
+      return await this.#withOptions(item);
+    } catch (error) {
+      if (imageUrl !== undefined) deleteLocalUpload(imageUrl);
+      throw error;
     }
-
-    return this.#withOptions(item);
   }
 
   async update(vendor, itemId, body = {}, file) {
@@ -167,18 +175,41 @@ class VendorMenuService {
       payload.category_id = (await this.#resolveCategoryId(body.category_id)) ?? null;
     }
 
-    const imageUrl = resolveImageUrl({
-      file,
-      image_url: body.image_url,
-      image_base64: body.image_base64,
+    const clearImage = parseBooleanValue(body.image_clear, {
+      field: 'image_clear',
+      fallback: false,
     });
-    if (imageUrl !== undefined) payload.image_url = imageUrl;
 
-    const updated = await menuItemRepository.update(id, vendor._id, payload);
+    // Validate options before writing any new image to disk.
+    const options = body.options !== undefined ? parseMenuOptions(body.options) || [] : undefined;
 
-    if (body.options !== undefined) {
-      const options = parseMenuOptions(body.options) || [];
-      await menuItemOptionRepository.replaceForItem(vendor._id, id, options);
+    let newImageUrl;
+    if (clearImage) {
+      payload.image_url = '';
+    } else {
+      newImageUrl = resolveImageUrl({
+        file,
+        image_url: body.image_url,
+        image_base64: body.image_base64,
+      });
+      if (newImageUrl !== undefined) payload.image_url = newImageUrl;
+    }
+
+    let updated;
+    try {
+      updated = await menuItemRepository.update(id, vendor._id, payload);
+
+      if (options !== undefined) {
+        await menuItemOptionRepository.replaceForItem(vendor._id, id, options);
+      }
+    } catch (error) {
+      if (newImageUrl !== undefined) deleteLocalUpload(newImageUrl);
+      throw error;
+    }
+
+    // Remove the previous local file once the new image (or removal) is saved.
+    if (existing.image_url && existing.image_url !== updated.image_url) {
+      deleteLocalUpload(existing.image_url);
     }
 
     return this.#withOptions(updated);
@@ -199,6 +230,7 @@ class VendorMenuService {
     if (hard) {
       await menuItemOptionRepository.deleteByMenuItem(id);
       await menuItemRepository.hardDelete(id, vendor._id);
+      deleteLocalUpload(existing.image_url);
       return { deleted: true, hard: true };
     }
 
