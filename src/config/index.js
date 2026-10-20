@@ -26,6 +26,9 @@ const config = {
     defaultRadiusKm: numberFromEnv(process.env.DEFAULT_RADIUS_KM, 5),
     maxRadiusKm: numberFromEnv(process.env.MAX_RADIUS_KM, 50),
     feedRadiusKm: numberFromEnv(process.env.FEED_RADIUS_KM, 10),
+    // In the all-kitchens list, kitchens within this distance are "near you"
+    // and listed first.
+    nearYouRadiusKm: numberFromEnv(process.env.NEAR_YOU_RADIUS_KM, 5),
   },
   limits: {
     feedVendors: 10,

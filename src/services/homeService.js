@@ -78,6 +78,50 @@ class HomeService {
     return { categories: categories.map(serializeCategory) };
   }
 
+  /** All kitchens in the system; nearby ones first when coordinates are given. */
+  async getAllVendors({ coords, categoryId, sort, query }) {
+    const { limit, page, offset } = parsePagination(query, {
+      defaultLimit: config.limits.nearbyDefault,
+      maxLimit: config.limits.nearbyMax,
+    });
+    const nearRadiusKm = config.geo.nearYouRadiusKm;
+    const meta = {
+      limit,
+      page,
+      offset,
+      sort,
+      category_id: categoryId || null,
+      near_radius_km: nearRadiusKm,
+      location_used: Boolean(coords),
+    };
+
+    let categoryVendorIds = null;
+    if (categoryId) {
+      assertCategoryId(categoryId);
+      categoryVendorIds = await menuItemRepository.findVendorIdsByCategory(categoryId);
+      if (categoryVendorIds.length === 0) {
+        return { vendors: [], meta: { ...meta, total: 0, nearby_total: 0 } };
+      }
+    }
+
+    const { vendors, total, nearbyTotal } = await vendorRepository.findAll({
+      coords,
+      nearRadiusKm,
+      categoryVendorIds,
+      sort,
+      limit,
+      offset,
+    });
+
+    return {
+      vendors: vendors.map((v) => ({
+        ...serializeNearbyVendor(v, { distanceKm: v.distance_km }),
+        is_nearby: Boolean(v.is_nearby),
+      })),
+      meta: { ...meta, total, nearby_total: nearbyTotal },
+    };
+  }
+
   async getNearbyVendors({ coords, radiusKm, categoryId, sort, query }) {
     if (categoryId) {
       assertCategoryId(categoryId);

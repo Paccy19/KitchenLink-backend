@@ -1,5 +1,5 @@
 const { Vendor } = require('../models');
-const { liveVendorFilter } = require('../utils/vendorPresence');
+const { liveVendorFilter, liveVendorExpr } = require('../utils/vendorPresence');
 
 const escapeRegex = (value) =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -62,6 +62,63 @@ class VendorRepository {
     return {
       vendors: result.items,
       total: result.total[0]?.value ?? 0,
+    };
+  }
+
+  /**
+   * Every active kitchen, open or closed, near or far. With coordinates the
+   * kitchens within `nearRadiusKm` come first (open before closed), then the
+   * rest; each group nearest first. `sort: 'rating'` orders by rating instead.
+   */
+  async findAll({
+    coords,
+    nearRadiusKm,
+    categoryVendorIds = null,
+    sort = 'distance',
+    limit,
+    offset = 0,
+  }) {
+    const baseQuery = { is_active: true, deleted_at: null };
+    if (categoryVendorIds) baseQuery._id = { $in: categoryVendorIds };
+
+    const pipeline = coords
+      ? [
+          {
+            $geoNear: {
+              near: toPoint(coords),
+              distanceField: 'distance_m',
+              spherical: true,
+              key: 'location',
+              query: baseQuery,
+            },
+          },
+          { $set: { distance_km: { $divide: ['$distance_m', 1000] } } },
+          { $unset: 'distance_m' },
+          { $set: { is_nearby: { $lte: ['$distance_km', nearRadiusKm] } } },
+        ]
+      : [{ $match: baseQuery }, { $set: { is_nearby: false } }];
+    pipeline.push({ $set: { is_live: liveVendorExpr() } });
+
+    const sortSpec =
+      sort === 'rating'
+        ? { is_live: -1, rating: -1, name: 1 }
+        : coords
+          ? { is_nearby: -1, is_live: -1, distance_km: 1 }
+          : { is_live: -1, rating: -1, name: 1 };
+
+    pipeline.push({
+      $facet: {
+        items: [{ $sort: sortSpec }, { $skip: offset }, { $limit: limit }],
+        total: [{ $count: 'value' }],
+        nearby: [{ $match: { is_nearby: true } }, { $count: 'value' }],
+      },
+    });
+
+    const [result] = await Vendor.aggregate(pipeline).allowDiskUse(true);
+    return {
+      vendors: result.items,
+      total: result.total[0]?.value ?? 0,
+      nearbyTotal: result.nearby[0]?.value ?? 0,
     };
   }
 
@@ -179,10 +236,11 @@ class VendorRepository {
       orClauses.push({ _id: { $in: dishVendorIds } });
     }
 
+    // Closed kitchens are searchable too (customers can schedule for later);
+    // the search service ranks open ones higher.
     return Vendor.find({
       is_active: true,
       deleted_at: null,
-      ...liveVendorFilter(),
       $or: orClauses,
     })
       .sort({ rating: -1 })

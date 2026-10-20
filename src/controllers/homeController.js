@@ -28,9 +28,22 @@ const nearbyVendors = asyncHandler(async (req, res) => {
   );
 });
 
+const allVendors = asyncHandler(async (req, res) => {
+  const coords = parseOptionalCoords(req.query);
+  const sort = req.query.sort === 'rating' ? 'rating' : 'distance';
+  res.json(
+    await homeService.getAllVendors({
+      coords,
+      categoryId: req.query.category_id,
+      sort,
+      query: req.query,
+    })
+  );
+});
+
 const search = asyncHandler(async (req, res) => {
   const coords = parseOptionalCoords(req.query);
   res.json(await searchService.search({ q: req.query.q, coords }));
 });
 
-module.exports = { feed, categories, nearbyVendors, search };
+module.exports = { feed, categories, nearbyVendors, allVendors, search };

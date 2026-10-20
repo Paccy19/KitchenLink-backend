@@ -3,6 +3,7 @@ const vendorRepository = require('../repositories/vendorRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
 const { tokenize, buildTokenFilter } = require('../utils/search');
 const { distanceFromCoords } = require('../utils/geo');
+const { isVendorLive } = require('../utils/vendorPresence');
 const {
   serializeVendorCard,
   serializeSearchDish,
@@ -76,6 +77,7 @@ class SearchService {
             tokenScore(neighborhood, token, 1, 1);
         }
         if (dishVendorIds.includes(String(vendor._id))) score += 1.5;
+        if (isVendorLive(vendor)) score += 1;
 
         const distanceKm = coords
           ? distanceFromCoords(coords, vendor.location?.coordinates)

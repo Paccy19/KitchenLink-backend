@@ -20,6 +20,15 @@ function liveVendorFilter(prefix = '') {
   return filter;
 }
 
+/** Aggregation expression equivalent of `liveVendorFilter` (true/false per doc). */
+function liveVendorExpr() {
+  const conditions = [{ $ne: ['$is_open', false] }];
+  if (maxAgeMs() > 0) {
+    conditions.push({ $gte: ['$location_updated_at', new Date(Date.now() - maxAgeMs())] });
+  }
+  return { $and: conditions };
+}
+
 function isVendorLive(vendor) {
   if (!vendor || vendor.is_open === false) return false;
   if (maxAgeMs() <= 0) return true;
@@ -27,4 +36,4 @@ function isVendorLive(vendor) {
   return Date.now() - sharedAt <= maxAgeMs();
 }
 
-module.exports = { liveVendorFilter, isVendorLive };
+module.exports = { liveVendorFilter, liveVendorExpr, isVendorLive };
