@@ -2,6 +2,7 @@ const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { verifyToken } = require('../utils/jwt');
 const vendorRepository = require('../repositories/vendorRepository');
+const { assertVendorNotBlocked } = require('../utils/vendorAccess');
 
 const requireVendorAuth = async (req, res, next) => {
   try {
@@ -33,6 +34,8 @@ const requireVendorAuth = async (req, res, next) => {
     if (!vendor) {
       throw ApiError.unauthorized('Vendor account no longer exists.', 'INVALID_TOKEN');
     }
+    // Vendors suspended or rejected while signed in lose access immediately.
+    assertVendorNotBlocked(vendor);
 
     req.vendor = vendor;
     next();

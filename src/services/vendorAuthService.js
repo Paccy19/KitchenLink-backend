@@ -21,6 +21,7 @@ const vendorRepository = require('../repositories/vendorRepository');
 const categoryRepository = require('../repositories/categoryRepository');
 const otpRepository = require('../repositories/otpRepository');
 const notificationService = require('./notificationService');
+const { assertVendorNotBlocked } = require('../utils/vendorAccess');
 
 class VendorAuthService {
   /**
@@ -237,12 +238,7 @@ class VendorAuthService {
   }
 
   #assertCanLogin(vendor) {
-    if (vendor.verification_status === 'rejected') {
-      throw ApiError.forbidden(
-        'This vendor application was rejected. Contact support.',
-        'VENDOR_REJECTED'
-      );
-    }
+    assertVendorNotBlocked(vendor);
   }
 
   #issueSession(vendor) {

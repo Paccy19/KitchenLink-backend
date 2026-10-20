@@ -346,6 +346,9 @@ const config = {
     // Longest message a user or admin can send in a support conversation.
     maxMessageLength: 2000,
     maxSubjectLength: 120,
+    // Contact shown to suspended/rejected accounts that are blocked from login.
+    phone: process.env.SUPPORT_PHONE || '',
+    email: process.env.SUPPORT_EMAIL || '',
   },
   admin: {
     // Role claim embedded in admin JWT access tokens.
