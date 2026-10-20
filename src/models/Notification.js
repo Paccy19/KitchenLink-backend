@@ -48,6 +48,7 @@ const notificationSchema = new mongoose.Schema(
         'account_update',
         'refund_update',
         'support_message',
+        'vendor_offer',
       ],
       default: 'general',
     },

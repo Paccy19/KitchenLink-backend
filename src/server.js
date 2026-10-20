@@ -7,6 +7,7 @@ const commissionRepository = require('./repositories/commissionRepository');
 const driverRepository = require('./repositories/driverRepository');
 const platformLedgerService = require('./services/platformLedgerService');
 const platformSweepService = require('./services/platformSweepService');
+const vendorOfferService = require('./services/vendorOfferService');
 
 const DEFAULT_JWT_SECRET = 'dev-secret-change-me';
 
@@ -92,6 +93,7 @@ const start = async () => {
     await bootstrapAdmin();
 
     platformSweepService.start();
+    vendorOfferService.start();
 
     app.listen(config.port, () => {
       console.log(`API listening on http://localhost:${config.port}/api/v1`);

@@ -23,8 +23,10 @@ const PlatformWithdrawal = require('./PlatformWithdrawal');
 const ReconciliationCheck = require('./ReconciliationCheck');
 const OwnerPayoutSettings = require('./OwnerPayoutSettings');
 const Refund = require('./Refund');
+const VendorOffer = require('./VendorOffer');
 
 module.exports = {
+  VendorOffer,
   Vendor,
   Category,
   MenuItem,

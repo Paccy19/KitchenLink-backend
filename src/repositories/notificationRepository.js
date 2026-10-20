@@ -1,6 +1,18 @@
 const { Notification } = require('../models');
 
 class NotificationRepository {
+  /** Same in-app notification for many customers at once. Returns how many were created. */
+  async createManyForCustomers(customerIds, doc) {
+    if (!customerIds.length) return 0;
+    const docs = customerIds.map((customerId) => ({
+      ...doc,
+      customer_id: customerId,
+      audience: 'customer',
+    }));
+    const created = await Notification.insertMany(docs, { ordered: false });
+    return created.length;
+  }
+
   async create(doc) {
     const notification = await Notification.create(doc);
     return notification.toObject();

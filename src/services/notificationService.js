@@ -114,6 +114,18 @@ class NotificationService {
     return serializeNotification(notification);
   }
 
+  /** One in-app notification for each of the given customers (e.g. a kitchen's offer alert). */
+  async notifyCustomers(customerIds = [], { type = 'general', title, body, link = '/', data = {} } = {}) {
+    if (!customerIds.length || !title || !body) return 0;
+    return notificationRepository.createManyForCustomers(customerIds, {
+      type,
+      title,
+      body,
+      data: { ...data, link },
+      sms_status: 'skipped',
+    });
+  }
+
   /* ------------------------------- vendors ------------------------------- */
 
   /**

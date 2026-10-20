@@ -172,6 +172,15 @@ const config = {
       textMax: 160,
       maxDaysAhead: Number(process.env.SPECIAL_MAX_DAYS_AHEAD) || 14,
     },
+    // "Offer Days": a vendor announces a deal on a chosen future day.
+    offerDays: {
+      titleMax: 80,
+      detailsMax: 300,
+      maxDaysAhead: Number(process.env.OFFER_MAX_DAYS_AHEAD) || 60,
+      maxUpcomingPerVendor: Number(process.env.OFFER_MAX_UPCOMING) || 3,
+      // Kigali hour (0-23) from which the day-before reminder is sent.
+      reminderHour: numberFromEnvOrZero(process.env.OFFER_REMINDER_HOUR, 9),
+    },
   },
   vendor: {
     // Role claim embedded in vendor JWT access tokens.
