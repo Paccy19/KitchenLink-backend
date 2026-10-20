@@ -45,6 +45,7 @@ function serializePopularDish(dish) {
   return {
     id: String(dish._id),
     name: dish.name,
+    description: dish.description || '',
     price_rwf: dish.price_rwf,
     image_url: dish.image_url || null,
     vendor_name: dish.vendor?.name ?? null,
