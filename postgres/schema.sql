@@ -123,6 +123,9 @@ CREATE TABLE customers (
   is_verified        BOOLEAN     NOT NULL DEFAULT TRUE,
   is_active          BOOLEAN     NOT NULL DEFAULT TRUE,
   last_login_at      TIMESTAMPTZ,
+  last_location      JSONB,                        -- GeoJSON Point {type, coordinates:[lng,lat]}
+  last_location_accuracy_m NUMERIC CHECK (last_location_accuracy_m >= 0),
+  last_location_at   TIMESTAMPTZ,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );

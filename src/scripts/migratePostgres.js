@@ -65,6 +65,7 @@ const SPECS = [
     fields: {
       name: 'text', phone_number: 'text', profile_image_url: 'text',
       is_verified: 'bool', is_active: 'bool', last_login_at: 'date',
+      last_location: 'json', last_location_accuracy_m: 'num', last_location_at: 'date',
     },
   },
   {

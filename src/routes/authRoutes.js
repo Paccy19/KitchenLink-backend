@@ -14,5 +14,6 @@ router.patch(
   upload.single('profile_image'),
   authController.updateProfile
 );
+router.put('/auth/me/location', requireAuth, authController.updateLocation);
 
 module.exports = router;

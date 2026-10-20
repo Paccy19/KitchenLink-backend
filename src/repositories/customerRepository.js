@@ -34,6 +34,20 @@ class CustomerRepository {
     );
   }
 
+  async updateLocation(customerId, { latitude, longitude, accuracyM }) {
+    return Customer.findOneAndUpdate(
+      { _id: customerId },
+      {
+        $set: {
+          last_location: { type: 'Point', coordinates: [longitude, latitude] },
+          last_location_accuracy_m: accuracyM,
+          last_location_at: new Date(),
+        },
+      },
+      { new: true }
+    ).lean();
+  }
+
   async update(customerId, update) {
     return Customer.findOneAndUpdate(
       { _id: customerId },

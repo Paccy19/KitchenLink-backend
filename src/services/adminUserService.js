@@ -31,6 +31,14 @@ const toCustomer = (customer) => ({
   is_active: customer.is_active !== false,
   avatar_url: customer.profile_image_url || null,
   last_login_at: customer.last_login_at ?? null,
+  last_location: customer.last_location?.coordinates?.length === 2
+    ? {
+        latitude: customer.last_location.coordinates[1],
+        longitude: customer.last_location.coordinates[0],
+        accuracy_m: customer.last_location_accuracy_m ?? null,
+        updated_at: customer.last_location_at ?? null,
+      }
+    : null,
   created_at: customer.created_at,
 });
 

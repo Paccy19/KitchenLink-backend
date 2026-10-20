@@ -169,6 +169,33 @@ class AuthService {
     const updated = await customerRepository.update(customer._id, payload);
     return { customer: serializeCustomer(updated) };
   }
+
+  /** Records the customer's current GPS position (sent while location tracking is on). */
+  async updateLocation(customer, body = {}) {
+    const latitude = Number(body.latitude);
+    const longitude = Number(body.longitude);
+    if (
+      !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+      !Number.isFinite(longitude) || longitude < -180 || longitude > 180
+    ) {
+      throw ApiError.badRequest('latitude and longitude must be valid coordinates.', {
+        latitude: 'expected a number between -90 and 90',
+        longitude: 'expected a number between -180 and 180',
+      });
+    }
+    const accuracy = Number(body.accuracy_m);
+    const accuracyM = Number.isFinite(accuracy) && accuracy >= 0 ? Math.round(accuracy) : null;
+
+    const updated = await customerRepository.updateLocation(customer._id, {
+      latitude,
+      longitude,
+      accuracyM,
+    });
+    return {
+      recorded: true,
+      recorded_at: updated?.last_location_at ?? new Date(),
+    };
+  }
 }
 
 module.exports = new AuthService();

@@ -29,4 +29,8 @@ const updateProfile = asyncHandler(async (req, res) => {
   );
 });
 
-module.exports = { sendOtp, verifyOtp, me, updateProfile };
+const updateLocation = asyncHandler(async (req, res) => {
+  res.json(await authService.updateLocation(req.customer, req.body));
+});
+
+module.exports = { sendOtp, verifyOtp, me, updateProfile, updateLocation };
