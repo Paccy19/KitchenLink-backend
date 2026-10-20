@@ -49,6 +49,11 @@ router.patch(
 router.get('/vendors', requirePermission('vendors:read'), adminVendorController.list);
 router.get('/vendors/counts', requirePermission('vendors:read'), adminVendorController.counts);
 router.get('/vendors/:vendorId', requirePermission('vendors:read'), adminVendorController.getById);
+router.post(
+  '/vendors/:vendorId/documents/review',
+  requirePermission('vendors:write'),
+  adminVendorController.reviewDocuments
+);
 router.patch(
   '/vendors/:vendorId/status',
   requirePermission('vendors:write'),

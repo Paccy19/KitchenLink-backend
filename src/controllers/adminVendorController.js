@@ -24,4 +24,8 @@ const counts = asyncHandler(async (req, res) => {
   res.json(await adminVendorService.counts());
 });
 
-module.exports = { list, getById, setStatus, counts };
+const reviewDocuments = asyncHandler(async (req, res) => {
+  res.json(await adminVendorService.reviewDocuments(req.params.vendorId, req.admin, req));
+});
+
+module.exports = { list, getById, setStatus, counts, reviewDocuments };

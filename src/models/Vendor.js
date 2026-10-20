@@ -113,6 +113,14 @@ const vendorSchema = new mongoose.Schema(
       enum: ['pending', 'approved', 'rejected', 'suspended'],
       default: 'approved',
     },
+    // Admin verification review. A vendor may only be approved after an admin
+    // has opened and acknowledged the uploaded verification documents.
+    documents_reviewed_at: { type: Date, default: null },
+    documents_reviewed_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Admin',
+      default: null,
+    },
     // Admin moderation notes.
     rejection_reason: { type: String, default: '' },
     suspension_reason: { type: String, default: '' },

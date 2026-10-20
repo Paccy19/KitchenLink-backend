@@ -541,6 +541,12 @@ function serializeAdminVendor(vendor) {
     available_balance_rwf: vendor.available_balance ?? 0,
     rejection_reason: vendor.rejection_reason || '',
     suspension_reason: vendor.suspension_reason || '',
+    documents_reviewed_at: vendor.documents_reviewed_at ?? null,
+    verification_documents: (vendor.verification_documents || []).map((doc) => ({
+      label: doc.label || '',
+      url: doc.url,
+      uploaded_at: doc.uploaded_at,
+    })),
     profile_image_url: vendor.profile_image_url || null,
     banner_image_url: vendor.banner_image_url || null,
     location: {

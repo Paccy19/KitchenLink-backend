@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const config = require('./config');
 const app = require('./app');
+const { connectPostgres, closePostgres } = require('./db/postgres');
 const adminAuthService = require('./services/adminAuthService');
 const commissionRepository = require('./repositories/commissionRepository');
 const driverRepository = require('./repositories/driverRepository');
@@ -85,6 +86,9 @@ const start = async () => {
     await mongoose.connect(config.mongoUri);
     console.log(`MongoDB connected: ${config.mongoUri}`);
 
+    // Same-server PostgreSQL mirror: both databases run with this one server.
+    await connectPostgres();
+
     await bootstrapAdmin();
 
     platformSweepService.start();
@@ -101,5 +105,15 @@ const start = async () => {
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection:', reason);
 });
+
+// Close both database connections cleanly on Ctrl+C / container stop.
+const shutdown = async (signal) => {
+  console.log(`${signal} received, closing database connections...`);
+  await closePostgres();
+  await mongoose.disconnect().catch(() => {});
+  process.exit(0);
+};
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
 
 start();
