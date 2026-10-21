@@ -7,6 +7,7 @@ const {
   parsePaymentMethod,
   parsePaymentDetails,
   parseOrderType,
+  parseFulfillment,
   parseScheduledFor,
 } = require('../utils/validators');
 const orderRepository = require('../repositories/orderRepository');
@@ -20,6 +21,7 @@ const notificationService = require('./notificationService');
 const settlementService = require('./settlementService');
 const deliveryPricingService = require('./deliveryPricingService');
 const deliveryService = require('./deliveryService');
+const { isKitchenReady } = require('../utils/deliveryReady');
 const orderNotifications = require('./orderNotifications');
 const refundService = require('./refundService');
 const { serializeRefund } = refundService;
@@ -62,8 +64,12 @@ const CLOSED_DELIVERY_STATUSES = ['completed', 'cancelled', 'rejected'];
  */
 const serializeOrderDelivery = (delivery) => {
   if (!delivery) return null;
+  // The code is shared once the food is ready (the delivery itself may exist
+  // earlier: immediate orders are offered to drivers at placement).
   const closed =
-    CLOSED_DELIVERY_STATUSES.includes(delivery.status) || Boolean(delivery.otp_verified_at);
+    CLOSED_DELIVERY_STATUSES.includes(delivery.status) ||
+    Boolean(delivery.otp_verified_at) ||
+    !isKitchenReady(delivery);
   return {
     id: String(delivery._id),
     status: delivery.status,
@@ -101,16 +107,48 @@ const serializePaymentDetails = (order) => {
   };
 };
 
+/**
+ * Pickup orders: where to collect the food and, once it's ready, the code to
+ * give the kitchen. `order.pickup_code` is only present when the caller
+ * loaded it for the customer (it is never selected by default).
+ */
+const serializePickup = (order, vendor) => {
+  if (order.fulfillment !== 'pickup') return null;
+  const [lng, lat] = vendor?.location?.coordinates ?? [null, null];
+  const awaiting = order.status === 'ready';
+  return {
+    address: vendor?.address || null,
+    neighborhood: vendor?.neighborhood || null,
+    latitude: lat,
+    longitude: lng,
+    vendor_phone: vendor?.phone || null,
+    code: awaiting ? order.pickup_code || null : null,
+    ready_for_collection: awaiting,
+    collected_at: order.collected_at ?? null,
+  };
+};
+
+const fulfillmentFields = (order, vendor) => ({
+  fulfillment: order.fulfillment || 'delivery',
+  fulfillment_label: orders.fulfillmentLabels[order.fulfillment || 'delivery'],
+  pickup: serializePickup(order, vendor),
+});
+
+/** Pickup orders are "collected", not "delivered", and are never assigned a rider. */
+const customerStatusLabel = (order, status = order.status) =>
+  (order.fulfillment === 'pickup' && orders.pickupStatusLabels[status]) || orders.statusLabels[status];
+
 const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
   id: String(order._id),
   order_number: order.order_number,
+  ...fulfillmentFields(order, vendor),
   order_type: order.order_type || 'immediate',
   order_type_label:
     orders.orderTypeLabels[order.order_type || 'immediate'] || 'Immediate Order',
   scheduled_for: order.scheduled_for ?? null,
   special_text: order.special_text || '',
   status: order.status,
-  status_label: orders.statusLabels[order.status],
+  status_label: customerStatusLabel(order),
   payment_method: order.payment_method,
   payment_method_label: methodLabel(order.payment_method),
   payment_status: order.payment_status,
@@ -160,9 +198,10 @@ const serializeTracking = (order, vendor, payment, delivery) => {
     (order.status_history || []).map((entry) => [entry.status, entry.at])
   );
 
-  const timeline = orders.timeline.map((status) => ({
+  const steps = order.fulfillment === 'pickup' ? orders.pickupTimeline : orders.timeline;
+  const timeline = steps.map((status) => ({
     status,
-    label: orders.statusLabels[status],
+    label: customerStatusLabel(order, status),
     completed: historyByStatus.has(status),
     at: historyByStatus.get(status) ?? null,
   }));
@@ -181,13 +220,14 @@ const serializeTracking = (order, vendor, payment, delivery) => {
   return {
     order_id: String(order._id),
     order_number: order.order_number,
+    ...fulfillmentFields(order, vendor),
     order_type: order.order_type || 'immediate',
     order_type_label:
       orders.orderTypeLabels[order.order_type || 'immediate'] || 'Immediate Order',
     scheduled_for: order.scheduled_for ?? null,
     special_text: order.special_text || '',
     status: order.status,
-    status_label: orders.statusLabels[order.status],
+    status_label: customerStatusLabel(order),
     placed_at: order.created_at,
     last_updated_at: order.updated_at,
     payment: payment
@@ -226,6 +266,13 @@ const serializeTracking = (order, vendor, payment, delivery) => {
 class OrderService {
   paymentMethods() {
     return { payment_methods: orders.paymentMethods };
+  }
+
+  /** Offers a newly paid immediate order to nearby delivery workers (background). */
+  #offerToDrivers(order) {
+    deliveryService.handleOrderPlaced(order).catch((error) =>
+      console.error(`[delivery] could not offer ${order?.order_number} to delivery workers:`, error.message)
+    );
   }
 
   async #loadOrder(customerId, orderId) {
@@ -284,7 +331,13 @@ class OrderService {
   }
 
   async checkout(customerId, body) {
-    const deliveryLocation = parseDeliveryLocation(body?.delivery_location);
+    // Pickup: the customer collects at the kitchen, so no address is needed
+    // and no delivery fee is charged. Only their note is kept.
+    const fulfillment = parseFulfillment(body?.fulfillment);
+    const isPickup = fulfillment === 'pickup';
+    const deliveryLocation = isPickup
+      ? { note: typeof body?.delivery_location?.note === 'string' ? body.delivery_location.note.trim().slice(0, 300) : '' }
+      : parseDeliveryLocation(body?.delivery_location);
     const paymentMethod = parsePaymentMethod(body?.payment_method);
     const paymentDetails = parsePaymentDetails(paymentMethod, body?.payment_details);
     const simulate = body?.payment_simulate;
@@ -372,11 +425,13 @@ class OrderService {
 
     const subtotal = items.reduce((sum, item) => sum + item.subtotal_rwf, 0);
     // Delivery is priced by road distance from the kitchen to the drop-off and
-    // charged on top of the food; the rider receives it in full.
-    const quote = await deliveryPricingService.quote(vendor, deliveryLocation);
+    // charged on top of the food; the rider receives it in full. Pickup is free.
+    const quote = isPickup
+      ? { delivery_fee_rwf: 0, distance_km: null, distance_source: null, duration_minutes: 0 }
+      : await deliveryPricingService.quote(vendor, deliveryLocation);
     const fee = quote.delivery_fee_rwf;
     const total = subtotal + fee;
-    const etaMinutes = (vendor.estimated_prep_time ?? 30) + (quote.duration_minutes ?? 15);
+    const etaMinutes = (vendor.estimated_prep_time ?? 30) + (isPickup ? 0 : quote.duration_minutes ?? 15);
     const now = new Date();
 
     const order = await orderRepository.create({
@@ -389,6 +444,7 @@ class OrderService {
       delivery_distance_km: quote.distance_km,
       delivery_distance_source: quote.distance_source,
       total_rwf: total,
+      fulfillment,
       delivery_location: deliveryLocation,
       payment_method: paymentMethod,
       payment_details: paymentDetails,
@@ -401,7 +457,7 @@ class OrderService {
         {
           status: 'placed',
           at: now,
-          note: `Order placed (${orders.orderTypeLabels[orderType] || 'Immediate Order'})`,
+          note: `Order placed (${orders.orderTypeLabels[orderType] || 'Immediate Order'}${isPickup ? ', customer pickup' : ''})`,
         },
       ],
       eta_minutes: orderType === 'immediate' ? etaMinutes : null,
@@ -420,8 +476,12 @@ class OrderService {
     const updatedOrder = await orderRepository.update(order._id, {
       payment_status: paymentStatus,
     });
-    // The kitchen only hears about orders that are paid for.
-    if (paymentStatus === 'paid') orderNotifications.newOrder({ ...order, ...updatedOrder });
+    // The kitchen only hears about orders that are paid for; nearby delivery
+    // workers are offered the order at the same moment.
+    if (paymentStatus === 'paid') {
+      orderNotifications.newOrder({ ...order, ...updatedOrder });
+      this.#offerToDrivers({ ...order, ...updatedOrder });
+    }
 
     await cartRepository.clear(customerId);
 
@@ -514,7 +574,7 @@ class OrderService {
    * customer always has an in-app notification while the delivery is in-flight.
    */
   async #ensureDeliveryCodeNotification(order, delivery) {
-    if (!delivery?.otp_code || delivery.otp_verified_at) return;
+    if (!delivery?.otp_code || delivery.otp_verified_at || !isKitchenReady(delivery)) return;
     if (CLOSED_DELIVERY_STATUSES.includes(delivery.status)) return;
 
     const existing = await notificationRepository.findByOrderAndCustomer(
@@ -535,10 +595,16 @@ class OrderService {
   }
 
   async getDetail(customerId, orderId) {
-    const order = await this.#loadOrder(customerId, orderId);
+    const order = await this.#withPickupCode(await this.#loadOrder(customerId, orderId));
     const { vendor, payment, delivery } = await this.#loadWithVendor(order);
     await this.#ensureDeliveryCodeNotification(order, delivery);
     return serializeDetail(order, vendor, payment, delivery, await refundService.forOrder(order._id));
+  }
+
+  /** The customer's own pickup code, shown while their food awaits collection. */
+  async #withPickupCode(order) {
+    if (order.fulfillment !== 'pickup' || order.status !== 'ready') return order;
+    return { ...order, pickup_code: await orderRepository.findPickupCode(order._id) };
   }
 
   /** The customer gives the mobile money number their refund goes to. */
@@ -552,7 +618,7 @@ class OrderService {
   }
 
   async track(customerId, orderId) {
-    const order = await this.#loadOrder(customerId, orderId);
+    const order = await this.#withPickupCode(await this.#loadOrder(customerId, orderId));
     const { vendor, payment, delivery } = await this.#loadWithVendor(order);
     await this.#ensureDeliveryCodeNotification(order, delivery);
     return { ...serializeTracking(order, vendor, payment, delivery), refund: await refundService.forOrder(order._id) };
@@ -626,7 +692,10 @@ class OrderService {
       payment_method: method,
       payment_status: paymentStatus,
     });
-    if (paymentStatus === 'paid') orderNotifications.newOrder(updated);
+    if (paymentStatus === 'paid') {
+      orderNotifications.newOrder(updated);
+      this.#offerToDrivers(updated);
+    }
 
     const { vendor } = await this.#loadWithVendor(updated);
     return serializeDetail(updated, vendor, payment);

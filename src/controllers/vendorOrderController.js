@@ -19,4 +19,9 @@ const updateStatus = asyncHandler(async (req, res) => {
   );
 });
 
-module.exports = { list, getDetail, updateStatus };
+/** POST /vendor/orders/:order_id/collect { pickup_code } — pickup orders only. */
+const confirmPickup = asyncHandler(async (req, res) => {
+  res.json(await vendorOrderService.confirmPickup(req.vendor, req.params.order_id, req.body));
+});
+
+module.exports = { list, getDetail, updateStatus, confirmPickup };

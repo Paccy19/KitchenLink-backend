@@ -172,6 +172,15 @@ const config = {
     ],
     // Order timing. Immediate = ASAP; scheduled = a slot the customer picks;
     // preorder = ordered against a vendor's announced "Tomorrow's Special".
+    // How the customer gets the food: brought by a delivery worker, or
+    // collected at the kitchen (no delivery fee).
+    fulfillmentModes: ['delivery', 'pickup'],
+    fulfillmentLabels: { delivery: 'Delivery', pickup: 'Pickup at the kitchen' },
+    // Customer tracking for pickup orders ('delivered' = collected).
+    pickupTimeline: ['placed', 'confirmed', 'preparing', 'ready', 'delivered'],
+    pickupStatusLabels: { ready: 'Ready for you to collect', delivered: 'Collected' },
+    // Wrong pickup codes a vendor may enter before the order is locked.
+    pickupCodeMaxAttempts: 5,
     orderTypes: ['immediate', 'scheduled', 'preorder'],
     orderTypeLabels: {
       immediate: 'Immediate Order',
@@ -296,9 +305,23 @@ const config = {
       process.env.DELIVERY_OFFER_TIMEOUT_SECONDS,
       45
     ),
-    // Driver search radius (km) around the pickup point. Only drivers inside
-    // this radius receive the order-ready offer notification.
-    defaultRadiusKm: numberFromEnv(process.env.DELIVERY_RADIUS_KM, 3),
+    // Driver search radius (km) around the kitchen. Every online driver inside
+    // it is offered an order the moment it is placed (paid), at the same time
+    // the kitchen hears about it; the first to accept gets the delivery.
+    defaultRadiusKm: numberFromEnv(process.env.DELIVERY_RADIUS_KM, 7.5),
+    // A driver's position older than this doesn't count for matching (their
+    // app updates it every minute while they are online).
+    locationMaxAgeMinutes: numberFromEnv(process.env.DELIVERY_LOCATION_MAX_AGE_MINUTES, 60),
+    // Most drivers offered one order in a broadcast.
+    maxOfferRecipients: numberFromEnv(process.env.DELIVERY_MAX_OFFER_RECIPIENTS, 50),
+    // Once the food is ready (or once the driver accepts, if later) the
+    // assigned driver has this long to collect it. They are warned at
+    // `pickupWarningMinutes`; after the grace period the pickup is recorded
+    // as late and a late-pickup charge is marked pending.
+    pickupGraceMinutes: numberFromEnv(process.env.DELIVERY_PICKUP_GRACE_MINUTES, 15),
+    pickupWarningMinutes: numberFromEnv(process.env.DELIVERY_PICKUP_WARNING_MINUTES, 10),
+    // How often open offers are re-broadcast and pickups checked for lateness.
+    dispatchTickSeconds: numberFromEnv(process.env.DELIVERY_DISPATCH_TICK_SECONDS, 60),
     // Max concurrent deliveries a driver can hold.
     maxActiveDeliveries: numberFromEnv(process.env.DELIVERY_MAX_ACTIVE, 3),
     // Multiplier applied to straight-line distance to approximate road km.

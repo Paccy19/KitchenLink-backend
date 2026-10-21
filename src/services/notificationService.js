@@ -27,6 +27,38 @@ class NotificationService {
    * @param {string} customerId
    * @param {{ orderNumber?: string, code: string, orderId?: string, reminder?: boolean }} payload
    */
+  /**
+   * Pickup orders: the food is ready to collect. Sends the code the customer
+   * shows the kitchen, in-app and over SMS.
+   */
+  async notifyPickupCode(customerId, { orderNumber, code, orderId = null, vendorName = '', address = '' }) {
+    if (!customerId || !code) return null;
+    const where = [vendorName, address].filter(Boolean).join(', ');
+    const body = `${orderNumber || 'Your order'} is ready to collect${where ? ` at ${where}` : ''}. Give the kitchen this pickup code: ${code}.`;
+    const notification = await notificationRepository.create({
+      customer_id: customerId,
+      type: 'pickup_code',
+      title: 'Your order is ready for pickup',
+      body,
+      order_id: orderId || null,
+      data: { pickup_code: code, order_number: orderNumber || null, link: orderId ? `/track/${orderId}` : '/track' },
+      sms_status: 'pending',
+    });
+
+    let smsResult = { status: 'skipped' };
+    try {
+      const customer = await customerRepository.findById(customerId);
+      if (customer?.phone_number) smsResult = await sendSms(customer.phone_number, `FoodKitchen: ${body}`);
+      await notificationRepository.setSmsStatus(notification._id, {
+        status: smsResult.status,
+        error: smsResult.error,
+      });
+    } catch {
+      /* SMS bookkeeping is best-effort */
+    }
+    return serializeNotification({ ...notification, sms_status: smsResult.status });
+  }
+
   async notifyDeliveryCode(customerId, { orderNumber, code, orderId = null, reminder = false }) {
     if (!customerId || !code) return null;
 
@@ -172,8 +204,9 @@ class NotificationService {
   /* ------------------------------ drivers ------------------------------ */
 
   /**
-   * Alerts an eligible nearby driver about an order that is ready for pickup.
-   * Stored in-app (their bell) and mirrored over SMS when configured.
+   * Alerts an eligible nearby driver about a new order to deliver: offered
+   * the moment it is placed (`ready` false, kitchen still cooking) or when the
+   * food is ready. Stored in-app (their bell) and mirrored over SMS.
    */
   async notifyDriverOffer(
     driverId,
@@ -185,14 +218,20 @@ class NotificationService {
       orderId = null,
       deliveryId = null,
       expiresAt = null,
+      ready = true,
+      distanceKm = null,
     }
   ) {
     if (!driverId) return null;
 
     const vendorRef = vendorName ? ` at ${vendorName}` : '';
     const areaRef = pickupNeighborhood ? ` (${pickupNeighborhood})` : '';
-    const title = 'New order ready for pickup';
-    const body = `An order${vendorRef} is ready to be picked up${areaRef}. Earn ${earningsRwf.toLocaleString?.() ?? earningsRwf} RWF.`;
+    const awayRef = Number.isFinite(distanceKm) ? `, ${Math.round(distanceKm * 10) / 10} km from you` : '';
+    const earn = `Earn ${earningsRwf.toLocaleString?.() ?? earningsRwf} RWF.`;
+    const title = ready ? 'New order ready for pickup' : 'New order to deliver';
+    const body = ready
+      ? `An order${vendorRef} is ready to be picked up${areaRef}${awayRef}. ${earn}`
+      : `A new order was just placed${vendorRef}${areaRef}${awayRef}. First to accept delivers it. ${earn}`;
     const data = {
       order_number: orderNumber || null,
       delivery_id: deliveryId ? String(deliveryId) : null,
@@ -229,6 +268,36 @@ class NotificationService {
       /* SMS bookkeeping is best-effort */
     }
 
+    return serializeNotification({ ...notification, sms_status: smsResult.status });
+  }
+
+  /**
+   * A delivery update for one driver (assignment, food ready, late pickup,
+   * order taken by someone else…). In-app, plus SMS when `sms` is true.
+   */
+  async notifyDriver(driverId, { type = 'delivery_update', title, body, orderId = null, link = '/driver-dashboard', data = {}, sms = false } = {}) {
+    if (!driverId) return null;
+    const notification = await notificationRepository.createForDriver(driverId, {
+      type,
+      title,
+      body,
+      order_id: orderId || null,
+      data: { ...data, link },
+      sms_status: sms ? 'pending' : 'skipped',
+    });
+    if (!sms) return serializeNotification(notification);
+
+    let smsResult = { status: 'skipped' };
+    try {
+      const driver = await driverRepository.findById(driverId);
+      if (driver?.phone) smsResult = await sendSms(driver.phone, `FoodKitchen: ${body}`);
+      await notificationRepository.setSmsStatus(notification._id, {
+        status: smsResult.status,
+        error: smsResult.error,
+      });
+    } catch {
+      /* SMS bookkeeping is best-effort */
+    }
     return serializeNotification({ ...notification, sms_status: smsResult.status });
   }
 

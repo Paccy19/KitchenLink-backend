@@ -34,6 +34,7 @@ const notificationSchema = new mongoose.Schema(
       type: String,
       enum: [
         'delivery_code',
+        'pickup_code',
         'delivery_offer',
         'order_update',
         'general',
@@ -49,6 +50,13 @@ const notificationSchema = new mongoose.Schema(
         'refund_update',
         'support_message',
         'vendor_offer',
+        // Delivery worker updates on an order they were offered or took.
+        'delivery_update',
+        'delivery_taken',
+        'delivery_ready',
+        'delivery_pickup_reminder',
+        'delivery_late',
+        'delivery_cancelled',
       ],
       default: 'general',
     },

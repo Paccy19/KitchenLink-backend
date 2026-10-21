@@ -1,5 +1,6 @@
 const config = require('../config');
 const { isVendorLive } = require('./vendorPresence');
+const { isKitchenReady } = require('./deliveryReady');
 const access = require('../config/adminAccess');
 
 const round1 = (value) =>
@@ -230,12 +231,25 @@ const vendorStatusLabel = (status) =>
 function serializeVendorOrder(order, { customer } = {}) {
   const status = toVendorStatus(order.status);
 
+  const isPickup = order.fulfillment === 'pickup';
+  const pickupAttemptsLeft = Math.max(
+    0,
+    config.orders.pickupCodeMaxAttempts - (order.pickup_code_attempts || 0)
+  );
+
   return {
     id: String(order._id),
     order_number: order.order_number,
     status,
     status_label: vendorStatusLabel(status),
     allowed_next_statuses: config.vendor.orderTransitions[status] || [],
+    fulfillment: order.fulfillment || 'delivery',
+    fulfillment_label: config.orders.fulfillmentLabels[order.fulfillment || 'delivery'],
+    // Only for orders the customer collects: the vendor completes them with
+    // the customer's pickup code.
+    can_confirm_pickup: isPickup && order.status === 'ready' && pickupAttemptsLeft > 0,
+    pickup_attempts_left: isPickup ? pickupAttemptsLeft : null,
+    collected_at: order.collected_at ?? null,
     created_at: order.created_at,
     updated_at: order.updated_at,
     completed_at: order.completed_at ?? null,
@@ -438,6 +452,39 @@ function serializeDelivery(delivery, options = {}) {
     proof_photo_url: delivery.proof_photo_url || null,
     dispatched_at: delivery.dispatch?.last_broadcast_at ?? null,
     offer_expires_at: delivery.dispatch?.offer_expires_at ?? null,
+    // Offered at placement: the kitchen may still be cooking.
+    kitchen_ready: isKitchenReady(delivery),
+    ready_at: delivery.ready_at ?? null,
+    expected_ready_at:
+      isKitchenReady(delivery) || !order?.created_at
+        ? null
+        : new Date(
+            new Date(order.created_at).getTime() + (Number(vendorVendor?.estimated_prep_time) || 30) * 60000
+          ),
+    pickup_due_at: delivery.pickup_due_at ?? null,
+    pickup_grace_minutes: config.delivery.pickupGraceMinutes,
+    late_pickup: delivery.late_pickup?.flagged_at
+      ? {
+          flagged_at: delivery.late_pickup.flagged_at,
+          minutes_late: delivery.late_pickup.minutes_late ?? null,
+          charge_status: delivery.late_pickup.charge_status || 'pending',
+          charge_rwf: delivery.late_pickup.charge_rwf ?? null,
+        }
+      : null,
+    // The assigned driver follows the order the way the customer does.
+    order_progress:
+      revealCustomer && order
+        ? {
+            status: order.status,
+            label: config.orders.statusLabels[order.status] || order.status,
+            history: (order.status_history || []).map((entry) => ({
+              status: entry.status,
+              label: config.orders.statusLabels[entry.status] || entry.status,
+              at: entry.at,
+              note: entry.note || '',
+            })),
+          }
+        : null,
     assigned_at: delivery.assigned_at ?? null,
     picked_up_at: delivery.picked_up_at ?? null,
     out_for_delivery_at: delivery.out_for_delivery_at ?? null,
@@ -615,7 +662,12 @@ function serializeAdminOrder(order) {
     id: String(order._id),
     order_number: order.order_number,
     status: order.status,
-    status_label: config.orders.statusLabels[order.status] || order.status,
+    status_label:
+      (order.fulfillment === 'pickup' && config.orders.pickupStatusLabels[order.status]) ||
+      config.orders.statusLabels[order.status] ||
+      order.status,
+    fulfillment: order.fulfillment || 'delivery',
+    fulfillment_label: config.orders.fulfillmentLabels[order.fulfillment || 'delivery'],
     created_at: order.created_at,
     updated_at: order.updated_at,
     completed_at: order.completed_at ?? null,

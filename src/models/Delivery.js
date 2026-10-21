@@ -83,6 +83,27 @@ const deliverySchema = new mongoose.Schema(
       },
     ],
 
+    // When the kitchen marked the food ready. Deliveries for immediate orders
+    // are created and offered at placement ('pending' while the kitchen
+    // cooks), so a driver can be assigned before this is set.
+    ready_at: { type: Date, default: null },
+    // The assigned driver must collect the food by this time:
+    // max(ready_at, assigned_at) + pickup grace.
+    pickup_due_at: { type: Date, default: null },
+    // Late pickup bookkeeping. Charges are decided later; `charge_status`
+    // 'pending' marks a late pickup that still has to be charged.
+    late_pickup: {
+      warned_at: { type: Date, default: null },
+      flagged_at: { type: Date, default: null },
+      minutes_late: { type: Number, min: 0, default: null },
+      charge_status: {
+        type: String,
+        enum: ['none', 'pending', 'charged', 'waived'],
+        default: 'none',
+      },
+      charge_rwf: { type: Number, min: 0, default: null },
+    },
+
     assigned_at: { type: Date },
     picked_up_at: { type: Date },
     out_for_delivery_at: { type: Date },
@@ -95,6 +116,7 @@ const deliverySchema = new mongoose.Schema(
 );
 
 deliverySchema.index({ status: 1, created_at: -1 });
+deliverySchema.index({ status: 1, pickup_due_at: 1 });
 deliverySchema.index({ driver_id: 1, status: 1 });
 deliverySchema.index({ vendor_id: 1, status: 1 });
 deliverySchema.index({ customer_id: 1, created_at: -1 });

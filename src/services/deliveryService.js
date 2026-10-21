@@ -13,6 +13,7 @@ const {
 } = require('../utils/deliveryValidators');
 const { resolveImageUrl } = require('../utils/uploads');
 const { serializeDelivery, serializeDriverAccount } = require('../utils/serializers');
+const { isKitchenReady } = require('../utils/deliveryReady');
 const deliveryRepository = require('../repositories/deliveryRepository');
 const driverRepository = require('../repositories/driverRepository');
 const orderRepository = require('../repositories/orderRepository');
@@ -29,10 +30,11 @@ class DeliveryService {
   /* ============================ creation ============================= */
 
   /**
-   * Creates the delivery leg for an order that is ready for pickup.
+   * Creates the delivery leg for an order: at placement for immediate orders
+   * (`ready: false`, the kitchen is still cooking) or when the food is ready.
    * Idempotent: an order only ever has one delivery.
    */
-  async ensureDeliveryForOrder(order, { vendor } = {}) {
+  async ensureDeliveryForOrder(order, { vendor, ready = true } = {}) {
     if (!order) throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
 
     const existing = await deliveryRepository.findByOrderId(order._id);
@@ -69,30 +71,40 @@ class DeliveryService {
       delivery_fee_rwf: fee,
       promised_earnings_rwf: earnings,
       payment_method: order.payment_method,
-      status: 'ready_for_pickup',
+      status: ready ? 'ready_for_pickup' : 'pending',
+      ready_at: ready ? new Date() : null,
       otp_code: String(crypto.randomInt(100000, 1000000)),
       status_history: [
-        {
-          status: 'ready_for_pickup',
-          at: new Date(),
-          note: 'Food ready at vendor — awaiting a delivery worker',
-          by: 'vendor',
-        },
+        ready
+          ? {
+              status: 'ready_for_pickup',
+              at: new Date(),
+              note: 'Food ready at vendor — awaiting a delivery worker',
+              by: 'vendor',
+            }
+          : {
+              status: 'pending',
+              at: new Date(),
+              note: 'Order placed — offered to nearby delivery workers while the kitchen prepares it',
+              by: 'system',
+            },
       ],
     });
 
     await orderRepository.update(order._id, {
       delivery_id: delivery._id,
-      status: 'ready',
+      ...(ready ? { status: 'ready' } : {}),
     });
 
-    // Send the proof-of-delivery code to the customer (in-app + SMS).
-    await this.#notifyCustomerDeliveryCode(order, delivery);
+    if (ready) {
+      // Send the proof-of-delivery code to the customer (in-app + SMS).
+      await this.#notifyCustomerDeliveryCode(order, delivery);
+    }
 
     const isDev = config.env !== 'production';
     if (isDev) {
       console.log(
-        `[delivery] order ${order.order_number} prepared (otp ${delivery.otp_code}, ${distanceKm}km, ${fee} RWF)`
+        `[delivery] order ${order.order_number} ${ready ? 'ready' : 'placed'} (otp ${delivery.otp_code}, ${distanceKm}km, ${fee} RWF)`
       );
     }
 
@@ -100,14 +112,15 @@ class DeliveryService {
   }
 
   /**
-   * Before a vendor or customer cancels an order: once a delivery worker has
-   * accepted it, it can no longer be cancelled (the worker completes it by
-   * confirming the customer's code).
+   * Before a vendor or customer cancels an order: once the delivery worker
+   * has collected the food it can no longer be cancelled (they complete it by
+   * confirming the customer's code). A driver who accepted early, while the
+   * kitchen was still cooking, is released instead.
    */
   async assertCancellable(orderId) {
     const delivery = await deliveryRepository.findByOrderId(orderId);
     if (!delivery) return;
-    if ([...deliveryConfig.activeStatuses, 'delivered', 'completed'].includes(delivery.status)) {
+    if (['picked_up', 'out_for_delivery', 'delivered', 'completed'].includes(delivery.status)) {
       throw ApiError.conflict(
         'A delivery worker is already delivering this order, so it can no longer be cancelled.',
         'DELIVERY_IN_PROGRESS'
@@ -115,32 +128,111 @@ class DeliveryService {
     }
   }
 
-  /** After an order is cancelled: withdraw its open delivery offer. */
+  /** After an order is cancelled: withdraw its offer and release any assigned driver. */
   async cancelOpenDelivery(orderId, note = 'Order cancelled') {
     const delivery = await deliveryRepository.findByOrderId(orderId);
-    if (!delivery || !deliveryConfig.availableStatuses.includes(delivery.status)) return;
-    await deliveryRepository.update(delivery._id, { status: 'cancelled' });
-    await deliveryRepository.pushHistory(delivery._id, { status: 'cancelled', at: new Date(), note, by: 'system' });
+    if (!delivery) return;
+    const assigned = delivery.status === 'assigned_to_driver' && delivery.driver_id;
+    if (!assigned && !deliveryConfig.availableStatuses.includes(delivery.status)) return;
+
+    const now = new Date();
+    await deliveryRepository.update(delivery._id, { status: 'cancelled', cancelled_at: now, cancel_reason: note });
+    await deliveryRepository.pushHistory(delivery._id, { status: 'cancelled', at: now, note, by: 'system' });
+
+    if (assigned) {
+      await this.#releaseDriver(delivery.driver_id);
+      notificationService
+        .notifyDriver(delivery.driver_id, {
+          type: 'delivery_cancelled',
+          title: 'Order cancelled',
+          body: `${delivery.order_number} was cancelled (${note}). You don't need to collect it.`,
+          orderId: delivery.order_id,
+          data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
+          sms: true,
+        })
+        .catch(() => null);
+    }
+  }
+
+  /**
+   * Called when an immediate order is paid, i.e. the moment the kitchen is
+   * told about it: the delivery is created and offered to nearby drivers
+   * right away so one can head to the kitchen while the food is cooked.
+   * Scheduled orders and pre-orders are offered when the kitchen marks them
+   * ready instead, since they may be due hours or days later.
+   */
+  async handleOrderPlaced(order) {
+    if (!order || order.fulfillment === 'pickup') return null; // the customer collects it
+    if (order.order_type && order.order_type !== 'immediate') return null;
+    const delivery = await this.ensureDeliveryForOrder(order, { ready: false });
+    return this.dispatch({ deliveryId: delivery._id });
   }
 
   /** Called by the vendor order flow when an order becomes "ready". */
   async handleOrderReady(order) {
-    const delivery = await this.ensureDeliveryForOrder(order);
-    const dispatchResult = await this.dispatch({
-      deliveryId: delivery._id,
-      orderId: order._id,
+    // Pickup orders never get a delivery worker.
+    if (order.fulfillment === 'pickup') return { delivery: null, notified: [] };
+    const existing = await deliveryRepository.findByOrderId(order._id);
+    if (!existing) {
+      const delivery = await this.ensureDeliveryForOrder(order, { ready: true });
+      const result = await this.dispatch({ deliveryId: delivery._id });
+      return { delivery: result.delivery, notified: result.notified };
+    }
+    if (['cancelled', 'rejected'].includes(existing.status) || isKitchenReady(existing)) {
+      return { delivery: await this.#serialize(existing._id), notified: [] };
+    }
+
+    const now = new Date();
+    await this.#notifyCustomerDeliveryCode(order, existing);
+
+    if (existing.driver_id) {
+      // A driver accepted while the food was cooking: their pickup clock starts.
+      const dueAt = this.#pickupDueAt(now, existing.assigned_at);
+      await deliveryRepository.update(existing._id, { ready_at: now, pickup_due_at: dueAt });
+      await deliveryRepository.pushHistory(existing._id, {
+        status: existing.status,
+        at: now,
+        note: 'Food ready at vendor — waiting for the assigned delivery worker',
+        by: 'vendor',
+      });
+      await orderRepository.update(order._id, { status: 'assigned' });
+      await notificationService
+        .notifyDriver(existing.driver_id, {
+          type: 'delivery_ready',
+          title: 'Food is ready — collect it now',
+          body: `${existing.order_number} is ready at the kitchen. Collect it within ${deliveryConfig.pickupGraceMinutes} minutes to avoid a late-pickup charge.`,
+          orderId: existing.order_id,
+          link: '/driver-dashboard/active',
+          data: { delivery_id: String(existing._id), order_number: existing.order_number, pickup_due_at: dueAt.toISOString() },
+          sms: true,
+        })
+        .catch(() => null);
+      return { delivery: await this.#serialize(existing._id), notified: [String(existing.driver_id)] };
+    }
+
+    // Nobody accepted yet: the offer now says "ready", and drivers who came
+    // into range since placement are added.
+    await deliveryRepository.update(existing._id, { status: 'ready_for_pickup', ready_at: now });
+    await deliveryRepository.pushHistory(existing._id, {
+      status: 'ready_for_pickup',
+      at: now,
+      note: 'Food ready at vendor — awaiting a delivery worker',
+      by: 'vendor',
     });
-    return { delivery: dispatchResult.delivery, notified: dispatchResult.notified };
+    const result = await this.dispatch({ deliveryId: existing._id });
+    return { delivery: result.delivery, notified: result.notified };
   }
 
   /* ============================ dispatch ============================= */
 
   /**
-   * Matching & broadcast. Finds online drivers near the pickup point, ranks
-   * them (proximity → load → rating) and opens an offer window on each.
-   * The first driver to accept atomically locks the assignment.
+   * Matching & broadcast. Every online driver within the dispatch radius of
+   * the kitchen (with a recent position and room for another delivery) is
+   * offered the order. Repeat calls add drivers who came online or into
+   * range since; drivers already offered are not notified again. The first
+   * driver to accept atomically locks the assignment.
    */
-  async dispatch({ orderId, deliveryId, force = false } = {}) {
+  async dispatch({ orderId, deliveryId } = {}) {
     const delivery = deliveryId
       ? await deliveryRepository.findById(deliveryId)
       : await deliveryRepository.findByOrderId(orderId);
@@ -159,60 +251,58 @@ class DeliveryService {
       lng: delivery.pickup_location.longitude,
     };
 
+    const previousOffers = delivery.dispatch?.offers || [];
+    const alreadyOffered = new Set(previousOffers.map((offer) => String(offer.driver_id)));
+
     let candidates = [];
     try {
       candidates = await driverRepository.findNearbyAvailable({
         coords: pickup,
         radiusKm: deliveryConfig.defaultRadiusKm,
-        excludeDriverIds: (delivery.rejected_by || []).map(String),
-        limit: 20,
+        excludeDriverIds: [...(delivery.rejected_by || []).map(String), ...alreadyOffered],
+        limit: deliveryConfig.maxOfferRecipients,
+        locationSince: this.#locationCutoff(),
       });
     } catch (error) {
+      console.log(`[delivery] driver matching failed: ${error.message}`);
       candidates = [];
     }
 
-    const eligible = candidates
-      .filter(
-        (driver) =>
-          (driver.active_deliveries_count ?? 0) <
-          (driver.max_active_deliveries || deliveryConfig.maxActiveDeliveries)
-      )
-      .slice(0, 10);
+    const eligible = candidates.filter(
+      (driver) =>
+        (driver.active_deliveries_count ?? 0) <
+        (driver.max_active_deliveries || deliveryConfig.maxActiveDeliveries)
+    );
 
     const now = Date.now();
     const offeredAt = new Date(now);
     const expiresAt = new Date(now + deliveryConfig.offerTimeoutSeconds * 1000);
 
-    if (eligible.length === 0) {
-      await deliveryRepository.setOffers(delivery._id, {
-        offers: [],
-        broadcastCount: (delivery.dispatch?.broadcast_count || 0) + 1,
-        lastBroadcastAt: offeredAt,
-        offerExpiresAt: expiresAt,
-      });
-      return {
-        delivery: await this.#serialize(delivery._id),
-        notified: [],
-        message: 'No available delivery workers found within range.',
-      };
-    }
-
-    const offers = eligible.map((driver) => ({
-      driver_id: driver._id,
-      offered_at: offeredAt,
-      expires_at: expiresAt,
-      response: 'offered',
-    }));
-
     await deliveryRepository.setOffers(delivery._id, {
-      offers,
+      offers: [
+        ...previousOffers,
+        ...eligible.map((driver) => ({
+          driver_id: driver._id,
+          offered_at: offeredAt,
+          expires_at: expiresAt,
+          response: 'offered',
+        })),
+      ],
       broadcastCount: (delivery.dispatch?.broadcast_count || 0) + 1,
       lastBroadcastAt: offeredAt,
       offerExpiresAt: expiresAt,
     });
 
-    // Push an in-app (+ SMS) notification to each nearby eligible driver so
-    // they are alerted the moment the vendor marks the order ready.
+    if (eligible.length === 0) {
+      return {
+        delivery: await this.#serialize(delivery._id),
+        notified: [],
+        message: 'No new delivery workers found within range.',
+      };
+    }
+
+    // Alert each newly matched driver (in-app + SMS) at the same moment the
+    // kitchen is told about the order (or that it is ready).
     const vendorDoc = await vendorRepository.findById(delivery.vendor_id);
     await Promise.all(
       eligible.map((driver) =>
@@ -225,6 +315,8 @@ class DeliveryService {
             orderId: delivery.order_id,
             deliveryId: delivery._id,
             expiresAt,
+            ready: isKitchenReady(delivery),
+            distanceKm: driver.distance_km,
           })
           .catch(() => null)
       )
@@ -241,8 +333,9 @@ class DeliveryService {
   }
 
   /**
-   * Re-broadcasts unassigned deliveries whose offer window expired.
-   * Safe to call repeatedly; used by the internal dispatch endpoint.
+   * Re-broadcasts unassigned deliveries whose offer window expired, so
+   * drivers who came online or into range since are offered them too.
+   * Safe to call repeatedly; used by the dispatch tick and internal endpoint.
    */
   async expireStaleOffers() {
     const stale = await deliveryRepository.findStaleUnassigned(
@@ -251,10 +344,89 @@ class DeliveryService {
     );
     const results = [];
     for (const delivery of stale) {
-      const result = await this.dispatch({ deliveryId: delivery._id, force: true });
+      const result = await this.dispatch({ deliveryId: delivery._id });
       results.push({ delivery_id: String(delivery._id), notified: result.notified });
     }
     return { re_dispatched: results.length, results };
+  }
+
+  /**
+   * Pickup clock for assigned deliveries whose food is ready: a warning when
+   * `pickupWarningMinutes` have passed, and once the grace period is over the
+   * pickup is flagged late with a pending charge (charges are applied later).
+   */
+  async checkLatePickups(now = new Date()) {
+    const graceMs = deliveryConfig.pickupGraceMinutes * 60 * 1000;
+    const warnMs = deliveryConfig.pickupWarningMinutes * 60 * 1000;
+    const waiting = await deliveryRepository.findAwaitingPickup();
+    let warned = 0;
+    let flagged = 0;
+
+    for (const delivery of waiting) {
+      const dueAt = new Date(delivery.pickup_due_at);
+      const startedAt = dueAt.getTime() - graceMs;
+      const minutesLeft = Math.max(0, Math.ceil((dueAt.getTime() - now.getTime()) / 60000));
+
+      if (now >= dueAt) {
+        await deliveryRepository.update(delivery._id, {
+          'late_pickup.flagged_at': now,
+          'late_pickup.charge_status': 'pending',
+        });
+        await deliveryRepository.pushHistory(delivery._id, {
+          status: delivery.status,
+          at: now,
+          note: `Not collected within ${deliveryConfig.pickupGraceMinutes} minutes of the food being ready — late pickup recorded`,
+          by: 'system',
+        });
+        notificationService
+          .notifyDriver(delivery.driver_id, {
+            type: 'delivery_late',
+            title: 'Late pickup',
+            body: `${delivery.order_number} has been ready for over ${deliveryConfig.pickupGraceMinutes} minutes. A late-pickup charge will apply. Collect it now.`,
+            orderId: delivery.order_id,
+            link: '/driver-dashboard/active',
+            data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
+            sms: true,
+          })
+          .catch(() => null);
+        flagged += 1;
+      } else if (!delivery.late_pickup?.warned_at && now.getTime() - startedAt >= warnMs) {
+        await deliveryRepository.update(delivery._id, { 'late_pickup.warned_at': now });
+        notificationService
+          .notifyDriver(delivery.driver_id, {
+            type: 'delivery_pickup_reminder',
+            title: `${minutesLeft} minute${minutesLeft === 1 ? '' : 's'} left to collect`,
+            body: `${delivery.order_number} is waiting at the kitchen. Collect it within ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'} or a late-pickup charge will apply.`,
+            orderId: delivery.order_id,
+            link: '/driver-dashboard/active',
+            data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
+            sms: true,
+          })
+          .catch(() => null);
+        warned += 1;
+      }
+    }
+    return { warned, flagged };
+  }
+
+  /** Runs re-broadcasts and pickup checks on an interval (in-process). */
+  start({ intervalMs = deliveryConfig.dispatchTickSeconds * 1000 } = {}) {
+    let running = false;
+    const tick = async () => {
+      if (running) return;
+      running = true;
+      try {
+        await this.expireStaleOffers();
+        await this.checkLatePickups();
+      } catch (error) {
+        console.error('[delivery] dispatch tick failed:', error.message);
+      } finally {
+        running = false;
+      }
+    };
+    const timer = setInterval(tick, intervalMs);
+    timer.unref?.();
+    return timer;
   }
 
   /* ============================ driver reads ========================= */
@@ -266,22 +438,18 @@ class DeliveryService {
         { field: 'location', required: false }
       ) || this.#driverCoords(driver);
 
-    // The board shows every ready delivery (sorted by distance); a radius is
-    // only applied when the caller explicitly asks for one. Using the dispatch
-    // radius (3 km) here hid nearby orders whenever the driver's location was
-    // stale or fell back to the city-centre default.
-    const requestedRadius = Number(query.radius);
-    const radiusKm =
-      Number.isFinite(requestedRadius) && requestedRadius > 0
-        ? Math.min(requestedRadius, config.geo.maxRadiusKm)
-        : null;
+    // The board shows the orders this driver was offered (they were within
+    // the dispatch radius) plus any open order within that radius of where
+    // they are now, nearest first.
+    const radiusKm = deliveryConfig.defaultRadiusKm;
+    const driverId = String(driver._id);
 
     const raw = await deliveryRepository.listAvailable({
       statuses: deliveryConfig.availableStatuses,
     });
 
     const items = raw
-      .filter((delivery) => !(delivery.rejected_by || []).some((id) => String(id) === String(driver._id)))
+      .filter((delivery) => !(delivery.rejected_by || []).some((id) => String(id) === driverId))
       .map((delivery) => {
         const distance = coords
           ? haversineKm(
@@ -293,7 +461,10 @@ class DeliveryService {
           : null;
         return { delivery, distance };
       })
-      .filter((entry) => (coords && radiusKm ? entry.distance <= radiusKm : true))
+      .filter(
+        (entry) =>
+          this.#wasOffered(entry.delivery, driverId) || (entry.distance != null && entry.distance <= radiusKm)
+      )
       .sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
 
     const orders = await this.#loadOrders(items.map((entry) => entry.delivery));
@@ -382,27 +553,51 @@ class DeliveryService {
     const id = parseObjectId(deliveryId, 'delivery_id');
     const now = new Date();
 
+    const current = await deliveryRepository.findById(id);
+    if (!current) {
+      throw ApiError.notFound('Delivery not found.', 'DELIVERY_NOT_FOUND');
+    }
+    if (current.driver_id && String(current.driver_id) !== String(driver._id)) {
+      throw this.#alreadyAssigned(current);
+    }
+    // Only drivers who were offered the order (they were within range) or
+    // who are within range now may take it.
+    const here = this.#driverCoords(driver);
+    const distanceToKitchen = here
+      ? haversineKm(here.lat, here.lng, current.pickup_location.latitude, current.pickup_location.longitude)
+      : null;
+    if (
+      !this.#wasOffered(current, String(driver._id)) &&
+      !(distanceToKitchen != null && distanceToKitchen <= deliveryConfig.defaultRadiusKm)
+    ) {
+      throw ApiError.forbidden(
+        `This order is more than ${deliveryConfig.defaultRadiusKm} km from you. Only nearby delivery workers can take it.`,
+        'DELIVERY_OUT_OF_RANGE'
+      );
+    }
+
     const delivery = await deliveryRepository.claim(driver._id, id, {
       status: 'assigned_to_driver',
       assignedAt: now,
     });
 
     if (!delivery) {
-      const current = await deliveryRepository.findById(id);
-      if (!current) {
-        throw ApiError.notFound('Delivery not found.', 'DELIVERY_NOT_FOUND');
-      }
-      if (current.driver_id) {
-        throw ApiError.conflict(
-          'This delivery has already been accepted by another delivery worker.',
-          'DELIVERY_ALREADY_ASSIGNED'
-        );
-      }
+      const latest = await deliveryRepository.findById(id);
+      if (latest?.driver_id) throw this.#alreadyAssigned(latest);
       throw ApiError.conflict(
         'This delivery is no longer available.',
         'DELIVERY_NOT_AVAILABLE'
       );
     }
+
+    // If the food is already waiting, the pickup clock starts now.
+    const ready = isKitchenReady(delivery);
+    if (ready) {
+      await deliveryRepository.update(delivery._id, {
+        pickup_due_at: this.#pickupDueAt(delivery.ready_at ?? delivery.created_at, now),
+      });
+    }
+    await this.#closeOtherOffers(delivery, driver._id, now);
 
     const fresh = await driverRepository.incrementActive(driver._id);
     const activeCount = fresh?.active_deliveries_count ?? 1;
@@ -410,25 +605,30 @@ class DeliveryService {
       await driverRepository.setAvailability(driver._id, { status: 'busy' });
     }
 
-    await orderRepository.update(delivery.order_id, {
+    // While the kitchen is still cooking the order keeps its kitchen status;
+    // it shows as "assigned" once the food is ready.
+    const orderBefore = await orderRepository.findById(delivery.order_id);
+    const order = await orderRepository.update(delivery.order_id, {
       driver_id: driver._id,
       delivery_id: delivery._id,
       rider: { name: driver.name, phone: driver.phone },
-      status: 'assigned',
+      ...(ready ? { status: 'assigned' } : {}),
     });
     await orderRepository.pushHistory(delivery.order_id, {
-      status: 'assigned',
+      status: ready ? 'assigned' : orderBefore?.status || 'placed',
       at: now,
       note: `Delivery worker ${driver.name} assigned`,
     });
-    orderRepository
-      .findById(delivery.order_id)
-      .then((order) => order && orderNotifications.deliveryAccepted(order, driver.name))
-      .catch(() => null);
+    if (order) orderNotifications.deliveryAccepted(order, driver.name);
 
+    const distanceKm = distanceToKitchen != null ? Math.round(distanceToKitchen * 10) / 10 : null;
     return {
-      delivery: await this.#serialize(delivery._id, {}, { revealCustomer: true }),
+      delivery: await this.#serialize(delivery._id, {}, { revealCustomer: true, distanceFromDriverKm: distanceToKitchen ?? undefined }),
       driver: serializeDriverAccount(fresh || driver),
+      distance_to_pickup_km: distanceKm,
+      message: ready
+        ? `The food is ready. Collect it within ${deliveryConfig.pickupGraceMinutes} minutes to avoid a late-pickup charge.`
+        : `Head to the kitchen${distanceKm != null ? ` (${distanceKm} km away)` : ''} and wait nearby. Once the food is ready you have ${deliveryConfig.pickupGraceMinutes} minutes to collect it.`,
     };
   }
 
@@ -461,7 +661,7 @@ class DeliveryService {
     });
 
     // Re-broadcast to the next eligible drivers (excluding this one).
-    await this.dispatch({ deliveryId: id, force: true });
+    await this.dispatch({ deliveryId: id });
 
     return { rejected: true, delivery_id: String(id) };
   }
@@ -476,10 +676,23 @@ class DeliveryService {
     }
 
     assertTransition(delivery.status, nextStatus);
+    if (nextStatus === 'picked_up' && !isKitchenReady(delivery)) {
+      throw ApiError.conflict(
+        "The kitchen hasn't marked this order ready yet. Wait nearby — you'll be notified the moment it's ready.",
+        'ORDER_NOT_READY'
+      );
+    }
 
     const now = new Date();
     const update = { status: nextStatus };
-    if (nextStatus === 'picked_up') update.picked_up_at = now;
+    if (nextStatus === 'picked_up') {
+      update.picked_up_at = now;
+      if (delivery.pickup_due_at && now > new Date(delivery.pickup_due_at)) {
+        update['late_pickup.minutes_late'] = Math.ceil((now - new Date(delivery.pickup_due_at)) / 60000);
+        update['late_pickup.charge_status'] = 'pending';
+        if (!delivery.late_pickup?.flagged_at) update['late_pickup.flagged_at'] = now;
+      }
+    }
     if (nextStatus === 'out_for_delivery') update.out_for_delivery_at = now;
     if (nextStatus === 'delivered') update.delivered_at = now;
 
@@ -653,19 +866,23 @@ class DeliveryService {
       deliveryConfig.activeStatuses
     );
     for (const delivery of deliveries) {
+      // Food not ready yet: back to "kitchen preparing" for the next driver.
+      const status = isKitchenReady(delivery) ? 'ready_for_pickup' : 'pending';
       await deliveryRepository.update(delivery._id, {
         driver_id: null,
-        status: 'ready_for_pickup',
+        status,
         assigned_at: null,
+        pickup_due_at: null,
+        'late_pickup.warned_at': null,
       });
       await deliveryRepository.pushHistory(delivery._id, {
-        status: 'ready_for_pickup',
+        status,
         at: new Date(),
         note: 'Delivery worker went offline — re-broadcast',
         by: 'system',
       });
       await deliveryRepository.addRejection(delivery._id, driverId);
-      await this.dispatch({ deliveryId: delivery._id, force: true });
+      await this.dispatch({ deliveryId: delivery._id });
     }
     if (deliveries.length > 0) {
       await driverRepository.update(driverId, { active_deliveries_count: 0 });
@@ -720,6 +937,71 @@ class DeliveryService {
     if (completed) {
       const settled = await settlementService.releaseOrder(order._id);
       if (settled) orderNotifications.completed(settled);
+    }
+  }
+
+  /** Pickup deadline: grace minutes after the later of "ready" and "accepted". */
+  #pickupDueAt(readyAt, assignedAt) {
+    const start = Math.max(new Date(readyAt).getTime(), assignedAt ? new Date(assignedAt).getTime() : 0);
+    return new Date(start + deliveryConfig.pickupGraceMinutes * 60 * 1000);
+  }
+
+  #locationCutoff() {
+    return new Date(Date.now() - deliveryConfig.locationMaxAgeMinutes * 60 * 1000);
+  }
+
+  #wasOffered(delivery, driverId) {
+    return (delivery.dispatch?.offers || []).some((offer) => String(offer.driver_id) === driverId);
+  }
+
+  #alreadyAssigned(delivery) {
+    return ApiError.conflict(
+      `Order ${delivery.order_number} has already been assigned to another delivery worker.`,
+      'DELIVERY_ALREADY_ASSIGNED'
+    );
+  }
+
+  /** The winner is recorded; every other offered driver is told it's taken. */
+  async #closeOtherOffers(delivery, winnerId, now) {
+    const offers = delivery.dispatch?.offers || [];
+    const others = offers.filter(
+      (offer) => String(offer.driver_id) !== String(winnerId) && offer.response === 'offered'
+    );
+    await deliveryRepository.setOffers(delivery._id, {
+      offers: offers.map((offer) => ({
+        ...offer,
+        ...(String(offer.driver_id) === String(winnerId)
+          ? { response: 'accepted', responded_at: now }
+          : offer.response === 'offered'
+            ? { response: 'cancelled', responded_at: now }
+            : {}),
+      })),
+      broadcastCount: delivery.dispatch?.broadcast_count || 0,
+      lastBroadcastAt: delivery.dispatch?.last_broadcast_at,
+      offerExpiresAt: delivery.dispatch?.offer_expires_at,
+    });
+    others.forEach((offer) =>
+      notificationService
+        .notifyDriver(offer.driver_id, {
+          type: 'delivery_taken',
+          title: 'Order assigned to another delivery worker',
+          body: `${delivery.order_number} has been assigned to another delivery worker.`,
+          orderId: delivery.order_id,
+          data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
+        })
+        .catch(() => null)
+    );
+  }
+
+  /** Frees a driver's slot after their delivery is cancelled. */
+  async #releaseDriver(driverId) {
+    const fresh = await driverRepository.decrementActive(driverId);
+    if (!fresh) return;
+    if ((fresh.active_deliveries_count ?? 0) < 0) {
+      await driverRepository.update(driverId, { active_deliveries_count: 0 });
+    }
+    if (fresh.is_online && (fresh.active_deliveries_count ?? 0) <= 0) {
+      await driverRepository.setAvailability(driverId, { status: 'online' });
     }
   }
 

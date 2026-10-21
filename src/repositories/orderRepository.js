@@ -14,6 +14,35 @@ class OrderRepository {
     return Order.findById(orderId).lean();
   }
 
+  /** Pickup code (never selected by default). */
+  async findPickupCode(orderId) {
+    const order = await Order.findById(orderId).select('+pickup_code').lean();
+    return order?.pickup_code || null;
+  }
+
+  /**
+   * Completes a pickup order when the code matches (atomically, so it can't
+   * be collected twice). Returns null if the code was wrong or it's not ready.
+   */
+  async collectPickup(orderId, code, { at }) {
+    return Order.findOneAndUpdate(
+      { _id: orderId, fulfillment: 'pickup', status: 'ready', pickup_code: code },
+      {
+        $set: { status: 'delivered', delivered_at: at, completed_at: at, collected_at: at },
+        $push: { status_history: { status: 'delivered', at, note: 'Collected by the customer (pickup code confirmed)' } },
+      },
+      { new: true }
+    ).lean();
+  }
+
+  async recordPickupAttempt(orderId) {
+    return Order.findOneAndUpdate(
+      { _id: orderId },
+      { $inc: { pickup_code_attempts: 1 } },
+      { new: true }
+    ).lean();
+  }
+
   async findByCustomerAndId(customerId, orderId) {
     return Order.findOne({ _id: orderId, customer_id: customerId }).lean();
   }

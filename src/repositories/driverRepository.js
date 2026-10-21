@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const { Driver } = require('../models');
 
 const escapeRegex = (value) =>
@@ -102,15 +103,20 @@ class DriverRepository {
    * Online + available drivers within radius of a pickup point, ranked by
    * proximity. Used by the dispatch matching algorithm.
    */
-  async findNearbyAvailable({ coords, radiusKm, excludeDriverIds = [], limit = 20 }) {
+  async findNearbyAvailable({ coords, radiusKm, excludeDriverIds = [], limit = 20, locationSince = null }) {
     const query = {
       is_active: true,
       is_online: true,
       is_available: true,
       deleted_at: null,
     };
+    // Only positions reported recently: an old (or never-shared, city-centre
+    // default) position says nothing about where the driver is now.
+    if (locationSince) query.location_updated_at = { $gte: locationSince };
     if (excludeDriverIds.length > 0) {
-      query._id = { $nin: excludeDriverIds };
+      // Aggregation queries don't cast strings to ObjectIds, so cast here or
+      // nobody would be excluded.
+      query._id = { $nin: excludeDriverIds.map((id) => new mongoose.Types.ObjectId(String(id))) };
     }
 
     const pipeline = [

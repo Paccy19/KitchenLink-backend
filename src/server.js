@@ -8,6 +8,7 @@ const driverRepository = require('./repositories/driverRepository');
 const platformLedgerService = require('./services/platformLedgerService');
 const platformSweepService = require('./services/platformSweepService');
 const vendorOfferService = require('./services/vendorOfferService');
+const deliveryService = require('./services/deliveryService');
 
 const DEFAULT_JWT_SECRET = 'dev-secret-change-me';
 
@@ -94,6 +95,9 @@ const start = async () => {
 
     platformSweepService.start();
     vendorOfferService.start();
+    // Re-offers open orders to drivers who came into range and runs the
+    // late-pickup clock.
+    deliveryService.start();
 
     app.listen(config.port, () => {
       console.log(`API listening on http://localhost:${config.port}/api/v1`);

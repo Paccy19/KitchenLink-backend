@@ -137,6 +137,18 @@ function parseOrderType(raw) {
   return raw;
 }
 
+/** 'delivery' (default) or 'pickup' (the customer collects at the kitchen). */
+function parseFulfillment(raw) {
+  if (raw === undefined || raw === null || raw === '') return 'delivery';
+  const allowed = config.orders.fulfillmentModes;
+  if (!allowed.includes(raw)) {
+    throw ApiError.badRequest('fulfillment is invalid.', {
+      fulfillment: `expected one of: ${allowed.join(', ')}`,
+    });
+  }
+  return raw;
+}
+
 /**
  * Validates a customer-chosen delivery slot. Must be a real date at least
  * `minLeadMinutes` from now and no more than `maxDaysAhead` days out.
@@ -205,5 +217,6 @@ module.exports = {
   parsePaymentDetails,
   parseDeliveryLocation,
   parseOrderType,
+  parseFulfillment,
   parseScheduledFor,
 };

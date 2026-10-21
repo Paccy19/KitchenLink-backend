@@ -39,7 +39,8 @@ module.exports = {
       order.order_type && order.order_type !== 'immediate' && order.scheduled_for
         ? ` for ${new Date(order.scheduled_for).toLocaleString('en-GB', { timeZone: 'Africa/Kigali', dateStyle: 'medium', timeStyle: 'short' })}`
         : '';
-    return toVendor(order, 'New order', `${ref(order)} · ${money(order.subtotal_rwf ?? order.total_rwf)} of food${when}. Accept it to start preparing.`, 'order_placed');
+    const pickup = order.fulfillment === 'pickup' ? ' The customer will collect it from you.' : '';
+    return toVendor(order, 'New order', `${ref(order)} · ${money(order.subtotal_rwf ?? order.total_rwf)} of food${when}.${pickup} Accept it to start preparing.`, 'order_placed');
   },
 
   customerCancelled(order, reason) {
@@ -63,15 +64,20 @@ module.exports = {
     return toVendor(order, 'Delivery worker on the way', `${workerName || 'A delivery worker'} accepted ${ref(order)} and is coming to collect it.`);
   },
 
-  /** The delivery worker confirmed the customer's code. */
+  /** The delivery worker (or, for pickup, the kitchen) confirmed the customer's code. */
   completed(order) {
+    const pickup = order.fulfillment === 'pickup';
     return Promise.all([
       toVendor(
         order,
         'Order completed',
-        `${ref(order)} was delivered. ${money(order.vendor_payout_rwf)} was added to your wallet.`
+        `${ref(order)} was ${pickup ? 'collected by the customer' : 'delivered'}. ${money(order.vendor_payout_rwf)} was added to your wallet.`
       ),
-      toCustomer(order, 'Order delivered', `${ref(order)} was delivered. Enjoy your meal!`),
+      toCustomer(
+        order,
+        pickup ? 'Order collected' : 'Order delivered',
+        `${ref(order)} was ${pickup ? 'collected' : 'delivered'}. Enjoy your meal!`
+      ),
     ]);
   },
 
@@ -104,7 +110,7 @@ module.exports = {
 
   vendorAccount(vendorId, status, reason) {
     const messages = {
-      approved: ['Your kitchen is approved', 'Open your store and share your location to start receiving orders.'],
+      approved: ['Your kitchen is approved', 'Open your store to start receiving orders.'],
       rejected: ['Application not approved', `Your kitchen application was not approved${reason ? `: ${reason}` : '.'} Contact support for help.`],
       suspended: ['Your kitchen is suspended', `Your kitchen was suspended${reason ? `: ${reason}` : '.'} Open orders were cancelled and refunded.`],
       pending: ['Your kitchen is under review', 'Your account is being reviewed again by Online Food Kitchen.'],

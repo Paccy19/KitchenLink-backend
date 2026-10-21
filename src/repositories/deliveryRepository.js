@@ -1,7 +1,7 @@
 const { Delivery } = require('../models');
 
 const POPULATE = [
-  { path: 'vendor_id', select: 'name phone address neighborhood location' },
+  { path: 'vendor_id', select: 'name phone address neighborhood location estimated_prep_time' },
   { path: 'customer_id', select: 'name phone_number' },
   { path: 'driver_id', select: 'name phone vehicle_type plate_number rating' },
 ];
@@ -165,6 +165,21 @@ class DeliveryRepository {
         { 'dispatch.offer_expires_at': { $exists: false } },
       ],
     }).lean();
+  }
+
+  /** Assigned, not yet collected deliveries whose pickup clock is running. */
+  async findAwaitingPickup() {
+    return Delivery.find({
+      status: 'assigned_to_driver',
+      driver_id: { $ne: null },
+      pickup_due_at: { $ne: null },
+      'late_pickup.flagged_at': null,
+    }).lean();
+  }
+
+  /** Unassigned deliveries whose kitchen is still cooking or that are ready. */
+  async findOpenForDispatch(statuses) {
+    return Delivery.find({ status: { $in: statuses }, driver_id: null }).lean();
   }
 
   async countByDriver(driverId) {

@@ -2,6 +2,11 @@ const mongoose = require('mongoose');
 const timestamps = require('./timestamps');
 const config = require('../config');
 
+// A delivery address is only needed when the order is delivered.
+function requiredForDelivery() {
+  return this.fulfillment !== 'pickup';
+}
+
 const orderSchema = new mongoose.Schema(
   {
     order_number: { type: String, required: true, unique: true },
@@ -43,13 +48,28 @@ const orderSchema = new mongoose.Schema(
     delivery_distance_km: { type: Number, min: 0, default: null },
     delivery_distance_source: { type: String, enum: ['google', 'estimate', null], default: null },
     total_rwf: { type: Number, required: true },
+    // 'delivery': a delivery worker brings it. 'pickup': the customer collects
+    // it at the kitchen — no delivery fee, no delivery worker, and the vendor
+    // completes the order with the customer's pickup code.
+    fulfillment: {
+      type: String,
+      enum: config.orders.fulfillmentModes,
+      default: 'delivery',
+    },
+    // Pickup orders: the address is not needed (only `note` is kept).
     delivery_location: {
-      address: { type: String, required: true },
+      address: { type: String, required: requiredForDelivery },
       note: { type: String, default: '' },
       neighborhood: { type: String, default: '' },
-      latitude: { type: Number, required: true },
-      longitude: { type: Number, required: true },
+      latitude: { type: Number, required: requiredForDelivery },
+      longitude: { type: Number, required: requiredForDelivery },
     },
+    // Pickup orders: code sent to the customer when the food is ready; the
+    // vendor enters it to confirm the customer collected the order.
+    pickup_code: { type: String, default: '', select: false },
+    pickup_code_sent_at: { type: Date, default: null },
+    pickup_code_attempts: { type: Number, min: 0, default: 0 },
+    collected_at: { type: Date, default: null },
     payment_method: {
       type: String,
       enum: config.orders.paymentMethods.map((m) => m.code),
