@@ -28,6 +28,11 @@ const nearbyVendors = asyncHandler(async (req, res) => {
   );
 });
 
+const mapVendors = asyncHandler(async (req, res) => {
+  const coords = parseOptionalCoords(req.query);
+  res.json(await homeService.getMapVendors({ coords, categoryId: req.query.category_id }));
+});
+
 const allVendors = asyncHandler(async (req, res) => {
   const coords = parseOptionalCoords(req.query);
   const sort = req.query.sort === 'rating' ? 'rating' : 'distance';
@@ -46,4 +51,4 @@ const search = asyncHandler(async (req, res) => {
   res.json(await searchService.search({ q: req.query.q, coords }));
 });
 
-module.exports = { feed, categories, nearbyVendors, allVendors, search };
+module.exports = { feed, categories, nearbyVendors, mapVendors, allVendors, search };

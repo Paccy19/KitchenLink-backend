@@ -66,6 +66,45 @@ class VendorRepository {
   }
 
   /**
+   * Every open (live) kitchen for the customer map, at any distance. With
+   * coordinates each one gets distance_km and they come nearest first;
+   * otherwise best rated first. `limit` is a safety cap, not a page size.
+   */
+  async findOpenForMap({ coords, categoryVendorIds = null, limit }) {
+    const baseQuery = { is_active: true, deleted_at: null, ...liveVendorFilter() };
+    if (categoryVendorIds) baseQuery._id = { $in: categoryVendorIds };
+
+    const pipeline = coords
+      ? [
+          {
+            $geoNear: {
+              near: toPoint(coords),
+              distanceField: 'distance_m',
+              spherical: true,
+              key: 'location',
+              query: baseQuery,
+            },
+          },
+          { $set: { distance_km: { $divide: ['$distance_m', 1000] } } },
+          { $unset: 'distance_m' },
+          { $sort: { distance_km: 1 } },
+        ]
+      : [{ $match: baseQuery }, { $sort: { rating: -1, name: 1 } }];
+    pipeline.push({
+      $facet: {
+        items: [{ $limit: limit }],
+        total: [{ $count: 'value' }],
+      },
+    });
+
+    const [result] = await Vendor.aggregate(pipeline).allowDiskUse(true);
+    return {
+      vendors: result.items,
+      total: result.total[0]?.value ?? 0,
+    };
+  }
+
+  /**
    * Every active kitchen, open or closed, near or far. With coordinates the
    * kitchens within `nearRadiusKm` come first (open before closed), then the
    * rest; each group nearest first. `sort: 'rating'` orders by rating instead.

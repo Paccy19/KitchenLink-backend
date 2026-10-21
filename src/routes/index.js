@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const homeRoutes = require('./homeRoutes');
+const geoRoutes = require('./geoRoutes');
 const vendorRoutes = require('./vendorRoutes');
 const vendorAuthRoutes = require('./vendorAuthRoutes');
 const vendorDashboardRoutes = require('./vendorDashboardRoutes');
@@ -31,6 +32,7 @@ router.get('/health', (req, res) => {
 });
 
 router.use('/', homeRoutes);
+router.use('/geo', geoRoutes);
 router.use('/', vendorRoutes);
 router.use('/', authRoutes);
 router.use('/', wishlistRoutes);

@@ -10,7 +10,6 @@ const {
 const { serializeVendorAccount } = require('../utils/serializers');
 const { resolveImageUrl } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
-const { parseRequiredCoords } = require('../utils/geo');
 
 class VendorProfileService {
   async update(vendor, body = {}, files = {}) {
@@ -54,6 +53,31 @@ class VendorProfileService {
       );
     }
 
+    // Kitchen location (profile settings): the registered coordinates of the
+    // kitchen and the written address and neighbourhood customers see.
+    if (body.location !== undefined) {
+      const location = body.location && typeof body.location === 'object' ? body.location : null;
+      if (!location) {
+        throw ApiError.badRequest('location must be an object.', {
+          location: 'expected { latitude, longitude, address, neighborhood }',
+        });
+      }
+      if (location.latitude !== undefined || location.longitude !== undefined) {
+        const { lat, lng } = parseKitchenCoords(location.latitude, location.longitude);
+        payload.location = { type: 'Point', coordinates: [lng, lat] };
+        // When the coordinates were last edited; they are entered, not measured.
+        payload.location_updated_at = new Date();
+        payload.location_accuracy_m = null;
+      }
+      if (location.address !== undefined) {
+        payload.address = parseRequiredText(location.address, { field: 'address', min: 3, max: 200 });
+      }
+      if (location.neighborhood !== undefined) {
+        payload.neighborhood =
+          parseOptionalText(location.neighborhood, { field: 'neighborhood', max: 120 }) || '';
+      }
+    }
+
     const bannerImageUrl = resolveImageUrl({
       file: files?.banner_image?.[0],
       image_url: body.banner_image_url,
@@ -70,7 +94,7 @@ class VendorProfileService {
 
     if (Object.keys(payload).length === 0) {
       throw ApiError.badRequest('No supported profile fields were provided.', {
-        body: 'expected name, owner_name, description, phone, operating_hours, payment_information, banner_image or profile_image',
+        body: 'expected name, owner_name, description, phone, location, operating_hours, payment_information, banner_image or profile_image',
       });
     }
 
@@ -79,9 +103,9 @@ class VendorProfileService {
   }
 
   /**
-   * Opens or closes the store. Opening requires the vendor's live GPS position
-   * so customers see where the kitchen actually is right now; while open, the
-   * dashboard calls this again to refresh the position (e.g. food trucks).
+   * Opens or closes the store. An open store shows on the map and to nearby
+   * customers at its registered kitchen coordinates; the vendor's own position
+   * is never read, so they can run the business from anywhere.
    */
   async setAvailability(vendor, body = {}) {
     const isOpen = parseBooleanValue(body.is_open, { field: 'is_open' });
@@ -89,28 +113,41 @@ class VendorProfileService {
       throw ApiError.badRequest('is_open is required.', { is_open: 'expected true or false' });
     }
 
-    if (!isOpen) {
-      const updated = await vendorRepository.update(vendor._id, { is_open: false });
-      return { vendor: serializeVendorAccount(updated) };
+    if (isOpen) {
+      const [lng, lat] = vendor.location?.coordinates ?? [];
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        throw new ApiError(
+          400,
+          'LOCATION_REQUIRED',
+          "Add your kitchen's coordinates in Profile settings before opening your store.",
+          { location: 'required' }
+        );
+      }
     }
 
-    if (body.latitude === undefined || body.longitude === undefined) {
-      throw new ApiError(400, 'LOCATION_REQUIRED', 'Share your current location to open your store.', {
-        latitude: 'required',
-        longitude: 'required',
-      });
-    }
-    const { lat, lng } = parseRequiredCoords({ lat: body.latitude, lng: body.longitude });
-    const accuracy = Number(body.accuracy_m);
-
-    const updated = await vendorRepository.update(vendor._id, {
-      is_open: true,
-      location: { type: 'Point', coordinates: [lng, lat] },
-      location_updated_at: new Date(),
-      location_accuracy_m: Number.isFinite(accuracy) && accuracy >= 0 ? Math.round(accuracy) : null,
-    });
+    const updated = await vendorRepository.update(vendor._id, { is_open: isOpen });
     return { vendor: serializeVendorAccount(updated) };
   }
+}
+
+/** Kitchen latitude/longitude as entered by the vendor, validated together. */
+function parseKitchenCoords(latitude, longitude) {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  const blank = (value) => value === undefined || value === null || value === '';
+  if (blank(latitude) || blank(longitude) || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw ApiError.badRequest('Enter both the latitude and longitude of your kitchen.', {
+      latitude: 'expected a number between -90 and 90',
+      longitude: 'expected a number between -180 and 180',
+    });
+  }
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    throw ApiError.badRequest('Kitchen coordinates are out of range.', {
+      latitude: 'expected a number between -90 and 90',
+      longitude: 'expected a number between -180 and 180',
+    });
+  }
+  return { lat, lng };
 }
 
 module.exports = new VendorProfileService();

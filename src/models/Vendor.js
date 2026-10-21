@@ -60,8 +60,9 @@ const vendorSchema = new mongoose.Schema(
     rating: { type: Number, min: 0, max: 5, default: 0 },
     estimated_prep_time: { type: Number, min: 0, default: 30 },
     is_active: { type: Boolean, default: true },
-    // Store open/closed toggle shown in the Vendor Dashboard. Opening requires
-    // the vendor's live GPS position, stamped in `location_updated_at`.
+    // Store open/closed toggle shown in the Vendor Dashboard. Only open stores
+    // show on the map, at the registered `location` (entered by the vendor and
+    // editable in profile settings; `location_updated_at` = last edit).
     is_open: { type: Boolean, default: true },
     location_updated_at: { type: Date, default: null },
     location_accuracy_m: { type: Number, min: 0, default: null },

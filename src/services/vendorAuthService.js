@@ -91,7 +91,7 @@ class VendorAuthService {
       verification_documents: documents,
       verification_status: 'pending',
       is_active: false,
-      // Closed until the vendor opens the store and shares their live location.
+      // Closed (hidden from the map) until the vendor opens the store.
       is_open: false,
       delivery_available: true,
       available_balance: 0,

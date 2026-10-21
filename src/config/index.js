@@ -36,6 +36,8 @@ const config = {
     categories: 50,
     nearbyDefault: 20,
     nearbyMax: 50,
+    // Open kitchens drawn on the customer map in one response (safety cap).
+    mapVendorsMax: 1000,
     searchDefault: 10,
     searchMax: 25,
     searchCandidateCap: 200,
@@ -61,6 +63,21 @@ const config = {
     travelMode: process.env.GOOGLE_MAPS_TRAVEL_MODE || 'DRIVE',
     timeoutMs: numberFromEnv(process.env.GOOGLE_MAPS_TIMEOUT_MS, 4000),
     cacheTtlSeconds: numberFromEnv(process.env.GOOGLE_MAPS_CACHE_TTL_SECONDS, 600),
+    // Place search for vendors setting their kitchen location. Uses Google
+    // Places when the key above allows it, otherwise (or when Google fails)
+    // the free OpenStreetMap services: Photon for search-as-you-type and
+    // Nominatim for an area's outline once a place is picked.
+    photonUrl: process.env.PHOTON_URL || 'https://photon.komoot.io',
+    nominatimUrl: process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org',
+    // OpenStreetMap's usage policy asks for an identifying User-Agent.
+    geocoderUserAgent:
+      process.env.GEOCODER_USER_AGENT || 'OnlineFoodKitchen/1.0 (kitchen location search)',
+    // Results are limited to this country (ISO code) and biased to this point.
+    geocoderCountry: process.env.GEOCODER_COUNTRY || 'rw',
+    // The free public servers can be slow; stay under the website's 8 s limit.
+    geocoderTimeoutMs: numberFromEnv(process.env.GEOCODER_TIMEOUT_MS, 6500),
+    geocoderBounds: [28.86, -2.84, 30.9, -1.05], // Rwanda: west, south, east, north
+    geocoderBias: { lat: -1.9441, lng: 30.0619 }, // Kigali
   },
   // Where the website runs; used for links in emails (e.g. team invitations).
   frontendUrl: (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, ''),
@@ -190,10 +207,6 @@ const config = {
     commissionPercent: numberFromEnvOrZero(process.env.PLATFORM_COMMISSION_PERCENT, 15),
     // Rwanda (CAT / UTC+2, no DST) is used for "today" dashboard calculations.
     timezoneOffsetHours: Number(process.env.TZ_OFFSET_HOURS) || 2,
-    // A vendor must share their live location when opening the store. An open
-    // store whose location is older than this stops showing to customers
-    // until the vendor shares it again (0 disables the expiry).
-    locationMaxAgeHours: numberFromEnvOrZero(process.env.VENDOR_LOCATION_MAX_AGE_HOURS, 12),
     uploads: {
       dir: process.env.UPLOAD_DIR || 'uploads',
       publicPath: '/uploads',

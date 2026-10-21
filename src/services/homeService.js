@@ -122,6 +122,34 @@ class HomeService {
     };
   }
 
+  /**
+   * Customer map: every kitchen whose store is open, anywhere, so customers
+   * can explore by panning the map. Distances only when coordinates are given.
+   */
+  async getMapVendors({ coords, categoryId }) {
+    const meta = { category_id: categoryId || null, location_used: Boolean(coords) };
+
+    let categoryVendorIds = null;
+    if (categoryId) {
+      assertCategoryId(categoryId);
+      categoryVendorIds = await menuItemRepository.findVendorIdsByCategory(categoryId);
+      if (categoryVendorIds.length === 0) {
+        return { vendors: [], meta: { ...meta, total: 0, limit: config.limits.mapVendorsMax } };
+      }
+    }
+
+    const { vendors, total } = await vendorRepository.findOpenForMap({
+      coords,
+      categoryVendorIds,
+      limit: config.limits.mapVendorsMax,
+    });
+
+    return {
+      vendors: vendors.map((v) => serializeNearbyVendor(v, { distanceKm: v.distance_km })),
+      meta: { ...meta, total, limit: config.limits.mapVendorsMax },
+    };
+  }
+
   async getNearbyVendors({ coords, radiusKm, categoryId, sort, query }) {
     if (categoryId) {
       assertCategoryId(categoryId);
