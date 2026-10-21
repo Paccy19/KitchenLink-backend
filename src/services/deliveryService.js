@@ -820,11 +820,25 @@ class DeliveryService {
 
   async updateLocation(driver, body = {}) {
     const coords = parseCoords(body, { field: 'location', required: true });
-    const updated = await driverRepository.setLocation(driver._id, coords);
+    // Optional GPS extras; anything missing or out of range is dropped.
+    const num = (value, min, max) => {
+      const n = Number(value);
+      return value === null || value === undefined || value === '' || !Number.isFinite(n) || n < min || n > max ? null : n;
+    };
+    const heading = num(body.heading, 0, 360);
+    const speedMps = num(body.speed_mps, 0, 100);
+    const accuracyM = num(body.accuracy_m, 0, 100000);
+    const updated = await driverRepository.setLocation(driver._id, {
+      ...coords,
+      heading: heading == null ? null : Math.round(heading),
+      speedMps: speedMps == null ? null : Math.round(speedMps * 10) / 10,
+      accuracyM: accuracyM == null ? null : Math.round(accuracyM),
+    });
     return {
       current_location: {
         latitude: coords.lat,
         longitude: coords.lng,
+        heading,
         updated_at: updated?.location_updated_at || new Date(),
       },
     };

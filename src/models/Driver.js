@@ -44,6 +44,12 @@ const driverSchema = new mongoose.Schema(
       },
     },
     location_updated_at: { type: Date },
+    // From the phone's GPS while delivering: direction of travel (degrees
+    // from north), speed and accuracy, so customers see the rider move and
+    // turn on their tracking map.
+    location_heading: { type: Number, min: 0, max: 360, default: null },
+    location_speed_mps: { type: Number, min: 0, default: null },
+    location_accuracy_m: { type: Number, min: 0, default: null },
     is_online: { type: Boolean, default: false },
     is_available: { type: Boolean, default: true },
     status: { type: String, enum: DRIVER_STATUSES, default: 'offline' },

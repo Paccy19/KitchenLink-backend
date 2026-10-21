@@ -45,13 +45,16 @@ class DriverRepository {
     );
   }
 
-  async setLocation(driverId, { lat, lng }) {
+  async setLocation(driverId, { lat, lng, heading = null, speedMps = null, accuracyM = null }) {
     return Driver.findOneAndUpdate(
       { _id: driverId, deleted_at: null },
       {
         $set: {
           location: toPoint({ lat, lng }),
           location_updated_at: new Date(),
+          location_heading: heading,
+          location_speed_mps: speedMps,
+          location_accuracy_m: accuracyM,
         },
       },
       { new: true }

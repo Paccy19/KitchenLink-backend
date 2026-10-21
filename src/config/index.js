@@ -68,6 +68,10 @@ const config = {
     // the free OpenStreetMap services: Photon for search-as-you-type and
     // Nominatim for an area's outline once a place is picked.
     photonUrl: process.env.PHOTON_URL || 'https://photon.komoot.io',
+    // Road routes + turn-by-turn steps for live delivery tracking when no
+    // Google key is set. The public demo server is fine for light use; point
+    // this at your own OSRM server for production traffic.
+    osrmUrl: process.env.OSRM_URL || 'https://router.project-osrm.org',
     nominatimUrl: process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org',
     // OpenStreetMap's usage policy asks for an identifying User-Agent.
     geocoderUserAgent:

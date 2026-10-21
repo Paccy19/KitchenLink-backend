@@ -2,6 +2,8 @@ const { Router } = require('express');
 const requireDriverAuth = require('../middleware/requireDriverAuth');
 const driverController = require('../controllers/driverController');
 const upload = require('../middleware/upload');
+const asyncHandler = require('../utils/asyncHandler');
+const deliveryTrackingService = require('../services/deliveryTrackingService');
 
 const router = Router();
 
@@ -24,6 +26,13 @@ router.post('/deliveries/:delivery_id/accept', driverController.accept);
 router.post('/deliveries/:delivery_id/reject', driverController.reject);
 router.patch('/deliveries/:delivery_id/status', driverController.updateStatus);
 router.post('/deliveries/:delivery_id/confirm-delivery', driverController.confirmDelivery);
+// GPS navigation: route + turn-by-turn steps to the kitchen, then the customer.
+router.get(
+  '/deliveries/:delivery_id/navigation',
+  asyncHandler(async (req, res) => {
+    res.json(await deliveryTrackingService.driverNavigation(req.driver, req.params.delivery_id));
+  })
+);
 
 router.patch('/location', driverController.updateLocation);
 router.patch('/availability', driverController.setAvailability);
