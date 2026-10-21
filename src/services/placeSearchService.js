@@ -56,6 +56,27 @@ class PlaceSearchService {
     throw this.#badId();
   }
 
+  /**
+   * What is at a point (e.g. the vendor's detected location): the area and
+   * street to prefill. Either may be '' when the map has nothing nearby.
+   */
+  async reverse({ lat, lng }) {
+    const key = `rv|${lat.toFixed(5)},${lng.toFixed(5)}`;
+    return this.#cached(key, async () => {
+      const url = new URL('/reverse', config.maps.photonUrl);
+      url.searchParams.set('lat', String(lat));
+      url.searchParams.set('lon', String(lng));
+      url.searchParams.set('limit', '5');
+      const features = (await this.#getJson(url, 'Photon'))?.features ?? [];
+      const props = features.map((feature) => feature.properties ?? {});
+      const street =
+        props.map((p) => (p.osm_key === 'highway' && p.type === 'street' ? p.name : p.street)).find(Boolean) || '';
+      const area =
+        props.map((p) => p.locality || p.district || p.city).find(Boolean) || '';
+      return { area, street };
+    });
+  }
+
   /* ------------------------------ OpenStreetMap ------------------------------ */
 
   async #photonAutocomplete(text, bias) {

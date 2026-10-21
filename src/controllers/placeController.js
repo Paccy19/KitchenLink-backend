@@ -1,5 +1,5 @@
 const asyncHandler = require('../utils/asyncHandler');
-const { parseOptionalCoords } = require('../utils/geo');
+const { parseOptionalCoords, parseRequiredCoords } = require('../utils/geo');
 const placeSearchService = require('../services/placeSearchService');
 
 /** GET /geo/places/autocomplete?q&lat&lng — suggestions while typing an area or street. */
@@ -14,4 +14,9 @@ const details = asyncHandler(async (req, res) => {
   res.json({ place: await placeSearchService.details(req.query.id) });
 });
 
-module.exports = { autocomplete, details };
+/** GET /geo/places/reverse?lat&lng — the area and street at a point. */
+const reverse = asyncHandler(async (req, res) => {
+  res.json(await placeSearchService.reverse(parseRequiredCoords(req.query)));
+});
+
+module.exports = { autocomplete, details, reverse };

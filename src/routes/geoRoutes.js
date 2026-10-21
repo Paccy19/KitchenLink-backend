@@ -14,5 +14,6 @@ const placesLimit = rateLimit({
 
 router.get('/places/autocomplete', placesLimit, placeController.autocomplete);
 router.get('/places/details', placesLimit, placeController.details);
+router.get('/places/reverse', placesLimit, placeController.reverse);
 
 module.exports = router;
