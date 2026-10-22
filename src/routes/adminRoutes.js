@@ -21,6 +21,7 @@ const adminAnalyticsController = require('../controllers/adminAnalyticsControlle
 const adminNotificationController = require('../controllers/adminNotificationController');
 const adminActionLogService = require('../services/adminActionLogService');
 const adminOperationsService = require('../services/adminOperationsService');
+const deliverySettingsService = require('../services/deliverySettingsService');
 
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -96,6 +97,34 @@ router.get(
   '/operations/late-pickups',
   requirePermission('deliveries:read'),
   asyncHandler(async (req, res) => res.json(await adminOperationsService.latePickups(req.query)))
+);
+// Delivery timing rules: warning, late charge and automatic reassignment.
+router.get(
+  '/operations/delivery-timing',
+  requirePermission('deliveries:read'),
+  asyncHandler(async (req, res) => res.json({ timing: deliverySettingsService.current() }))
+);
+router.put(
+  '/operations/delivery-timing',
+  requirePermission('deliveries:write'),
+  asyncHandler(async (req, res) => {
+    const { previous, current } = await deliverySettingsService.update(req.admin, req.body);
+    await adminActionLogService.record(
+      req.admin,
+      {
+        action: 'settings.delivery_timing',
+        target_type: 'system',
+        target_id: 'delivery_timing',
+        target_label: 'Delivery timing rules',
+        metadata: {
+          before: { warning: previous.warning_minutes, charge: previous.charge_after_minutes, reassign: previous.reassign_after_minutes },
+          after: { warning: current.warning_minutes, charge: current.charge_after_minutes, reassign: current.reassign_after_minutes },
+        },
+      },
+      req
+    );
+    res.json({ timing: current });
+  })
 );
 // The dispatch, pickup, tracking and SMS rules currently in force.
 router.get(

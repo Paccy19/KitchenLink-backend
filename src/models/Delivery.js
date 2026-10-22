@@ -87,9 +87,14 @@ const deliverySchema = new mongoose.Schema(
     // are created and offered at placement ('pending' while the kitchen
     // cooks), so a driver can be assigned before this is set.
     ready_at: { type: Date, default: null },
-    // The assigned driver must collect the food by this time:
-    // max(ready_at, assigned_at) + pickup grace.
+    // Pickup clock for the assigned worker, fixed when it starts (food ready,
+    // or acceptance if later) from the admin's timing rules at that moment:
+    // a reminder at pickup_warn_at, a late charge after pickup_due_at, and
+    // the order is taken away and re-offered at pickup_reassign_at (if set).
+    pickup_started_at: { type: Date, default: null },
+    pickup_warn_at: { type: Date, default: null },
     pickup_due_at: { type: Date, default: null },
+    pickup_reassign_at: { type: Date, default: null },
     // Late pickup bookkeeping. Charges are decided later; `charge_status`
     // 'pending' marks a late pickup that still has to be charged.
     late_pickup: {

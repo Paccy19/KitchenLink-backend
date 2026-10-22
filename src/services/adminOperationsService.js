@@ -6,6 +6,7 @@ const { Driver, Delivery, Order } = require('../models');
 const deliveryRepository = require('../repositories/deliveryRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const deliveryTrackingService = require('./deliveryTrackingService');
+const deliverySettingsService = require('./deliverySettingsService');
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const STALE_LOCATION_MS = 2 * 60 * 1000;
@@ -407,6 +408,7 @@ class AdminOperationsService {
     const d = config.delivery;
     const maps = config.maps;
     const sms = config.notifications.sms;
+    const timing = deliverySettingsService.current();
     return {
       dispatch: {
         radius_km: d.defaultRadiusKm,
@@ -416,9 +418,12 @@ class AdminOperationsService {
         rebroadcast_every_seconds: d.dispatchTickSeconds,
         max_active_deliveries_per_driver: d.maxActiveDeliveries,
       },
+      // Set by admins in Settings (see deliverySettingsService).
       pickup_clock: {
-        grace_minutes: d.pickupGraceMinutes,
-        warning_after_minutes: d.pickupWarningMinutes,
+        warning_after_minutes: timing.warning_minutes,
+        grace_minutes: timing.charge_after_minutes,
+        reassign_after_minutes: timing.reassign_after_minutes,
+        updated_at: timing.updated_at,
         charge_amount: 'Not set yet — late pickups are recorded with a pending charge.',
       },
       customer_pickup: {

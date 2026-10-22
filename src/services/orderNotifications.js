@@ -60,6 +60,22 @@ module.exports = {
     );
   },
 
+  /** The assigned worker was too late, so the order is being offered to others. */
+  findingNewWorker(order) {
+    return Promise.all([
+      toVendor(
+        order,
+        'Finding a new delivery worker',
+        `The delivery worker for ${ref(order)} was too late to collect it. We're finding a new one — keep the order ready and hand it only to the new worker.`
+      ),
+      toCustomer(
+        order,
+        'Finding a new delivery worker',
+        `The delivery worker for ${ref(order)} was delayed, so we're finding you a new one. Sorry for the wait.`
+      ),
+    ]);
+  },
+
   /** Support put a (new) delivery worker on the order. */
   deliveryWorkerChanged(order, { workerName, replaced = false, late = false } = {}) {
     const who = workerName || 'A delivery worker';

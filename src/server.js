@@ -9,6 +9,7 @@ const platformLedgerService = require('./services/platformLedgerService');
 const platformSweepService = require('./services/platformSweepService');
 const vendorOfferService = require('./services/vendorOfferService');
 const deliveryService = require('./services/deliveryService');
+const deliverySettingsService = require('./services/deliverySettingsService');
 
 const DEFAULT_JWT_SECRET = 'dev-secret-change-me';
 
@@ -95,6 +96,8 @@ const start = async () => {
 
     platformSweepService.start();
     vendorOfferService.start();
+    // Admin-set delivery timing rules (warning, late charge, reassign).
+    await deliverySettingsService.load();
     // Re-offers open orders to drivers who came into range and runs the
     // late-pickup clock.
     deliveryService.start();

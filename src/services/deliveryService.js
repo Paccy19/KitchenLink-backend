@@ -23,6 +23,22 @@ const notificationService = require('./notificationService');
 const settlementService = require('./settlementService');
 const deliveryPricingService = require('./deliveryPricingService');
 const orderNotifications = require('./orderNotifications');
+const deliverySettingsService = require('./deliverySettingsService');
+
+// A delivery with no pickup clock running.
+const NO_CLOCK = { pickup_started_at: null, pickup_warn_at: null, pickup_due_at: null, pickup_reassign_at: null };
+
+/** A time of day in Kigali, e.g. "12:15". */
+const kigaliTime = (date) =>
+  new Date(date).toLocaleTimeString('en-GB', { timeZone: 'Africa/Kigali', hour: '2-digit', minute: '2-digit' });
+
+/** The admin's timing rules in words, for workers' messages. */
+const timingText = () => {
+  const rules = deliverySettingsService.current();
+  return `Collect it within ${rules.charge_after_minutes} minutes of the food being ready, or a late-pickup charge applies${
+    rules.reassign_after_minutes ? `; after ${rules.reassign_after_minutes} minutes it goes to another delivery worker` : ''
+  }.`;
+};
 
 const { delivery: deliveryConfig } = config;
 
@@ -187,8 +203,8 @@ class DeliveryService {
 
     if (existing.driver_id) {
       // A driver accepted while the food was cooking: their pickup clock starts.
-      const dueAt = this.#pickupDueAt(now, existing.assigned_at);
-      await deliveryRepository.update(existing._id, { ready_at: now, pickup_due_at: dueAt });
+      const clock = this.#pickupClock(now, existing.assigned_at);
+      await deliveryRepository.update(existing._id, { ready_at: now, ...clock });
       await deliveryRepository.pushHistory(existing._id, {
         status: existing.status,
         at: now,
@@ -200,10 +216,10 @@ class DeliveryService {
         .notifyDriver(existing.driver_id, {
           type: 'delivery_ready',
           title: 'Food is ready — collect it now',
-          body: `${existing.order_number} is ready at the kitchen. Collect it within ${deliveryConfig.pickupGraceMinutes} minutes to avoid a late-pickup charge.`,
+          body: `${existing.order_number} is ready at the kitchen. ${timingText()}`,
           orderId: existing.order_id,
           link: '/driver-dashboard/active',
-          data: { delivery_id: String(existing._id), order_number: existing.order_number, pickup_due_at: dueAt.toISOString() },
+          data: { delivery_id: String(existing._id), order_number: existing.order_number, pickup_due_at: clock.pickup_due_at?.toISOString() ?? null },
           sms: true,
         })
         .catch(() => null);
@@ -351,21 +367,27 @@ class DeliveryService {
   }
 
   /**
-   * Pickup clock for assigned deliveries whose food is ready: a warning when
-   * `pickupWarningMinutes` have passed, and once the grace period is over the
-   * pickup is flagged late with a pending charge (charges are applied later).
+   * Pickup clock for assigned deliveries whose food is ready, using the times
+   * fixed when each clock started (the admin's rules at that moment): a
+   * reminder, then a late pickup with a pending charge, then — if the admin
+   * set a reassign time — the order is taken away and offered to others.
    */
   async checkLatePickups(now = new Date()) {
-    const graceMs = deliveryConfig.pickupGraceMinutes * 60 * 1000;
-    const warnMs = deliveryConfig.pickupWarningMinutes * 60 * 1000;
+    const rules = deliverySettingsService.current();
     const waiting = await deliveryRepository.findAwaitingPickup();
     let warned = 0;
     let flagged = 0;
 
     for (const delivery of waiting) {
       const dueAt = new Date(delivery.pickup_due_at);
-      const startedAt = dueAt.getTime() - graceMs;
+      // Clocks started before the timing rules existed have no warn time.
+      const warnAt = delivery.pickup_warn_at
+        ? new Date(delivery.pickup_warn_at)
+        : new Date(dueAt.getTime() - (rules.charge_after_minutes - rules.warning_minutes) * 60000);
       const minutesLeft = Math.max(0, Math.ceil((dueAt.getTime() - now.getTime()) / 60000));
+      const graceMinutes = delivery.pickup_started_at
+        ? Math.round((dueAt - new Date(delivery.pickup_started_at)) / 60000)
+        : rules.charge_after_minutes;
 
       if (now >= dueAt) {
         await deliveryRepository.update(delivery._id, {
@@ -375,14 +397,17 @@ class DeliveryService {
         await deliveryRepository.pushHistory(delivery._id, {
           status: delivery.status,
           at: now,
-          note: `Not collected within ${deliveryConfig.pickupGraceMinutes} minutes of the food being ready — late pickup recorded`,
+          note: `Not collected by ${kigaliTime(dueAt)} (${graceMinutes} minutes) — late pickup recorded`,
           by: 'system',
         });
+        const reassignNote = delivery.pickup_reassign_at
+          ? ` If it isn't collected by ${kigaliTime(delivery.pickup_reassign_at)}, it will be given to another delivery worker.`
+          : '';
         notificationService
           .notifyDriver(delivery.driver_id, {
             type: 'delivery_late',
             title: 'Late pickup',
-            body: `${delivery.order_number} has been ready for over ${deliveryConfig.pickupGraceMinutes} minutes. A late-pickup charge will apply. Collect it now.`,
+            body: `${delivery.order_number} has been ready for over ${graceMinutes} minutes. A late-pickup charge will apply. Collect it now.${reassignNote}`,
             orderId: delivery.order_id,
             link: '/driver-dashboard/active',
             data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
@@ -394,14 +419,14 @@ class DeliveryService {
           .notifyAdmin({
             type: 'late_pickup',
             title: 'Late pickup',
-            body: `${delivery.order_number} has waited over ${deliveryConfig.pickupGraceMinutes} minutes at the kitchen and the delivery worker hasn't collected it. Call a nearby worker to take over.`,
+            body: `${delivery.order_number} has waited over ${graceMinutes} minutes at the kitchen and the delivery worker hasn't collected it. Call a nearby worker to take over${delivery.pickup_reassign_at ? ', or it will be re-offered automatically' : ''}.`,
             orderId: delivery.order_id,
             link: `/admin-dashboard/deliveries?tab=late`,
             data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
           })
           .catch(() => null);
         flagged += 1;
-      } else if (!delivery.late_pickup?.warned_at && now.getTime() - startedAt >= warnMs) {
+      } else if (!delivery.late_pickup?.warned_at && now >= warnAt) {
         await deliveryRepository.update(delivery._id, { 'late_pickup.warned_at': now });
         notificationService
           .notifyDriver(delivery.driver_id, {
@@ -417,7 +442,94 @@ class DeliveryService {
         warned += 1;
       }
     }
-    return { warned, flagged };
+
+    // Still not collected at the reassign time: give the order to someone else.
+    const overdue = await deliveryRepository.findDueForReassign(now);
+    let reassigned = 0;
+    for (const delivery of overdue) {
+      if (await this.#autoReassign(delivery, now)) reassigned += 1;
+    }
+    return { warned, flagged, reassigned };
+  }
+
+  /**
+   * Takes a late order away from its worker and offers it again to nearby
+   * workers (never back to the late one). Their late record and pending
+   * charge are kept; the kitchen, the customer and support are told.
+   */
+  async #autoReassign(delivery, now) {
+    const driverId = delivery.driver_id;
+    const released = await deliveryRepository.releaseIfStillAssigned(delivery._id, driverId, {
+      status: 'ready_for_pickup',
+      ...NO_CLOCK,
+    });
+    if (!released) return false; // collected or reassigned meanwhile
+
+    const minutes = delivery.pickup_started_at
+      ? Math.round((now - new Date(delivery.pickup_started_at)) / 60000)
+      : null;
+    await deliveryRepository.pushLateRecord(delivery._id, {
+      driver_id: driverId,
+      flagged_at: delivery.late_pickup?.flagged_at || now,
+      minutes_late: delivery.pickup_due_at ? Math.ceil((now - new Date(delivery.pickup_due_at)) / 60000) : null,
+      charge_status: 'pending',
+      reassigned_at: now,
+    });
+    await deliveryRepository.update(delivery._id, {
+      'late_pickup.warned_at': null,
+      'late_pickup.flagged_at': null,
+      'late_pickup.minutes_late': null,
+      'late_pickup.charge_status': 'none',
+      'late_pickup.charge_rwf': null,
+    });
+    await deliveryRepository.addRejection(delivery._id, driverId);
+    const driver = await driverRepository.findById(driverId);
+    await deliveryRepository.pushHistory(delivery._id, {
+      status: 'ready_for_pickup',
+      at: now,
+      note: `Not collected${minutes ? ` after ${minutes} minutes` : ''} — taken from ${driver?.name || 'the delivery worker'} and offered to other nearby delivery workers`,
+      by: 'system',
+    });
+    await this.#releaseDriver(driverId);
+
+    const order = await orderRepository.update(delivery.order_id, { driver_id: null, rider: null, status: 'ready' });
+    await orderRepository.pushHistory(delivery.order_id, {
+      status: 'ready',
+      at: now,
+      note: 'The delivery worker was too late — finding a new one',
+    });
+
+    notificationService
+      .notifyDriver(driverId, {
+        type: 'delivery_cancelled',
+        title: 'Order taken away — too late',
+        body: `${delivery.order_number} was given to another delivery worker because you didn't collect it${minutes ? ` within ${minutes} minutes` : ' in time'}. Don't go to the kitchen for it. A late-pickup charge applies.`,
+        orderId: delivery.order_id,
+        data: { delivery_id: String(delivery._id), order_number: delivery.order_number, reason: 'late_pickup' },
+        sms: true,
+      })
+      .catch(() => null);
+    if (order) orderNotifications.findingNewWorker(order);
+    notificationService
+      .notifyAdmin({
+        type: 'late_pickup',
+        title: 'Late order re-offered',
+        body: `${delivery.order_number} was taken from ${driver?.name || 'the delivery worker'} after ${minutes ?? 'too many'} minutes and offered to other nearby delivery workers.`,
+        orderId: delivery.order_id,
+        link: `/admin-dashboard/orders?order=${delivery.order_id}`,
+        data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
+      })
+      .catch(() => null);
+
+    // Everyone nearby (except the late worker) is offered it again.
+    await deliveryRepository.setOffers(delivery._id, {
+      offers: [],
+      broadcastCount: delivery.dispatch?.broadcast_count || 0,
+      lastBroadcastAt: delivery.dispatch?.last_broadcast_at,
+      offerExpiresAt: null,
+    });
+    await this.dispatch({ deliveryId: delivery._id });
+    return true;
   }
 
   /** Runs re-broadcasts and pickup checks on an interval (in-process). */
@@ -601,12 +713,15 @@ class DeliveryService {
       );
     }
 
-    // If the food is already waiting, the pickup clock starts now.
+    // Food already waiting: the delay counts from when it was ready — unless
+    // this worker is taking over from one who was too late (fresh time).
     const ready = isKitchenReady(delivery);
+    let clock = null;
     if (ready) {
-      await deliveryRepository.update(delivery._id, {
-        pickup_due_at: this.#pickupDueAt(delivery.ready_at ?? delivery.created_at, now),
+      clock = this.#pickupClock(delivery.ready_at ?? delivery.created_at, now, {
+        takeover: (delivery.late_history || []).length > 0,
       });
+      await deliveryRepository.update(delivery._id, clock);
     }
     await this.#closeOtherOffers(delivery, driver._id, now);
 
@@ -638,8 +753,10 @@ class DeliveryService {
       driver: serializeDriverAccount(fresh || driver),
       distance_to_pickup_km: distanceKm,
       message: ready
-        ? `The food is ready. Collect it within ${deliveryConfig.pickupGraceMinutes} minutes to avoid a late-pickup charge.`
-        : `Head to the kitchen${distanceKm != null ? ` (${distanceKm} km away)` : ''} and wait nearby. Once the food is ready you have ${deliveryConfig.pickupGraceMinutes} minutes to collect it.`,
+        ? `The food is ready. Collect it by ${kigaliTime(clock.pickup_due_at)} or a late-pickup charge applies${
+            clock.pickup_reassign_at ? `; at ${kigaliTime(clock.pickup_reassign_at)} it goes to another delivery worker` : ''
+          }.`
+        : `Head to the kitchen${distanceKm != null ? ` (${distanceKm} km away)` : ''} and wait nearby. Once the food is ready: ${timingText()}`,
     };
   }
 
@@ -685,7 +802,8 @@ class DeliveryService {
       driver_id: driver._id,
       status: 'assigned_to_driver',
       assigned_at: now,
-      pickup_due_at: ready ? this.#pickupDueAt(delivery.ready_at ?? delivery.created_at, now) : null,
+      // A worker support brings in gets their own time from now.
+      ...(ready ? this.#pickupClock(delivery.ready_at ?? delivery.created_at, now, { takeover: true }) : NO_CLOCK),
       // A fresh pickup clock for the new worker.
       'late_pickup.warned_at': null,
       'late_pickup.flagged_at': null,
@@ -739,7 +857,7 @@ class DeliveryService {
         type: 'delivery_update',
         title: 'Order assigned to you',
         body: ready
-          ? `Support assigned you ${delivery.order_number}. The food is ready — collect it within ${deliveryConfig.pickupGraceMinutes} minutes.`
+          ? `Support assigned you ${delivery.order_number}. The food is ready. ${timingText()}`
           : `Support assigned you ${delivery.order_number}. Head to the kitchen; you'll be told when the food is ready.`,
         orderId: delivery.order_id,
         link: '/driver-dashboard/active',
@@ -1019,7 +1137,7 @@ class DeliveryService {
         driver_id: null,
         status,
         assigned_at: null,
-        pickup_due_at: null,
+        ...NO_CLOCK,
         'late_pickup.warned_at': null,
       });
       await deliveryRepository.pushHistory(delivery._id, {
@@ -1087,10 +1205,25 @@ class DeliveryService {
     }
   }
 
-  /** Pickup deadline: grace minutes after the later of "ready" and "accepted". */
-  #pickupDueAt(readyAt, assignedAt) {
-    const start = Math.max(new Date(readyAt).getTime(), assignedAt ? new Date(assignedAt).getTime() : 0);
-    return new Date(start + deliveryConfig.pickupGraceMinutes * 60 * 1000);
+  /**
+   * The pickup clock, with the warning / charge / reassign times from the
+   * admin's current rules. The delay counts from when the food was ready,
+   * even if the worker accepted later. Exceptions, so nobody is punished for
+   * someone else's delay:
+   * - `takeover`: the worker replaces one who was too late (support assigned
+   *   them, or the order was re-offered) — their time starts now;
+   * - the ready-based "give to another worker" moment has already passed when
+   *   they accept — their time starts now too (else it would bounce at once).
+   */
+  #pickupClock(readyAt, assignedAt, { takeover = false } = {}) {
+    const ready = new Date(readyAt).getTime();
+    const taken = assignedAt ? new Date(assignedAt).getTime() : ready;
+    if (takeover) return deliverySettingsService.pickupClock(new Date(Math.max(ready, taken)));
+    const fromReady = deliverySettingsService.pickupClock(new Date(ready));
+    if (fromReady.pickup_reassign_at && fromReady.pickup_reassign_at.getTime() <= taken) {
+      return deliverySettingsService.pickupClock(new Date(taken));
+    }
+    return fromReady;
   }
 
   #locationCutoff() {

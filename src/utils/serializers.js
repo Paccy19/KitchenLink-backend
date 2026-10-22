@@ -1,6 +1,7 @@
 const config = require('../config');
 const { isVendorLive } = require('./vendorPresence');
 const { isKitchenReady } = require('./deliveryReady');
+const deliverySettings = require('../services/deliverySettingsService');
 const access = require('../config/adminAccess');
 
 const round1 = (value) =>
@@ -461,8 +462,23 @@ function serializeDelivery(delivery, options = {}) {
         : new Date(
             new Date(order.created_at).getTime() + (Number(vendorVendor?.estimated_prep_time) || 30) * 60000
           ),
+    // This worker's own pickup clock (fixed when it started)...
+    pickup_started_at: delivery.pickup_started_at ?? null,
+    pickup_warn_at: delivery.pickup_warn_at ?? null,
     pickup_due_at: delivery.pickup_due_at ?? null,
-    pickup_grace_minutes: config.delivery.pickupGraceMinutes,
+    pickup_reassign_at: delivery.pickup_reassign_at ?? null,
+    // ...and the admin's current rules, shown before accepting.
+    pickup_rules: (() => {
+      const rules = deliverySettings.current();
+      return {
+        warning_minutes: rules.warning_minutes,
+        charge_after_minutes: rules.charge_after_minutes,
+        reassign_after_minutes: rules.reassign_after_minutes,
+      };
+    })(),
+    pickup_grace_minutes: delivery.pickup_started_at && delivery.pickup_due_at
+      ? Math.round((new Date(delivery.pickup_due_at) - new Date(delivery.pickup_started_at)) / 60000)
+      : deliverySettings.current().charge_after_minutes,
     late_pickup: delivery.late_pickup?.flagged_at
       ? {
           flagged_at: delivery.late_pickup.flagged_at,

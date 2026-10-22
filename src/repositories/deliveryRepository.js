@@ -125,6 +125,28 @@ class DeliveryRepository {
     await Delivery.updateOne({ _id: deliveryId }, { $push: { status_history: entry } });
   }
 
+  /** Assigned, still not collected, and past the automatic reassign time. */
+  async findDueForReassign(now) {
+    return Delivery.find({
+      status: 'assigned_to_driver',
+      driver_id: { $ne: null },
+      picked_up_at: null,
+      pickup_reassign_at: { $ne: null, $lte: now },
+    }).lean();
+  }
+
+  /**
+   * Takes the delivery away from `driverId` only if they still have it and
+   * haven't collected it (atomic, so a pickup at the same moment wins).
+   */
+  async releaseIfStillAssigned(deliveryId, driverId, update) {
+    return Delivery.findOneAndUpdate(
+      { _id: deliveryId, driver_id: driverId, status: 'assigned_to_driver' },
+      { $set: { ...update, driver_id: null, assigned_at: null } },
+      { new: true }
+    ).lean();
+  }
+
   /** Keeps a late worker's record when the delivery moves to someone else. */
   async pushLateRecord(deliveryId, record) {
     await Delivery.updateOne({ _id: deliveryId }, { $push: { late_history: record } });

@@ -22,6 +22,7 @@ const PayoutDestination = require('./PayoutDestination');
 const PlatformWithdrawal = require('./PlatformWithdrawal');
 const ReconciliationCheck = require('./ReconciliationCheck');
 const OwnerPayoutSettings = require('./OwnerPayoutSettings');
+const DeliverySettings = require('./DeliverySettings');
 const Refund = require('./Refund');
 const VendorOffer = require('./VendorOffer');
 
@@ -51,5 +52,6 @@ module.exports = {
   PlatformWithdrawal,
   ReconciliationCheck,
   OwnerPayoutSettings,
+  DeliverySettings,
   Refund,
 };

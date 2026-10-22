@@ -324,6 +324,9 @@ const config = {
     // as late and a late-pickup charge is marked pending.
     pickupGraceMinutes: numberFromEnv(process.env.DELIVERY_PICKUP_GRACE_MINUTES, 15),
     pickupWarningMinutes: numberFromEnv(process.env.DELIVERY_PICKUP_WARNING_MINUTES, 10),
+    // Starting value for taking a late order away and offering it to other
+    // workers (0 = off). Admins change all three in Settings.
+    pickupReassignMinutes: numberFromEnvOrZero(process.env.DELIVERY_PICKUP_REASSIGN_MINUTES, 30),
     // How often open offers are re-broadcast and pickups checked for lateness.
     dispatchTickSeconds: numberFromEnv(process.env.DELIVERY_DISPATCH_TICK_SECONDS, 60),
     // Max concurrent deliveries a driver can hold.
