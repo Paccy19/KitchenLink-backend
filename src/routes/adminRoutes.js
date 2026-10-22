@@ -117,6 +117,12 @@ router.post(
   requirePermission('orders:write'),
   adminOrderController.cancel
 );
+// Delivery workers near the kitchen, for support to call before reassigning.
+router.get(
+  '/orders/:orderId/nearby-drivers',
+  requirePermission('orders:write'),
+  asyncHandler(async (req, res) => res.json(await adminOperationsService.nearbyDrivers(req.params.orderId, req.query)))
+);
 router.post(
   '/orders/:orderId/reassign-driver',
   requirePermission('orders:write'),

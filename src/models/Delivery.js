@@ -103,6 +103,24 @@ const deliverySchema = new mongoose.Schema(
       },
       charge_rwf: { type: Number, min: 0, default: null },
     },
+    // Late records of earlier workers on this delivery: when support takes a
+    // late order away and gives it to someone else, the late worker's record
+    // (and pending charge) moves here and `late_pickup` starts fresh for the
+    // new worker.
+    late_history: [
+      {
+        driver_id: { type: ObjectId, ref: 'Driver' },
+        flagged_at: { type: Date },
+        minutes_late: { type: Number, min: 0, default: null },
+        charge_status: {
+          type: String,
+          enum: ['pending', 'charged', 'waived'],
+          default: 'pending',
+        },
+        charge_rwf: { type: Number, min: 0, default: null },
+        reassigned_at: { type: Date },
+      },
+    ],
 
     assigned_at: { type: Date },
     picked_up_at: { type: Date },

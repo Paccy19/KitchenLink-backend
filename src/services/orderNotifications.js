@@ -60,6 +60,29 @@ module.exports = {
     );
   },
 
+  /** Support put a (new) delivery worker on the order. */
+  deliveryWorkerChanged(order, { workerName, replaced = false, late = false } = {}) {
+    const who = workerName || 'A delivery worker';
+    if (!replaced) {
+      return Promise.all([
+        toVendor(order, 'Delivery worker assigned', `${who} was assigned to ${ref(order)} by support and is coming to collect it.`),
+        toCustomer(order, 'Delivery worker assigned', `${who} will deliver ${ref(order)}.`),
+      ]);
+    }
+    return Promise.all([
+      toVendor(
+        order,
+        'New delivery worker for this order',
+        `${ref(order)} now has a new delivery worker, ${who}${late ? ', because the previous one was late to collect it' : ''}. Hand the order to ${who} only.`
+      ),
+      toCustomer(
+        order,
+        'New delivery worker',
+        `${who} is now delivering ${ref(order)}${late ? ' because the previous delivery worker was delayed. Sorry for the wait' : ''}.`
+      ),
+    ]);
+  },
+
   deliveryAccepted(order, workerName) {
     return toVendor(order, 'Delivery worker on the way', `${workerName || 'A delivery worker'} accepted ${ref(order)} and is coming to collect it.`);
   },

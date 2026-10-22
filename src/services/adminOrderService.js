@@ -130,9 +130,21 @@ class AdminOrderService {
     return this.updateStatus(orderId, { status: 'cancelled', note: reason }, admin, req);
   }
 
-  async reassignDriver(orderId, { driver_id, note }, admin, req) {
+  /**
+   * Support gives the order to a delivery worker they phoned and who agreed
+   * to take it (e.g. a nearby worker when the assigned one is late).
+   * `contacted: true` confirms that call; `reason: 'late_pickup'` tells the
+   * replaced worker, the kitchen and the customer why.
+   */
+  async reassignDriver(orderId, { driver_id, note, reason, contacted }, admin, req) {
     parseObjectId(orderId, 'order_id');
     parseObjectId(driver_id, 'driver_id');
+    const why = parseEnum(reason, ['late_pickup', 'other'], 'reason') || 'other';
+    if (contacted !== true) {
+      throw ApiError.badRequest('Call the delivery worker first and confirm they agreed to take this order.', {
+        contacted: 'confirm you called the delivery worker and they agreed',
+      });
+    }
 
     const order = await orderRepository.findById(orderId);
     if (!order) {
@@ -160,12 +172,16 @@ class AdminOrderService {
     }
 
     // Moves the delivery itself: status, both workers' load, pickup clock, notifications.
-    await deliveryService.adminReassign(order, driver);
+    await deliveryService.adminReassign(order, driver, { reason: why });
     const refreshed = await orderRepository.findById(orderId);
     await orderRepository.pushHistory(orderId, {
       status: refreshed?.status || order.status,
       at: new Date(),
-      note: note || `Delivery worker reassigned to ${driver.name} by admin`,
+      note:
+        note ||
+        (why === 'late_pickup'
+          ? `Reassigned to ${driver.name} by support (previous delivery worker was late)`
+          : `Delivery worker reassigned to ${driver.name} by admin`),
     });
 
     await adminActionLogService.record(
@@ -175,7 +191,13 @@ class AdminOrderService {
         target_type: 'order',
         target_id: orderId,
         target_label: order.order_number,
-        metadata: { driver_id: String(driver._id), driver_name: driver.name },
+        metadata: {
+          driver_id: String(driver._id),
+          driver_name: driver.name,
+          reason: why,
+          contacted_by_phone: true,
+          note: note || '',
+        },
       },
       req
     );

@@ -140,6 +140,7 @@ const NOTIFICATION_PERMISSION = {
   payout_update: 'payouts:read',
   refund_update: 'refunds:read',
   order_placed: 'orders:read',
+  late_pickup: 'deliveries:read',
   payment_failed: 'payments:read',
   owner_finance: 'team:manage',
 };

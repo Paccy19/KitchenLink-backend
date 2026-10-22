@@ -125,6 +125,11 @@ class DeliveryRepository {
     await Delivery.updateOne({ _id: deliveryId }, { $push: { status_history: entry } });
   }
 
+  /** Keeps a late worker's record when the delivery moves to someone else. */
+  async pushLateRecord(deliveryId, record) {
+    await Delivery.updateOne({ _id: deliveryId }, { $push: { late_history: record } });
+  }
+
   async addRejection(deliveryId, driverId) {
     return Delivery.updateOne(
       { _id: deliveryId },

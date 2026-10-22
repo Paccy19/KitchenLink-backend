@@ -35,7 +35,12 @@ const reassignDriver = asyncHandler(async (req, res) => {
   res.json(
     await adminOrderService.reassignDriver(
       req.params.orderId,
-      { driver_id: req.body?.driver_id, note: req.body?.note },
+      {
+        driver_id: req.body?.driver_id,
+        note: req.body?.note,
+        reason: req.body?.reason,
+        contacted: req.body?.contacted,
+      },
       req.admin,
       req
     )

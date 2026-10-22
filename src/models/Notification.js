@@ -57,6 +57,8 @@ const notificationSchema = new mongoose.Schema(
         'delivery_pickup_reminder',
         'delivery_late',
         'delivery_cancelled',
+        // Admin feed: a delivery worker is late to collect a ready order.
+        'late_pickup',
       ],
       default: 'general',
     },

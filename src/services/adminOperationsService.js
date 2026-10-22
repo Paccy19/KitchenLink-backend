@@ -121,57 +121,186 @@ class AdminOperationsService {
     };
   }
 
-  /** Late pickups (flagged after the grace period), newest first, with charge status. */
+  /**
+   * Late pickups, newest first: the current worker's late record on each
+   * delivery and the records of late workers who were replaced by support.
+   * Late events are rare, so they are gathered and paged in memory.
+   */
   async latePickups(query = {}) {
     const { limit, page, offset } = parseAdminListQuery(query, {
       defaultLimit: config.admin.limits.listDefault,
       maxLimit: config.admin.limits.listMax,
     });
-    const filter = { 'late_pickup.flagged_at': { $ne: null } };
-    if (['pending', 'charged', 'waived'].includes(query.charge_status)) {
-      filter['late_pickup.charge_status'] = query.charge_status;
-    }
-    const [rows, total, pendingCount] = await Promise.all([
-      Delivery.find(filter)
-        .sort({ 'late_pickup.flagged_at': -1 })
-        .skip(offset)
-        .limit(limit)
-        .populate({ path: 'driver_id', select: 'name phone' })
-        .populate({ path: 'vendor_id', select: 'name' })
-        .lean(),
-      Delivery.countDocuments(filter),
-      Delivery.countDocuments({ 'late_pickup.flagged_at': { $ne: null }, 'late_pickup.charge_status': 'pending' }),
-    ]);
-    return {
-      items: rows.map((delivery) => ({
+    const deliveries = await Delivery.find({
+      $or: [{ 'late_pickup.flagged_at': { $ne: null } }, { 'late_history.0': { $exists: true } }],
+    })
+      .sort({ updated_at: -1 })
+      .limit(1000)
+      .populate({ path: 'vendor_id', select: 'name' })
+      .lean();
+
+    const driverIds = new Set();
+    deliveries.forEach((delivery) => {
+      if (delivery.late_pickup?.flagged_at && delivery.driver_id) driverIds.add(String(delivery.driver_id));
+      (delivery.late_history || []).forEach((record) => record.driver_id && driverIds.add(String(record.driver_id)));
+    });
+    const drivers = driverIds.size ? await Driver.find({ _id: { $in: [...driverIds] } }).select('name phone').lean() : [];
+    const byId = new Map(drivers.map((driver) => [String(driver._id), driver]));
+    const driverOf = (id) => {
+      const driver = id && byId.get(String(id));
+      return driver ? { id: String(driver._id), name: driver.name, phone: driver.phone || null } : null;
+    };
+
+    const rows = [];
+    deliveries.forEach((delivery) => {
+      const base = {
         id: String(delivery._id),
         order_id: String(delivery.order_id),
         order_number: delivery.order_number,
         status: delivery.status,
         status_label: config.delivery.statusLabels[delivery.status] || delivery.status,
         vendor: delivery.vendor_id ? { name: delivery.vendor_id.name } : null,
-        driver: delivery.driver_id?.name
-          ? { id: String(delivery.driver_id._id), name: delivery.driver_id.name, phone: delivery.driver_id.phone || null }
-          : null,
         ready_at: delivery.ready_at ?? null,
-        assigned_at: delivery.assigned_at ?? null,
-        pickup_due_at: delivery.pickup_due_at ?? null,
-        picked_up_at: delivery.picked_up_at ?? null,
-        flagged_at: delivery.late_pickup.flagged_at,
-        // Still waiting: how late so far; collected: as recorded at pickup.
-        minutes_late:
-          delivery.late_pickup.minutes_late ??
-          (delivery.pickup_due_at
-            ? Math.max(0, Math.ceil((Date.now() - new Date(delivery.pickup_due_at).getTime()) / 60000))
-            : null),
-        still_waiting: !delivery.picked_up_at && delivery.status === 'assigned_to_driver',
-        charge_status: delivery.late_pickup.charge_status || 'pending',
-        charge_rwf: delivery.late_pickup.charge_rwf ?? null,
-      })),
-      total,
+      };
+      (delivery.late_history || []).forEach((record, index) =>
+        rows.push({
+          ...base,
+          key: `${delivery._id}-h${index}`,
+          driver: driverOf(record.driver_id),
+          flagged_at: record.flagged_at ?? null,
+          minutes_late: record.minutes_late ?? null,
+          // Taken away and given to another worker by support.
+          reassigned_at: record.reassigned_at ?? null,
+          still_waiting: false,
+          can_reassign: false,
+          picked_up_at: null,
+          pickup_due_at: null,
+          charge_status: record.charge_status || 'pending',
+          charge_rwf: record.charge_rwf ?? null,
+        })
+      );
+      if (delivery.late_pickup?.flagged_at) {
+        const stillWaiting = !delivery.picked_up_at && delivery.status === 'assigned_to_driver';
+        rows.push({
+          ...base,
+          key: `${delivery._id}-c`,
+          driver: driverOf(delivery.driver_id),
+          flagged_at: delivery.late_pickup.flagged_at,
+          // Still waiting: how late so far; collected: as recorded at pickup.
+          minutes_late:
+            delivery.late_pickup.minutes_late ??
+            (delivery.pickup_due_at
+              ? Math.max(0, Math.ceil((Date.now() - new Date(delivery.pickup_due_at).getTime()) / 60000))
+              : null),
+          reassigned_at: null,
+          still_waiting: stillWaiting,
+          // Support can hand a still-waiting order to a nearby worker.
+          can_reassign: stillWaiting,
+          picked_up_at: delivery.picked_up_at ?? null,
+          pickup_due_at: delivery.pickup_due_at ?? null,
+          charge_status: delivery.late_pickup.charge_status || 'pending',
+          charge_rwf: delivery.late_pickup.charge_rwf ?? null,
+        });
+      }
+    });
+
+    rows.sort((a, b) => new Date(b.flagged_at || 0) - new Date(a.flagged_at || 0));
+    const pendingCharges = rows.filter((row) => row.charge_status === 'pending').length;
+    const waiting = rows.filter((row) => row.still_waiting).length;
+    const filtered = ['pending', 'charged', 'waived'].includes(query.charge_status)
+      ? rows.filter((row) => row.charge_status === query.charge_status)
+      : rows;
+    return {
+      items: filtered.slice(offset, offset + limit),
+      total: filtered.length,
       page,
       limit,
-      pending_charges: pendingCount,
+      pending_charges: pendingCharges,
+      still_waiting: waiting,
+    };
+  }
+
+  /**
+   * Delivery workers near an order's kitchen, nearest first, for support to
+   * phone and hand the order to (e.g. when the assigned worker is late).
+   * Online workers by default; `include_offline=true` adds offline ones.
+   */
+  async nearbyDrivers(orderId, query = {}) {
+    parseObjectId(orderId, 'order_id');
+    const order = await Order.findById(orderId).lean();
+    if (!order) throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
+    if (order.fulfillment === 'pickup') {
+      throw ApiError.conflict('The customer collects this order at the kitchen.', 'NOT_A_DELIVERY_ORDER');
+    }
+    const delivery = await deliveryRepository.findByOrderId(order._id);
+    const vendor = await vendorRepository.findById(order.vendor_id);
+    const [vLng, vLat] = vendor?.location?.coordinates ?? [];
+    const kitchen = {
+      name: vendor?.name || null,
+      latitude: delivery?.pickup_location?.latitude ?? vLat,
+      longitude: delivery?.pickup_location?.longitude ?? vLng,
+    };
+    if (!Number.isFinite(kitchen.latitude) || !Number.isFinite(kitchen.longitude)) {
+      throw ApiError.conflict('The kitchen location is unknown.', 'KITCHEN_LOCATION_MISSING');
+    }
+
+    const includeOffline = query.include_offline === 'true';
+    const match = { deleted_at: null, is_active: { $ne: false }, verification_status: 'approved' };
+    if (!includeOffline) match.is_online = true;
+    if (delivery?.driver_id) match._id = { $ne: delivery.driver_id };
+
+    const rows = await Driver.aggregate([
+      {
+        $geoNear: {
+          near: { type: 'Point', coordinates: [kitchen.longitude, kitchen.latitude] },
+          distanceField: 'distance_m',
+          spherical: true,
+          key: 'location',
+          query: match,
+        },
+      },
+      { $limit: 40 },
+    ]);
+
+    const maxAgeMs = config.delivery.locationMaxAgeMinutes * 60000;
+    const current = delivery?.driver_id ? await Driver.findById(delivery.driver_id).select('name phone').lean() : null;
+    const drivers = rows.map((driver) => {
+      const updatedAt = driver.location_updated_at ? new Date(driver.location_updated_at) : null;
+      const max = driver.max_active_deliveries || config.delivery.maxActiveDeliveries;
+      return {
+        id: String(driver._id),
+        name: driver.name,
+        phone: driver.phone || null,
+        vehicle_type: driver.vehicle_type || null,
+        plate_number: driver.plate_number || null,
+        rating: driver.rating ?? null,
+        is_online: Boolean(driver.is_online),
+        active_deliveries: driver.active_deliveries_count || 0,
+        has_capacity: (driver.active_deliveries_count || 0) < max,
+        // Never-shared positions sit at a default point, so their distance means nothing.
+        location_known: Boolean(updatedAt),
+        location_updated_at: updatedAt,
+        location_fresh: Boolean(updatedAt) && Date.now() - updatedAt.getTime() <= maxAgeMs,
+        distance_km: updatedAt ? Math.round((driver.distance_m / 1000) * 10) / 10 : null,
+        within_radius: Boolean(updatedAt) && driver.distance_m / 1000 <= config.delivery.defaultRadiusKm,
+      };
+    });
+    // Known positions first (nearest first), then workers who never shared one.
+    drivers.sort((a, b) => Number(b.location_known) - Number(a.location_known));
+
+    return {
+      order_id: String(order._id),
+      order_number: order.order_number,
+      kitchen,
+      kitchen_ready: isKitchenReady(delivery),
+      pickup_due_at: delivery?.pickup_due_at ?? null,
+      late: Boolean(
+        delivery?.late_pickup?.flagged_at || (delivery?.pickup_due_at && new Date(delivery.pickup_due_at) < new Date())
+      ),
+      collected: Boolean(delivery && ['picked_up', 'out_for_delivery', 'delivered', 'completed'].includes(delivery.status)),
+      current_driver: current ? { id: String(current._id), name: current.name, phone: current.phone || null } : null,
+      radius_km: config.delivery.defaultRadiusKm,
+      drivers,
     };
   }
 
@@ -179,8 +308,13 @@ class AdminOperationsService {
   async dispatchSummary(delivery) {
     if (!delivery) return null;
     const offers = delivery.dispatch?.offers || [];
+    const history = delivery.late_history || [];
     const ids = [
-      ...new Set([...offers.map((offer) => String(offer.driver_id)), ...(delivery.rejected_by || []).map(String)]),
+      ...new Set([
+        ...offers.map((offer) => String(offer.driver_id)),
+        ...(delivery.rejected_by || []).map(String),
+        ...history.map((record) => String(record.driver_id)),
+      ]),
     ];
     const drivers = ids.length ? await Driver.find({ _id: { $in: ids } }).select('name phone').lean() : [];
     const names = new Map(drivers.map((driver) => [String(driver._id), driver]));
@@ -196,6 +330,13 @@ class AdminOperationsService {
         response: offer.response,
       })),
       declined_by: (delivery.rejected_by || []).map((id) => names.get(String(id))?.name || 'Delivery worker'),
+      // Workers replaced by support because they were late to collect.
+      replaced_late: history.map((record) => ({
+        driver_name: names.get(String(record.driver_id))?.name || 'Delivery worker',
+        minutes_late: record.minutes_late ?? null,
+        reassigned_at: record.reassigned_at ?? null,
+        charge_status: record.charge_status || 'pending',
+      })),
     };
   }
 
@@ -212,7 +353,7 @@ class AdminOperationsService {
     const now = Date.now();
     const [awaitingDriver, latePending, waitingPickups, lockedPickups, openKitchens, onlineFresh] = await Promise.all([
       Delivery.countDocuments({ status: { $in: config.delivery.dispatchableStatuses }, driver_id: null }),
-      Delivery.countDocuments({ 'late_pickup.flagged_at': { $ne: null }, 'late_pickup.charge_status': 'pending' }),
+      this.#pendingLateCharges(),
       Order.countDocuments({ fulfillment: 'pickup', status: 'ready' }),
       Order.countDocuments({
         fulfillment: 'pickup',
@@ -230,8 +371,14 @@ class AdminOperationsService {
       fulfillment: 'pickup',
       created_at: { $gte: new Date(now - 24 * ONE_HOUR_MS) },
     });
+    const lateWaiting = await Delivery.countDocuments({
+      'late_pickup.flagged_at': { $ne: null },
+      status: 'assigned_to_driver',
+    });
     return {
       orders_awaiting_driver: awaitingDriver,
+      // Late and still not collected: support should hand these to someone nearby.
+      late_pickups_waiting: lateWaiting,
       late_pickups_pending_charge: latePending,
       pickups_awaiting_collection: waitingPickups,
       pickups_locked: lockedPickups,
@@ -239,6 +386,20 @@ class AdminOperationsService {
       kitchens_open: openKitchens,
       drivers_matchable: onlineFresh,
     };
+  }
+
+  /** Late-pickup charges still pending, for current and replaced workers. */
+  async #pendingLateCharges() {
+    const [current, replaced] = await Promise.all([
+      Delivery.countDocuments({ 'late_pickup.flagged_at': { $ne: null }, 'late_pickup.charge_status': 'pending' }),
+      Delivery.aggregate([
+        { $match: { 'late_history.charge_status': 'pending' } },
+        { $unwind: '$late_history' },
+        { $match: { 'late_history.charge_status': 'pending' } },
+        { $count: 'n' },
+      ]),
+    ]);
+    return current + (replaced[0]?.n || 0);
   }
 
   /** The delivery, pickup, tracking and messaging rules currently in force. */

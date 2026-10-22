@@ -389,6 +389,17 @@ class DeliveryService {
             sms: true,
           })
           .catch(() => null);
+        // Support can call a nearby worker and reassign the order.
+        notificationService
+          .notifyAdmin({
+            type: 'late_pickup',
+            title: 'Late pickup',
+            body: `${delivery.order_number} has waited over ${deliveryConfig.pickupGraceMinutes} minutes at the kitchen and the delivery worker hasn't collected it. Call a nearby worker to take over.`,
+            orderId: delivery.order_id,
+            link: `/admin-dashboard/deliveries?tab=late`,
+            data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
+          })
+          .catch(() => null);
         flagged += 1;
       } else if (!delivery.late_pickup?.warned_at && now.getTime() - startedAt >= warnMs) {
         await deliveryRepository.update(delivery._id, { 'late_pickup.warned_at': now });
@@ -633,11 +644,16 @@ class DeliveryService {
   }
 
   /**
-   * Support (admin) hands an order to a chosen delivery worker. Works before
-   * anyone accepted and to replace an assigned worker who hasn't collected
-   * the food yet; the previous worker is released and both are told.
+   * Support (admin) hands an order to a chosen delivery worker — after
+   * calling them and getting their agreement. Works before anyone accepted
+   * and to replace an assigned worker who hasn't collected the food yet
+   * (e.g. they were late). The previous worker is released and told why,
+   * their late record (if any) is kept with its pending charge, and the
+   * vendor and customer are told who is coming instead.
+   *
+   * `reason`: 'late_pickup' when the previous worker was too slow to collect.
    */
-  async adminReassign(order, driver) {
+  async adminReassign(order, driver, { reason = null } = {}) {
     let delivery = await deliveryRepository.findByOrderId(order._id);
     if (!delivery) {
       delivery = await this.ensureDeliveryForOrder(order, {
@@ -660,17 +676,40 @@ class DeliveryService {
 
     const now = new Date();
     const ready = isKitchenReady(delivery);
-    await deliveryRepository.update(delivery._id, {
+    // The previous worker was late if their pickup was flagged, or is overdue now.
+    const overdue = delivery.pickup_due_at && now > new Date(delivery.pickup_due_at);
+    const wasLate = Boolean(previous && (delivery.late_pickup?.flagged_at || overdue));
+    const lateReason = reason === 'late_pickup' || wasLate;
+
+    const update = {
       driver_id: driver._id,
       status: 'assigned_to_driver',
       assigned_at: now,
       pickup_due_at: ready ? this.#pickupDueAt(delivery.ready_at ?? delivery.created_at, now) : null,
+      // A fresh pickup clock for the new worker.
       'late_pickup.warned_at': null,
-    });
+      'late_pickup.flagged_at': null,
+      'late_pickup.minutes_late': null,
+      'late_pickup.charge_status': 'none',
+      'late_pickup.charge_rwf': null,
+    };
+    await deliveryRepository.update(delivery._id, update);
+    if (wasLate) {
+      // The late worker keeps their record (and pending charge).
+      await deliveryRepository.pushLateRecord(delivery._id, {
+        driver_id: previous,
+        flagged_at: delivery.late_pickup?.flagged_at || now,
+        minutes_late: overdue ? Math.ceil((now - new Date(delivery.pickup_due_at)) / 60000) : delivery.late_pickup?.minutes_late ?? null,
+        charge_status: 'pending',
+        reassigned_at: now,
+      });
+    }
     await deliveryRepository.pushHistory(delivery._id, {
       status: 'assigned_to_driver',
       at: now,
-      note: `Assigned to ${driver.name} by support`,
+      note: lateReason
+        ? `Reassigned to ${driver.name} by support because the previous delivery worker was late to collect`
+        : `Assigned to ${driver.name} by support`,
       by: 'admin',
     });
     await this.#closeOtherOffers(delivery, driver._id, now);
@@ -680,10 +719,12 @@ class DeliveryService {
       notificationService
         .notifyDriver(previous, {
           type: 'delivery_cancelled',
-          title: 'Order reassigned',
-          body: `Support reassigned ${delivery.order_number} to another delivery worker. You don't need to collect it.`,
+          title: lateReason ? 'Order reassigned — you were late' : 'Order reassigned',
+          body: lateReason
+            ? `${delivery.order_number} was assigned to another delivery worker because you didn't collect it on time. Don't go to the kitchen for it. A late-pickup charge applies.`
+            : `Support reassigned ${delivery.order_number} to another delivery worker. You don't need to collect it.`,
           orderId: delivery.order_id,
-          data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
+          data: { delivery_id: String(delivery._id), order_number: delivery.order_number, reason: lateReason ? 'late_pickup' : 'support' },
           sms: true,
         })
         .catch(() => null);
@@ -707,12 +748,20 @@ class DeliveryService {
       })
       .catch(() => null);
 
-    await orderRepository.update(order._id, {
+    const updatedOrder = await orderRepository.update(order._id, {
       driver_id: driver._id,
       delivery_id: delivery._id,
       rider: { name: driver.name, phone: driver.phone },
       ...(ready ? { status: 'assigned' } : {}),
     });
+    // Kitchen and customer: who is coming now (and why, if it's a replacement).
+    if (updatedOrder) {
+      orderNotifications.deliveryWorkerChanged(updatedOrder, {
+        workerName: driver.name,
+        replaced: Boolean(previous),
+        late: lateReason,
+      });
+    }
     return deliveryRepository.findById(delivery._id);
   }
 
