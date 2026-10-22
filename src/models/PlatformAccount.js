@@ -26,6 +26,8 @@ const platformAccountSchema = new mongoose.Schema(
     commission_balance_rwf: { type: Number, default: 0 },
     unreconciled_rwf: { type: Number, default: 0 },
     total_adjustments_rwf: { type: Number, default: 0 },
+    // Late-pickup penalties kept from riders' delivery fees (platform money).
+    total_driver_penalties_rwf: { type: Number, default: 0 },
     total_owner_withdrawn_rwf: { type: Number, default: 0 },
     owner_processing_rwf: { type: Number, default: 0 },
     // Last weekly sweep reminder (ISO week like "2026-W41").

@@ -152,6 +152,25 @@ class DeliveryRepository {
     await Delivery.updateOne({ _id: deliveryId }, { $push: { late_history: record } });
   }
 
+  /**
+   * Late workers who lost the order have no delivery fee of their own here,
+   * so there is nothing to take a penalty from: their pending charges are
+   * waived when the order is delivered by someone else.
+   */
+  async waivePendingLateCharges(deliveryId, note = '') {
+    return Delivery.updateOne(
+      { _id: deliveryId },
+      {
+        $set: {
+          'late_history.$[record].charge_status': 'waived',
+          'late_history.$[record].charge_rwf': null,
+          'late_history.$[record].note': note,
+        },
+      },
+      { arrayFilters: [{ 'record.charge_status': 'pending' }] }
+    );
+  }
+
   async addRejection(deliveryId, driverId) {
     return Delivery.updateOne(
       { _id: deliveryId },
@@ -230,7 +249,9 @@ class DeliveryRepository {
           $group: {
             _id: null,
             count: { $sum: 1 },
-            earnings: { $sum: '$promised_earnings_rwf' },
+            // What the driver was actually paid (the promised fee minus a
+            // late-pickup penalty); older deliveries have no `paid_earnings`.
+            earnings: { $sum: { $ifNull: ['$paid_earnings_rwf', '$promised_earnings_rwf'] } },
           },
         },
       ]),
@@ -245,7 +266,7 @@ class DeliveryRepository {
           $group: {
             _id: null,
             count: { $sum: 1 },
-            earnings: { $sum: '$promised_earnings_rwf' },
+            earnings: { $sum: { $ifNull: ['$paid_earnings_rwf', '$promised_earnings_rwf'] } },
           },
         },
       ]),
@@ -299,7 +320,23 @@ class DeliveryRepository {
     return Delivery.findOneAndUpdate(
       { _id: deliveryId },
       {
-        $set: { status, driver_id: null, assigned_at: null },
+        $set: {
+          status,
+          driver_id: null,
+          assigned_at: null,
+          // The next worker starts their own pickup clock.
+          pickup_started_at: null,
+          pickup_warn_at: null,
+          pickup_due_at: null,
+          pickup_reassign_at: null,
+          // A late record belongs to the worker who was late.
+          'late_pickup.warned_at': null,
+          'late_pickup.flagged_at': null,
+          'late_pickup.minutes_late': null,
+          'late_pickup.charge_status': 'none',
+          'late_pickup.charge_rwf': null,
+          'late_pickup.penalty_percent': null,
+        },
         $push: {
           status_history: { status, at: new Date(), note: note || 'Reassigned by admin', by: 'admin' },
         },

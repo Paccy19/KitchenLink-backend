@@ -15,7 +15,11 @@ const roundRwf = (value) => Math.max(0, Math.round(Number(value) || 0));
  *                        commission (on the food subtotal only) and now OWES
  *                        the vendor `subtotal - commission` (`releaseOrder`).
  *  3. Rider delivers  -> the delivery fee is allocated: the platform now OWES
- *                        the rider the full fee (`recordDriverPayout`).
+ *                        the rider their share of the fee
+ *                        (`recordDriverPayout`). A worker who collected the
+ *                        food late keeps a smaller share: the penalty comes
+ *                        out of that order's fee and is the platform's
+ *                        (`recordDriverPenalty`) — never the rider's wallet.
  *  4. Withdrawal paid -> owed money actually leaves (adminPayoutService).
  *  Cancelled before completion -> the held amount is refunded (`refundOrder`).
  *
@@ -168,10 +172,12 @@ class SettlementService {
   }
 
   /**
-   * Rider delivered: the platform now owes them the full delivery fee (their
-   * balance is credited by the caller). Records the allocation once per order.
+   * Rider delivered: the platform now owes them their share of the delivery
+   * fee (their balance is credited by the caller). Records the allocation once
+   * per order. `penaltyRwf` is what was kept out of the fee as a late-pickup
+   * penalty, so the ledger shows both parts.
    */
-  async recordDriverPayout(order, { driverId, amountRwf }) {
+  async recordDriverPayout(order, { driverId, amountRwf, penaltyRwf = 0, penaltyPercent = null }) {
     if (!order || !driverId) return null;
     const amount = roundRwf(amountRwf);
     if (amount <= 0) return null;
@@ -188,7 +194,34 @@ class SettlementService {
       driver_id: driverId,
       reference: order.order_number || '',
       description: `Owed to delivery worker for delivering ${order.order_number}`,
-      metadata: { delivery_fee_rwf: amount },
+      metadata: {
+        delivery_fee_rwf: roundRwf(amount + penaltyRwf),
+        penalty_rwf: roundRwf(penaltyRwf),
+        penalty_percent: penaltyPercent,
+      },
+    });
+  }
+
+  /**
+   * The late-pickup penalty kept by the platform: the share of the delivery
+   * fee of a late order that the worker is not paid. It is the platform's own
+   * money (like the commission), never taken from the worker's wallet.
+   */
+  async recordDriverPenalty(order, { driverId, amountRwf, percent = null }) {
+    if (!order || !driverId) return null;
+    const amount = roundRwf(amountRwf);
+    if (amount <= 0) return null;
+
+    return transactionRepository.create({
+      type: 'driver_penalty',
+      direction: 'internal',
+      status: 'settled',
+      amount_rwf: amount,
+      order_id: order._id,
+      driver_id: driverId,
+      reference: order.order_number || '',
+      description: `Late-pickup penalty (${percent ?? 0}%) kept from the delivery fee of ${order.order_number}`,
+      metadata: { penalty_percent: percent },
     });
   }
 

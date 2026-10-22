@@ -20,8 +20,8 @@ const refundRepository = require('../repositories/refundRepository');
  *   held      paid orders not yet completed + delivery fees awaiting a rider
  *   vendors   what vendors are owed (balances + payouts being processed)
  *   riders    what riders are owed  (balances + payouts being processed)
- *   commission the owner's money: commission earned + adjustments - what the
- *              owner already withdrew
+ *   commission the owner's money: commission earned + adjustments + late-pickup
+ *              penalties - what the owner already withdrew
  *   refunds   cancelled paid orders whose money is not yet sent back
  *              (a `refund` entry is written only when it is sent)
  *
@@ -37,6 +37,7 @@ class PlatformLedgerService {
       commission,
       vendorEarnings,
       driverEarnings,
+      driverPenalties,
       vendorPaidOut,
       driverPaidOut,
       held,
@@ -54,6 +55,7 @@ class PlatformLedgerService {
       transactionRepository.sum({ type: 'commission' }),
       transactionRepository.sum({ type: 'vendor_earning' }),
       transactionRepository.sum({ type: 'driver_earning' }),
+      transactionRepository.sum({ type: 'driver_penalty' }),
       transactionRepository.sum({ type: 'withdrawal', vendor_id: { $ne: null } }),
       transactionRepository.sum({ type: 'withdrawal', driver_id: { $ne: null } }),
       orderRepository.heldTotal(),
@@ -70,7 +72,7 @@ class PlatformLedgerService {
     const cash = collected - refunded - vendorPaidOut - driverPaidOut - ownerPaidOut;
     const vendorPayable = vendorBalances + vendorProcessing;
     const driverPayable = driverBalances + driverProcessing;
-    const ownerBalance = commission + adjustments - ownerPaidOut;
+    const ownerBalance = commission + adjustments + driverPenalties - ownerPaidOut;
     const accountedFor = held + vendorPayable + driverPayable + ownerBalance + refundsOwed;
 
     return platformAccountRepository.saveSnapshot({
@@ -82,6 +84,7 @@ class PlatformLedgerService {
       commission_balance_rwf: ownerBalance,
       unreconciled_rwf: cash - accountedFor,
       total_adjustments_rwf: adjustments,
+      total_driver_penalties_rwf: driverPenalties,
       total_owner_withdrawn_rwf: ownerPaidOut,
       owner_processing_rwf: ownerProcessing,
       total_collected_rwf: collected,

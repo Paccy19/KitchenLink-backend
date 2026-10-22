@@ -178,6 +178,8 @@ class AdminOperationsService {
           pickup_due_at: null,
           charge_status: record.charge_status || 'pending',
           charge_rwf: record.charge_rwf ?? null,
+          penalty_percent: record.penalty_percent ?? null,
+          note: record.note || '',
         })
       );
       if (delivery.late_pickup?.flagged_at) {
@@ -201,6 +203,8 @@ class AdminOperationsService {
           pickup_due_at: delivery.pickup_due_at ?? null,
           charge_status: delivery.late_pickup.charge_status || 'pending',
           charge_rwf: delivery.late_pickup.charge_rwf ?? null,
+          penalty_percent: delivery.late_pickup.penalty_percent ?? null,
+          note: delivery.late_pickup.note || '',
         });
       }
     });
@@ -424,7 +428,10 @@ class AdminOperationsService {
         grace_minutes: timing.charge_after_minutes,
         reassign_after_minutes: timing.reassign_after_minutes,
         updated_at: timing.updated_at,
-        charge_amount: 'Not set yet — late pickups are recorded with a pending charge.',
+        // The late-pickup penalty: a share of the delivery fee of the late
+        // order, taken out of that order's fee (never from the worker's wallet).
+        penalty_percent: timing.late_penalty_percent ?? 0,
+        charge_amount: `${timing.late_penalty_percent ?? 0}% of the delivery fee of the late order`,
       },
       customer_pickup: {
         delivery_fee_rwf: 0,

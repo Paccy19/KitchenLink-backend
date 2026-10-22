@@ -12,6 +12,7 @@ const TRANSACTION_TYPES = [
   'order_payment',
   'vendor_earning',
   'driver_earning',
+  'driver_penalty',
   'commission',
   'refund',
   'withdrawal',

@@ -39,6 +39,11 @@ const deliverySchema = new mongoose.Schema(
     route_distance_km: { type: Number, min: 0, default: 0 },
     delivery_fee_rwf: { type: Number, min: 0, default: 0 },
     promised_earnings_rwf: { type: Number, min: 0, default: 0 },
+    // What the worker was actually paid for this delivery: the promised
+    // earnings minus the late-pickup penalty (equal when there was none).
+    paid_earnings_rwf: { type: Number, min: 0, default: null },
+    // The late-pickup penalty taken out of this order's delivery fee.
+    earnings_penalty_rwf: { type: Number, min: 0, default: 0 },
     payment_method: { type: String, default: '' },
 
     status: {
@@ -95,8 +100,10 @@ const deliverySchema = new mongoose.Schema(
     pickup_warn_at: { type: Date, default: null },
     pickup_due_at: { type: Date, default: null },
     pickup_reassign_at: { type: Date, default: null },
-    // Late pickup bookkeeping. Charges are decided later; `charge_status`
-    // 'pending' marks a late pickup that still has to be charged.
+    // Late pickup bookkeeping. The charge is decided when the order is
+    // delivered: `charge_status` 'pending' marks a late pickup that still has
+    // to be charged, 'charged' means the penalty was taken out of this
+    // order's delivery fee, 'waived' that nothing could be taken.
     late_pickup: {
       warned_at: { type: Date, default: null },
       flagged_at: { type: Date, default: null },
@@ -107,6 +114,9 @@ const deliverySchema = new mongoose.Schema(
         default: 'none',
       },
       charge_rwf: { type: Number, min: 0, default: null },
+      // The share of the delivery fee the penalty took (percent).
+      penalty_percent: { type: Number, min: 0, max: 100, default: null },
+      note: { type: String, default: '' },
     },
     // Late records of earlier workers on this delivery: when support takes a
     // late order away and gives it to someone else, the late worker's record
@@ -123,6 +133,8 @@ const deliverySchema = new mongoose.Schema(
           default: 'pending',
         },
         charge_rwf: { type: Number, min: 0, default: null },
+        penalty_percent: { type: Number, min: 0, max: 100, default: null },
+        note: { type: String, default: '' },
         reassigned_at: { type: Date },
       },
     ],

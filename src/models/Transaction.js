@@ -17,6 +17,9 @@ const TRANSACTION_TYPES = [
   'order_payment',
   'vendor_earning',
   'driver_earning',
+  // Late-pickup penalty: the share of a delivery fee the platform keeps when
+  // a worker collects a ready order late (it comes out of that order's fee).
+  'driver_penalty',
   'commission',
   'refund',
   // Owner's corrections to the platform's commission (e.g. writing off a

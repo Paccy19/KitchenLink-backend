@@ -56,6 +56,8 @@ const notificationSchema = new mongoose.Schema(
         'delivery_ready',
         'delivery_pickup_reminder',
         'delivery_late',
+        // A late-pickup penalty was taken out of the delivery fee of an order.
+        'delivery_penalty',
         'delivery_cancelled',
         // Admin feed: a delivery worker is late to collect a ready order.
         'late_pickup',

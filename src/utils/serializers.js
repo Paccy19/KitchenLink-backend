@@ -474,6 +474,8 @@ function serializeDelivery(delivery, options = {}) {
         warning_minutes: rules.warning_minutes,
         charge_after_minutes: rules.charge_after_minutes,
         reassign_after_minutes: rules.reassign_after_minutes,
+        // The penalty share of the delivery fee for a late pickup.
+        late_penalty_percent: rules.late_penalty_percent ?? 0,
       };
     })(),
     pickup_grace_minutes: delivery.pickup_started_at && delivery.pickup_due_at
@@ -485,8 +487,14 @@ function serializeDelivery(delivery, options = {}) {
           minutes_late: delivery.late_pickup.minutes_late ?? null,
           charge_status: delivery.late_pickup.charge_status || 'pending',
           charge_rwf: delivery.late_pickup.charge_rwf ?? null,
+          penalty_percent: delivery.late_pickup.penalty_percent ?? null,
+          note: delivery.late_pickup.note || '',
         }
       : null,
+    // What the worker was paid for this delivery and what was kept as a
+    // late-pickup penalty (taken out of this order's delivery fee only).
+    paid_earnings_rwf: delivery.paid_earnings_rwf ?? null,
+    earnings_penalty_rwf: delivery.earnings_penalty_rwf ?? 0,
     // The assigned driver follows the order the way the customer does.
     order_progress:
       revealCustomer && order
@@ -783,6 +791,8 @@ function serializePlatformAccount(account = {}) {
     total_commission_rwf: n(account.total_commission_rwf),
     total_vendor_earnings_rwf: n(account.total_vendor_earnings_rwf),
     total_driver_earnings_rwf: n(account.total_driver_earnings_rwf),
+    // Late-pickup penalties kept from riders' delivery fees.
+    total_driver_penalties_rwf: n(account.total_driver_penalties_rwf),
     // Actually paid out to vendors / riders (completed withdrawals).
     total_vendor_payouts_rwf: n(account.total_vendor_payouts_rwf),
     total_driver_payouts_rwf: n(account.total_driver_payouts_rwf),

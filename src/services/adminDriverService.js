@@ -157,6 +157,19 @@ class AdminDriverService {
     );
     let released = 0;
     for (const delivery of deliveries) {
+      // A late record belongs to the worker who was late: it moves to the
+      // history so the next worker is never charged for someone else's delay.
+      if (delivery.late_pickup?.flagged_at) {
+        await deliveryRepository.pushLateRecord(delivery._id, {
+          driver_id: driverId,
+          flagged_at: delivery.late_pickup.flagged_at,
+          minutes_late: delivery.late_pickup.minutes_late ?? null,
+          charge_status: 'pending',
+          penalty_percent: delivery.late_pickup.penalty_percent ?? null,
+          note: 'Delivery worker suspended — no delivery fee to take the penalty from',
+          reassigned_at: new Date(),
+        });
+      }
       await deliveryRepository.handback(delivery._id, {
         status: 'ready_for_pickup',
         note: 'Delivery worker suspended by admin — delivery released',
