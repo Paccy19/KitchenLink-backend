@@ -597,9 +597,11 @@ function serializeAdminVendor(vendor) {
     })),
     profile_image_url: vendor.profile_image_url || null,
     banner_image_url: vendor.banner_image_url || null,
+    // The kitchen's registered position (entered by the vendor, not GPS).
     location: {
       latitude: typeof lat === 'number' ? lat : null,
       longitude: typeof lng === 'number' ? lng : null,
+      updated_at: vendor.location_updated_at ?? null,
     },
     created_at: vendor.created_at,
     updated_at: vendor.updated_at,
@@ -646,6 +648,16 @@ function serializeAdminDriver(driver) {
     location: {
       latitude: typeof lat === 'number' ? lat : null,
       longitude: typeof lng === 'number' ? lng : null,
+      // When the phone last reported it; dispatch ignores positions older
+      // than config.delivery.locationMaxAgeMinutes.
+      updated_at: driver.location_updated_at ?? null,
+      heading: driver.location_heading ?? null,
+      speed_mps: driver.location_speed_mps ?? null,
+      accuracy_m: driver.location_accuracy_m ?? null,
+      counts_for_dispatch:
+        Boolean(driver.location_updated_at) &&
+        Date.now() - new Date(driver.location_updated_at).getTime() <=
+          config.delivery.locationMaxAgeMinutes * 60000,
     },
     created_at: driver.created_at,
     updated_at: driver.updated_at,
@@ -668,6 +680,17 @@ function serializeAdminOrder(order) {
       order.status,
     fulfillment: order.fulfillment || 'delivery',
     fulfillment_label: config.orders.fulfillmentLabels[order.fulfillment || 'delivery'],
+    // Pickup orders: where the collection stands (the code itself is never sent).
+    pickup:
+      order.fulfillment === 'pickup'
+        ? {
+            code_sent_at: order.pickup_code_sent_at ?? null,
+            wrong_attempts: order.pickup_code_attempts || 0,
+            max_attempts: config.orders.pickupCodeMaxAttempts,
+            locked: (order.pickup_code_attempts || 0) >= config.orders.pickupCodeMaxAttempts,
+            collected_at: order.collected_at ?? null,
+          }
+        : null,
     created_at: order.created_at,
     updated_at: order.updated_at,
     completed_at: order.completed_at ?? null,

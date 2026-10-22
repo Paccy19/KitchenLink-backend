@@ -120,7 +120,13 @@ class AdminDriverService {
       offset,
     });
     return {
-      items: deliveries.map((delivery) => serializeDelivery(delivery)),
+      items: deliveries.map((delivery) => ({
+        ...serializeDelivery(delivery),
+        driver: delivery.driver_id?.name
+          ? { id: String(delivery.driver_id._id), name: delivery.driver_id.name, phone: delivery.driver_id.phone || null }
+          : null,
+        offered_to: (delivery.dispatch?.offers || []).length,
+      })),
       total,
       page,
       limit,

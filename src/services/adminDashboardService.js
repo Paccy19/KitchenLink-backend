@@ -8,6 +8,7 @@ const driverRepository = require('../repositories/driverRepository');
 const deliveryRepository = require('../repositories/deliveryRepository');
 const complaintRepository = require('../repositories/complaintRepository');
 const commissionRepository = require('../repositories/commissionRepository');
+const adminOperationsService = require('./adminOperationsService');
 
 const COMPLETED_STATUSES = ['delivered'];
 const PENDING_STATUSES = config.vendor.pendingInternalStatuses;
@@ -33,6 +34,7 @@ class AdminDashboardService {
       activeDeliveries,
       openComplaints,
       recentOrders,
+      attention,
     ] = await Promise.all([
       orderRepository.countCreatedBetween(start, end),
       orderRepository.countByStatuses(PENDING_STATUSES),
@@ -55,6 +57,7 @@ class AdminDashboardService {
       deliveryRepository.countActive(config.delivery.activeStatuses),
       complaintRepository.countOpen(),
       orderRepository.adminList({ limit: 5, offset: 0 }),
+      adminOperationsService.attention(),
     ]);
 
     const pendingCount = Object.values(pendingOrders || {}).reduce(
@@ -111,6 +114,8 @@ class AdminDashboardService {
       complaints: {
         open: openComplaints,
       },
+      // Dispatch, pickup and kitchen numbers that need attention now.
+      operations: attention,
       commission_percent: commissionPercent,
       recent_orders: recentOrders.orders.map(serializeAdminOrder),
     };

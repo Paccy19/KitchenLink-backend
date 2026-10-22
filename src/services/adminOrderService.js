@@ -16,6 +16,7 @@ const driverRepository = require('../repositories/driverRepository');
 const adminActionLogService = require('./adminActionLogService');
 const settlementService = require('./settlementService');
 const deliveryService = require('./deliveryService');
+const adminOperationsService = require('./adminOperationsService');
 const orderNotifications = require('./orderNotifications');
 
 class AdminOrderService {
@@ -32,6 +33,7 @@ class AdminOrderService {
       vendorId: query.vendor_id,
       customerId: query.customer_id,
       driverId: query.driver_id,
+      fulfillment: parseEnum(query.fulfillment, config.orders.fulfillmentModes, 'fulfillment'),
       from,
       to,
       search: query.search ? String(query.search).trim() : undefined,
@@ -58,6 +60,8 @@ class AdminOrderService {
       order: serializeAdminOrder(detail),
       payment: payment ? serializeAdminPayment(payment) : null,
       delivery: delivery ? serializeDelivery(delivery, { revealCustomer: true }) : null,
+      // Who was offered the order, who accepted or declined, and when.
+      dispatch: await adminOperationsService.dispatchSummary(delivery),
       actions,
     };
   }
@@ -140,34 +144,29 @@ class AdminOrderService {
       });
     }
 
+    if (order.fulfillment === 'pickup') {
+      throw ApiError.conflict(
+        'The customer collects this order at the kitchen, so it has no delivery worker.',
+        'NOT_A_DELIVERY_ORDER'
+      );
+    }
+
     const driver = await driverRepository.findById(driver_id);
     if (!driver) {
       throw ApiError.notFound('Delivery worker not found.', 'DRIVER_NOT_FOUND');
     }
+    if (driver.is_active === false || (driver.verification_status && driver.verification_status !== 'approved')) {
+      throw ApiError.conflict(`${driver.name} is not an approved, active delivery worker.`, 'DRIVER_NOT_ELIGIBLE');
+    }
 
-    const now = new Date();
-    await orderRepository.update(orderId, {
-      driver_id: driver._id,
-      rider: { name: driver.name, phone: driver.phone },
-    });
+    // Moves the delivery itself: status, both workers' load, pickup clock, notifications.
+    await deliveryService.adminReassign(order, driver);
+    const refreshed = await orderRepository.findById(orderId);
     await orderRepository.pushHistory(orderId, {
-      status: order.status,
-      at: now,
+      status: refreshed?.status || order.status,
+      at: new Date(),
       note: note || `Delivery worker reassigned to ${driver.name} by admin`,
     });
-
-    if (order.delivery_id) {
-      await deliveryRepository.update(order.delivery_id, {
-        driver_id: driver._id,
-        assigned_at: now,
-      });
-      await deliveryRepository.pushHistory(order.delivery_id, {
-        status: 'assigned_to_driver',
-        at: now,
-        note: `Delivery worker reassigned to ${driver.name} by admin`,
-        by: 'admin',
-      });
-    }
 
     await adminActionLogService.record(
       admin,

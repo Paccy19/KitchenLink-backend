@@ -192,9 +192,12 @@ class OrderRepository {
 
   /* ------------------------------- admin ------------------------------- */
 
-  async adminList({ statuses, vendorId, customerId, driverId, from, to, search, limit, offset }) {
+  async adminList({ statuses, vendorId, customerId, driverId, fulfillment, from, to, search, limit, offset }) {
     const filter = {};
     if (statuses && statuses.length > 0) filter.status = { $in: statuses };
+    // Orders from before pickup existed have no field: they are deliveries.
+    if (fulfillment === 'pickup') filter.fulfillment = 'pickup';
+    if (fulfillment === 'delivery') filter.fulfillment = { $ne: 'pickup' };
     if (vendorId) filter.vendor_id = vendorId;
     if (customerId) filter.customer_id = customerId;
     if (driverId) filter.driver_id = driverId;

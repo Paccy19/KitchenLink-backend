@@ -56,6 +56,12 @@ class DeliveryTrackingService {
     return this.#view(delivery, { withSteps: true });
   }
 
+  /** Admin: the same live view (rider, route, ETA) for any delivery. */
+  async adminView(delivery) {
+    if (!delivery?.driver_id || !this.#phase(delivery)) return { active: false };
+    return this.#view(delivery, { withSteps: false });
+  }
+
   #phase(delivery) {
     if (!delivery) return null;
     if (delivery.status === 'assigned_to_driver') return 'to_kitchen';

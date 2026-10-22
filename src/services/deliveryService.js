@@ -632,6 +632,90 @@ class DeliveryService {
     };
   }
 
+  /**
+   * Support (admin) hands an order to a chosen delivery worker. Works before
+   * anyone accepted and to replace an assigned worker who hasn't collected
+   * the food yet; the previous worker is released and both are told.
+   */
+  async adminReassign(order, driver) {
+    let delivery = await deliveryRepository.findByOrderId(order._id);
+    if (!delivery) {
+      delivery = await this.ensureDeliveryForOrder(order, {
+        ready: ['ready', 'assigned'].includes(order.status),
+      });
+    }
+    if (['picked_up', 'out_for_delivery', 'delivered', 'completed'].includes(delivery.status)) {
+      throw ApiError.conflict(
+        'The delivery worker has already collected this order, so it can no longer be reassigned.',
+        'DELIVERY_IN_PROGRESS'
+      );
+    }
+    if (['cancelled', 'rejected'].includes(delivery.status)) {
+      throw ApiError.conflict('This delivery was cancelled.', 'DELIVERY_NOT_AVAILABLE');
+    }
+    const previous = delivery.driver_id ? String(delivery.driver_id) : null;
+    if (previous === String(driver._id)) {
+      throw ApiError.conflict(`${driver.name} is already delivering this order.`, 'DELIVERY_ALREADY_ASSIGNED');
+    }
+
+    const now = new Date();
+    const ready = isKitchenReady(delivery);
+    await deliveryRepository.update(delivery._id, {
+      driver_id: driver._id,
+      status: 'assigned_to_driver',
+      assigned_at: now,
+      pickup_due_at: ready ? this.#pickupDueAt(delivery.ready_at ?? delivery.created_at, now) : null,
+      'late_pickup.warned_at': null,
+    });
+    await deliveryRepository.pushHistory(delivery._id, {
+      status: 'assigned_to_driver',
+      at: now,
+      note: `Assigned to ${driver.name} by support`,
+      by: 'admin',
+    });
+    await this.#closeOtherOffers(delivery, driver._id, now);
+
+    if (previous) {
+      await this.#releaseDriver(previous);
+      notificationService
+        .notifyDriver(previous, {
+          type: 'delivery_cancelled',
+          title: 'Order reassigned',
+          body: `Support reassigned ${delivery.order_number} to another delivery worker. You don't need to collect it.`,
+          orderId: delivery.order_id,
+          data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
+          sms: true,
+        })
+        .catch(() => null);
+    }
+
+    const fresh = await driverRepository.incrementActive(driver._id);
+    if ((fresh?.active_deliveries_count ?? 1) >= (fresh?.max_active_deliveries || deliveryConfig.maxActiveDeliveries)) {
+      await driverRepository.setAvailability(driver._id, { status: 'busy' });
+    }
+    notificationService
+      .notifyDriver(driver._id, {
+        type: 'delivery_update',
+        title: 'Order assigned to you',
+        body: ready
+          ? `Support assigned you ${delivery.order_number}. The food is ready — collect it within ${deliveryConfig.pickupGraceMinutes} minutes.`
+          : `Support assigned you ${delivery.order_number}. Head to the kitchen; you'll be told when the food is ready.`,
+        orderId: delivery.order_id,
+        link: '/driver-dashboard/active',
+        data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
+        sms: true,
+      })
+      .catch(() => null);
+
+    await orderRepository.update(order._id, {
+      driver_id: driver._id,
+      delivery_id: delivery._id,
+      rider: { name: driver.name, phone: driver.phone },
+      ...(ready ? { status: 'assigned' } : {}),
+    });
+    return deliveryRepository.findById(delivery._id);
+  }
+
   async reject(driver, deliveryId) {
     const id = parseObjectId(deliveryId, 'delivery_id');
     const delivery = await deliveryRepository.findById(id);

@@ -20,6 +20,7 @@ const adminDashboardController = require('../controllers/adminDashboardControlle
 const adminAnalyticsController = require('../controllers/adminAnalyticsController');
 const adminNotificationController = require('../controllers/adminNotificationController');
 const adminActionLogService = require('../services/adminActionLogService');
+const adminOperationsService = require('../services/adminOperationsService');
 
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -75,6 +76,32 @@ router.get(
   '/deliveries/live',
   requirePermission('deliveries:read'),
   adminDriverController.liveDeliveries
+);
+// One delivery's rider position, route and ETA (order details map).
+router.get(
+  '/deliveries/:deliveryId/live',
+  requirePermission('deliveries:read'),
+  asyncHandler(async (req, res) => res.json(await adminOperationsService.deliveryLive(req.params.deliveryId)))
+);
+
+/* ------------------------------- operations ------------------------------ */
+// Live operations map: deliveries in progress, online workers, open kitchens.
+router.get(
+  '/operations/live-map',
+  requirePermission('deliveries:read'),
+  asyncHandler(async (req, res) => res.json(await adminOperationsService.liveMap()))
+);
+// Pickups collected (or still waiting) after the grace period, with charge status.
+router.get(
+  '/operations/late-pickups',
+  requirePermission('deliveries:read'),
+  asyncHandler(async (req, res) => res.json(await adminOperationsService.latePickups(req.query)))
+);
+// The dispatch, pickup, tracking and SMS rules currently in force.
+router.get(
+  '/operations/rules',
+  requirePermission('dashboard:read'),
+  asyncHandler(async (req, res) => res.json(adminOperationsService.rules()))
 );
 
 /* --------------------------------- orders -------------------------------- */
