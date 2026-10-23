@@ -30,6 +30,14 @@ function normalizePhone(raw) {
 // Longest name any account (customer, kitchen, owner, delivery worker, admin) may have.
 const NAME_MAX_LENGTH = 50;
 
+/**
+ * Person names start every word with a capital letter: "jean paul" → "Jean Paul",
+ * "jean-pierre o'neil" → "Jean-Pierre O'Neil". The rest of each word is kept as typed.
+ */
+function capitalizeName(value) {
+  return String(value ?? '').replace(/(^|[\s'-])(\p{Ll})/gu, (_, separator, letter) => separator + letter.toUpperCase());
+}
+
 function parseName(raw, { required = true } = {}) {
   const name = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : '';
   if (!name) {
@@ -43,7 +51,7 @@ function parseName(raw, { required = true } = {}) {
       name: `expected 2-${NAME_MAX_LENGTH} characters`,
     });
   }
-  return name;
+  return capitalizeName(name);
 }
 
 function parseQuantity(raw, { required = false } = {}) {
@@ -216,6 +224,7 @@ function parseDeliveryLocation(raw) {
 
 module.exports = {
   NAME_MAX_LENGTH,
+  capitalizeName,
   normalizePhone,
   parseName,
   parseQuantity,

@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { signToken } = require('../utils/jwt');
-const { NAME_MAX_LENGTH, normalizePhone, parseDeliveryLocation } = require('../utils/validators');
+const { NAME_MAX_LENGTH, capitalizeName, normalizePhone, parseDeliveryLocation } = require('../utils/validators');
 const {
   parseEmail,
   parsePassword,
@@ -31,11 +31,13 @@ class VendorAuthService {
    */
   async register(body = {}, files = {}) {
     const name = parseRequiredText(body.name, { field: 'name', min: 2, max: NAME_MAX_LENGTH });
-    const ownerName = parseRequiredText(body.owner_name, {
-      field: 'owner_name',
-      min: 2,
-      max: NAME_MAX_LENGTH,
-    });
+    const ownerName = capitalizeName(
+      parseRequiredText(body.owner_name, {
+        field: 'owner_name',
+        min: 2,
+        max: NAME_MAX_LENGTH,
+      })
+    );
     const vendorType = parseVendorType(body.vendor_type);
     const phone = normalizePhone(body.phone);
     const description = parseRequiredText(body.description, {

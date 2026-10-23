@@ -8,7 +8,7 @@ const { parseVehicleType } = require('../utils/deliveryValidators');
 const { serializeDriverAccount } = require('../utils/serializers');
 const { resolveImageUrl } = require('../utils/uploads');
 const { hashPassword, comparePassword } = require('../utils/password');
-const { NAME_MAX_LENGTH } = require('../utils/validators');
+const { NAME_MAX_LENGTH, capitalizeName } = require('../utils/validators');
 const driverRepository = require('../repositories/driverRepository');
 
 class DriverProfileService {
@@ -16,7 +16,7 @@ class DriverProfileService {
     const payload = {};
 
     if (body.name !== undefined) {
-      payload.name = parseRequiredText(body.name, { field: 'name', min: 2, max: NAME_MAX_LENGTH });
+      payload.name = capitalizeName(parseRequiredText(body.name, { field: 'name', min: 2, max: NAME_MAX_LENGTH }));
     }
     if (body.email !== undefined) {
       payload.email =

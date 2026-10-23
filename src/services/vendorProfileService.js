@@ -1,5 +1,5 @@
 const ApiError = require('../utils/ApiError');
-const { NAME_MAX_LENGTH, normalizePhone } = require('../utils/validators');
+const { NAME_MAX_LENGTH, capitalizeName, normalizePhone } = require('../utils/validators');
 const {
   parseRequiredText,
   parseOptionalText,
@@ -23,10 +23,11 @@ class VendorProfileService {
       });
     }
     if (body.owner_name !== undefined) {
-      payload.owner_name = parseOptionalText(body.owner_name, {
+      const ownerName = parseOptionalText(body.owner_name, {
         field: 'owner_name',
         max: NAME_MAX_LENGTH,
       });
+      payload.owner_name = ownerName ? capitalizeName(ownerName) : ownerName;
     }
     if (body.description !== undefined) {
       payload.description =

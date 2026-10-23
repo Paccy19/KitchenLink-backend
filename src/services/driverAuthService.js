@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { signToken } = require('../utils/jwt');
-const { NAME_MAX_LENGTH, normalizePhone } = require('../utils/validators');
+const { NAME_MAX_LENGTH, capitalizeName, normalizePhone } = require('../utils/validators');
 const { parseEmail, parsePassword, parseRequiredText } = require('../utils/vendorValidators');
 const { parseVehicleType } = require('../utils/deliveryValidators');
 const { serializeDriverAccount } = require('../utils/serializers');
@@ -17,7 +17,7 @@ class DriverAuthService {
    * OTP sign-in flow works right away, mirroring the vendor experience.
    */
   async register(body = {}) {
-    const name = parseRequiredText(body.name, { field: 'name', min: 2, max: NAME_MAX_LENGTH });
+    const name = capitalizeName(parseRequiredText(body.name, { field: 'name', min: 2, max: NAME_MAX_LENGTH }));
     const phone = normalizePhone(body.phone);
     const vehicleType = parseVehicleType(body.vehicle_type);
     const plateNumber =

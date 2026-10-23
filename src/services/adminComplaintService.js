@@ -8,6 +8,7 @@ const {
   parseOptionalText,
   parseObjectId,
 } = require('../utils/adminValidators');
+const { capitalizeName } = require('../utils/validators');
 const { serializeAdminComplaint } = require('../utils/serializers');
 const complaintRepository = require('../repositories/complaintRepository');
 const adminActionLogService = require('./adminActionLogService');
@@ -88,7 +89,7 @@ class AdminComplaintService {
       raised_by: {
         user_id: body.user_id ? parseObjectId(body.user_id, 'user_id') : null,
         role: body.role || 'guest',
-        name: parseOptionalText(body.name, { field: 'name', max: 50 }) || '',
+        name: capitalizeName(parseOptionalText(body.name, { field: 'name', max: 50 }) || ''),
         phone: parseOptionalText(body.phone, { field: 'phone', max: 30 }) || '',
       },
       related: {
