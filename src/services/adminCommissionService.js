@@ -12,10 +12,9 @@ const {
 const { serializeAdminCommission } = require('../utils/serializers');
 const commissionRepository = require('../repositories/commissionRepository');
 const adminActionLogService = require('./adminActionLogService');
-const { VENDOR_TYPES, LEGACY_VENDOR_TYPES } = require('../models/Vendor');
+const { VENDOR_TYPE_CODES, toVendorTypeCode } = require('../config/vendorTypes');
 
 const SCOPES = ['global', 'vendor', 'category', 'vendor_type'];
-const ALL_VENDOR_TYPES = [...VENDOR_TYPES, ...LEGACY_VENDOR_TYPES];
 
 class AdminCommissionService {
   async list(query = {}) {
@@ -144,12 +143,13 @@ class AdminCommissionService {
         field: 'vendor_type',
         max: 60,
       });
-      if (vendorType && !ALL_VENDOR_TYPES.includes(vendorType)) {
+      const code = vendorType ? toVendorTypeCode(vendorType) : '';
+      if (vendorType && !code) {
         throw ApiError.badRequest('vendor_type is invalid.', {
-          vendor_type: `expected one of: ${VENDOR_TYPES.join(', ')}`,
+          vendor_type: `expected one of: ${VENDOR_TYPE_CODES.join(', ')}`,
         });
       }
-      payload.vendor_type = vendorType || '';
+      payload.vendor_type = code || '';
     }
 
     if (body.percentage !== undefined) {

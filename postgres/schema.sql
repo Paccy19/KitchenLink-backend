@@ -136,11 +136,12 @@ CREATE TABLE customers (
 CREATE TABLE vendors (
   _id                 CHAR(24) PRIMARY KEY,
   name                TEXT        NOT NULL,
-  vendor_type         TEXT        NOT NULL DEFAULT 'Restaurant'
-                      CHECK (vendor_type IN ('Home Cook','Restaurant','Café','Bakery',
-                                             'Caterer','Food Truck','Chef','Meal-prep business',
-                                             'Juice/Drinks vendor','Other food business',
-                                             'Cafe','Bar & Grill')),
+  -- Vendor type codes (see src/config/vendorTypes.js).
+  vendor_type         TEXT        NOT NULL DEFAULT 'restaurant'
+                      CHECK (vendor_type IN ('home_cook','restaurant','cafe','bakery','caterer',
+                                             'food_truck','chef','meal_prep','juice_drinks','other')),
+  -- A type change the vendor asked for: {vendor_type, reason, requested_at}.
+  vendor_type_request JSONB       NOT NULL DEFAULT '{"vendor_type": null, "reason": "", "requested_at": null}',
   owner_name          TEXT,
   description         TEXT        NOT NULL DEFAULT '',
   email               TEXT        UNIQUE,           -- sparse unique in MongoDB; PG allows many NULLs
@@ -194,6 +195,7 @@ CREATE INDEX vendors_active_rating_idx    ON vendors (is_active, rating DESC);
 CREATE INDEX vendors_active_featured_idx  ON vendors (is_active, is_featured DESC, rating DESC);
 CREATE INDEX vendors_special_idx          ON vendors ((special ->> 'is_active'), (special ->> 'delivery_at'));
 CREATE INDEX vendors_search_idx           ON vendors USING GIN (search_vector);
+CREATE INDEX vendors_type_active_idx      ON vendors (vendor_type, is_active);
 
 -- ============================================================================
 -- 6. drivers  (model: Driver)
@@ -491,11 +493,13 @@ CREATE TABLE notifications (
   audience     TEXT        NOT NULL DEFAULT 'customer'
                CHECK (audience IN ('customer','driver','admin','vendor')),
   type         TEXT        NOT NULL DEFAULT 'general'
-               CHECK (type IN ('delivery_code','delivery_offer','order_update','general',
+               CHECK (type IN ('delivery_code','pickup_code','delivery_offer','order_update','general',
                                'vendor_application','driver_application','complaint_opened',
-                               'payout_requested','payout_update','order_placed',
-                               'payment_failed','owner_finance','account_update',
-                               'refund_update','support_message')),
+                               'payout_requested','payout_update','order_placed','payment_failed',
+                               'owner_finance','account_update','refund_update','support_message',
+                               'vendor_offer','vendor_type_request','delivery_update','delivery_taken',
+                               'delivery_ready','delivery_pickup_reminder','delivery_late',
+                               'delivery_penalty','delivery_cancelled','late_pickup')),
   title        TEXT        NOT NULL,
   body         TEXT        NOT NULL,
   order_id     CHAR(24),
@@ -721,7 +725,7 @@ CREATE INDEX refunds_customer_created_idx  ON refunds (customer_id, created_at D
 CREATE TABLE transactions (
   _id          CHAR(24) PRIMARY KEY,
   type         TEXT        NOT NULL
-               CHECK (type IN ('order_payment','vendor_earning','driver_earning',
+               CHECK (type IN ('order_payment','vendor_earning','driver_earning','driver_penalty',
                                'commission','refund','adjustment','platform_withdrawal',
                                'vendor_payout','driver_payout','withdrawal')),
   direction    TEXT        NOT NULL CHECK (direction IN ('credit','debit','internal')),

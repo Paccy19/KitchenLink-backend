@@ -57,6 +57,11 @@ router.post(
   adminVendorController.reviewDocuments
 );
 router.patch(
+  '/vendors/:vendorId/type',
+  requirePermission('vendors:write'),
+  adminVendorController.setType
+);
+router.patch(
   '/vendors/:vendorId/status',
   requirePermission('vendors:write'),
   adminVendorController.setStatus

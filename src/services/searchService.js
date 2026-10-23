@@ -4,6 +4,7 @@ const menuItemRepository = require('../repositories/menuItemRepository');
 const { tokenize, buildTokenFilter } = require('../utils/search');
 const { distanceFromCoords } = require('../utils/geo');
 const { isVendorLive } = require('../utils/vendorPresence');
+const { VENDOR_TYPES, vendorTypeLabel } = require('../config/vendorTypes');
 const {
   serializeVendorCard,
   serializeSearchDish,
@@ -20,18 +21,32 @@ const proximityScore = (distanceKm) =>
   typeof distanceKm === 'number' ? 2 / (1 + distanceKm) : 0;
 
 class SearchService {
-  async search({ q, coords }) {
+  async search({ q, coords, vendorTypes = null }) {
     const tokens = tokenize(q).map((token) => token.toLowerCase());
+    const typeAllowed = (code) => !vendorTypes || vendorTypes.includes(code);
 
-    const dishes = await menuItemRepository.search({
-      tokens,
-      limit: config.limits.searchCandidateCap,
-    });
+    // Searching a type ("bakery", "food truck", "home cook") finds those kitchens too.
+    const typedQuery = lower(q);
+    const matchedTypes = VENDOR_TYPES.filter(
+      (type) =>
+        typedQuery.includes(type.label.toLowerCase()) ||
+        typedQuery.includes(type.code.replace(/_/g, ' ')) ||
+        tokens.some((token) => token.length >= 3 && type.label.toLowerCase().split(/[\s&]+/).includes(token))
+    ).map((type) => type.code);
+
+    const dishes = (
+      await menuItemRepository.search({
+        tokens,
+        limit: config.limits.searchCandidateCap,
+      })
+    ).filter((dish) => typeAllowed(dish.vendor?.vendor_type));
     const dishVendorIds = [...new Set(dishes.map((d) => String(d.vendor_id)))];
 
+    const tokenFilter = buildTokenFilter(tokens, ['name', 'neighborhood']);
     const vendors = await vendorRepository.search({
-      tokenFilter: buildTokenFilter(tokens, ['name', 'neighborhood']),
+      tokenFilter: matchedTypes.length ? { $or: [tokenFilter, { vendor_type: { $in: matchedTypes } }] } : tokenFilter,
       dishVendorIds,
+      vendorTypes,
       limit: config.limits.searchCandidateCap,
     });
 
@@ -77,6 +92,7 @@ class SearchService {
             tokenScore(neighborhood, token, 1, 1);
         }
         if (dishVendorIds.includes(String(vendor._id))) score += 1.5;
+        if (matchedTypes.includes(vendor.vendor_type)) score += 2;
         if (isVendorLive(vendor)) score += 1;
 
         const distanceKm = coords
@@ -107,6 +123,8 @@ class SearchService {
       meta: {
         location_used: Boolean(coords),
         limit: config.limits.searchMax,
+        vendor_types: vendorTypes,
+        matched_vendor_types: matchedTypes.map((code) => ({ code, label: vendorTypeLabel(code) })),
       },
     };
   }

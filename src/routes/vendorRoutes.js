@@ -4,6 +4,8 @@ const vendorOfferController = require('../controllers/vendorOfferController');
 
 const router = Router();
 
+router.get('/vendors', vendorController.listVendors);
+router.get('/vendors/types', vendorController.getTypes);
 router.get('/vendors/specials', vendorController.getSpecials);
 router.get('/vendors/offers', vendorOfferController.listUpcoming);
 router.get('/vendors/:vendor_id', vendorController.getVendor);

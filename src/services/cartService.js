@@ -1,4 +1,5 @@
 const ApiError = require('../utils/ApiError');
+const { vendorTypeLabel } = require('../config/vendorTypes');
 const config = require('../config');
 const { parseQuantity } = require('../utils/validators');
 const cartRepository = require('../repositories/cartRepository');
@@ -53,6 +54,7 @@ class CartService {
             id: String(vendor._id),
             name: vendor.name,
             vendor_type: vendor.vendor_type,
+            vendor_type_label: vendorTypeLabel(vendor.vendor_type),
             banner_image_url: vendor.banner_image_url || null,
             delivery_available: Boolean(vendor.delivery_available),
           }

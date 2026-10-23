@@ -21,7 +21,7 @@ const assertCategoryId = (categoryId) => {
 };
 
 class HomeService {
-  async getFeed(coords) {
+  async getFeed(coords, { vendorTypes = null } = {}) {
     const locationUsed = Boolean(coords);
     const radiusKm = locationUsed ? config.geo.feedRadiusKm : null;
 
@@ -34,12 +34,13 @@ class HomeService {
       const { vendors } = await vendorRepository.findNearby({
         coords,
         radiusKm,
+        vendorTypes,
         sort: 'distance',
         limit: config.limits.feedVendors,
       });
       vendorRows = vendors.map((v) => ({ vendor: v, distanceKm: v.distance_km }));
     } else {
-      const vendors = await vendorRepository.findTopRated(config.limits.feedVendors);
+      const vendors = await vendorRepository.findTopRated(config.limits.feedVendors, { vendorTypes });
       vendorRows = vendors.map((v) => ({ vendor: v, distanceKm: null }));
     }
 
@@ -69,6 +70,7 @@ class HomeService {
       meta: {
         location_used: locationUsed,
         radius_km: radiusKm,
+        vendor_types: vendorTypes,
       },
     };
   }
@@ -79,7 +81,7 @@ class HomeService {
   }
 
   /** All kitchens in the system; nearby ones first when coordinates are given. */
-  async getAllVendors({ coords, categoryId, sort, query }) {
+  async getAllVendors({ coords, categoryId, vendorTypes = null, sort, query }) {
     const { limit, page, offset } = parsePagination(query, {
       defaultLimit: config.limits.nearbyDefault,
       maxLimit: config.limits.nearbyMax,
@@ -91,6 +93,7 @@ class HomeService {
       offset,
       sort,
       category_id: categoryId || null,
+      vendor_types: vendorTypes,
       near_radius_km: nearRadiusKm,
       location_used: Boolean(coords),
     };
@@ -108,6 +111,7 @@ class HomeService {
       coords,
       nearRadiusKm,
       categoryVendorIds,
+      vendorTypes,
       sort,
       limit,
       offset,
@@ -126,8 +130,8 @@ class HomeService {
    * Customer map: every kitchen whose store is open, anywhere, so customers
    * can explore by panning the map. Distances only when coordinates are given.
    */
-  async getMapVendors({ coords, categoryId }) {
-    const meta = { category_id: categoryId || null, location_used: Boolean(coords) };
+  async getMapVendors({ coords, categoryId, vendorTypes = null }) {
+    const meta = { category_id: categoryId || null, vendor_types: vendorTypes, location_used: Boolean(coords) };
 
     let categoryVendorIds = null;
     if (categoryId) {
@@ -141,6 +145,7 @@ class HomeService {
     const { vendors, total } = await vendorRepository.findOpenForMap({
       coords,
       categoryVendorIds,
+      vendorTypes,
       limit: config.limits.mapVendorsMax,
     });
 
@@ -150,7 +155,7 @@ class HomeService {
     };
   }
 
-  async getNearbyVendors({ coords, radiusKm, categoryId, sort, query }) {
+  async getNearbyVendors({ coords, radiusKm, categoryId, vendorTypes = null, sort, query }) {
     if (categoryId) {
       assertCategoryId(categoryId);
       const category = await categoryRepository.findById(categoryId);
@@ -178,6 +183,7 @@ class HomeService {
             radius_km: radiusKm,
             sort,
             category_id: categoryId,
+            vendor_types: vendorTypes,
             location_used: true,
           },
         };
@@ -188,6 +194,7 @@ class HomeService {
       coords,
       radiusKm,
       categoryVendorIds,
+      vendorTypes,
       sort,
       limit,
       offset,

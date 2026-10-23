@@ -1,4 +1,5 @@
 const config = require('../config');
+const { vendorTypeLabel } = require('../config/vendorTypes');
 const ApiError = require('../utils/ApiError');
 const {
   parseAdminListQuery,
@@ -49,7 +50,7 @@ const toVendor = (vendor) => {
     role: 'vendor',
     name: row.name,
     identifier: row.phone || row.email,
-    secondary: row.vendor_type,
+    secondary: vendorTypeLabel(row.vendor_type),
     status: row.status,
     is_active: row.is_active,
     avatar_url: row.profile_image_url,

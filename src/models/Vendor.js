@@ -1,24 +1,12 @@
 const mongoose = require('mongoose');
 const timestamps = require('./timestamps');
 
-/**
- * Canonical vendor types available to the Vendor Dashboard.
- * Legacy values kept so existing records continue to validate.
- */
-const VENDOR_TYPES = [
-  'Home Cook',
-  'Restaurant',
-  'Café',
-  'Bakery',
-  'Caterer',
-  'Food Truck',
-  'Chef',
-  'Meal-prep business',
-  'Juice/Drinks vendor',
-  'Other food business',
-];
+// Vendor type codes (home_cook, restaurant, …) — see config/vendorTypes.js.
+const { VENDOR_TYPE_CODES } = require('../config/vendorTypes');
 
-const LEGACY_VENDOR_TYPES = ['Cafe', 'Bar & Grill'];
+const VENDOR_TYPES = VENDOR_TYPE_CODES;
+// Old labels were converted to codes (scripts/migrateVendorTypes.js).
+const LEGACY_VENDOR_TYPES = [];
 
 const vendorSchema = new mongoose.Schema(
   {
@@ -26,8 +14,14 @@ const vendorSchema = new mongoose.Schema(
     vendor_type: {
       type: String,
       required: true,
-      enum: [...VENDOR_TYPES, ...LEGACY_VENDOR_TYPES],
-      default: 'Restaurant',
+      enum: VENDOR_TYPES,
+      default: 'restaurant',
+    },
+    // A type change the vendor asked for, waiting for an admin.
+    vendor_type_request: {
+      vendor_type: { type: String, enum: [...VENDOR_TYPES, null], default: null },
+      reason: { type: String, default: '', trim: true },
+      requested_at: { type: Date, default: null },
     },
     owner_name: { type: String, trim: true },
     description: { type: String, default: '', trim: true },
@@ -140,6 +134,7 @@ vendorSchema.index({ is_active: 1, rating: -1 });
 vendorSchema.index({ is_active: 1, is_featured: -1, rating: -1 });
 vendorSchema.index({ name: 'text', neighborhood: 'text' });
 vendorSchema.index({ 'special.is_active': 1, 'special.delivery_at': 1 });
+vendorSchema.index({ vendor_type: 1, is_active: 1 });
 
 vendorSchema.virtual('latitude').get(function () {
   return this.location?.coordinates?.[1];

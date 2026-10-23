@@ -1,4 +1,5 @@
 const ApiError = require('../utils/ApiError');
+const { vendorTypeLabel } = require('../config/vendorTypes');
 const { parseQuantity } = require('../utils/validators');
 const wishlistRepository = require('../repositories/wishlistRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
@@ -16,6 +17,7 @@ const serializeWishlistEntry = (entry) => {
     vendor_id: String(item.vendor_id?._id ?? item.vendor_id),
     vendor_name: item.vendor_id?.name ?? '',
     vendor_type: item.vendor_id?.vendor_type ?? '',
+    vendor_type_label: item.vendor_id?.vendor_type ? vendorTypeLabel(item.vendor_id.vendor_type) : '',
     vendor_neighborhood: item.vendor_id?.neighborhood ?? '',
     delivery_available: Boolean(item.vendor_id?.delivery_available),
     added_at: entry.created_at,

@@ -12,6 +12,17 @@ const orderRepository = require('../repositories/orderRepository');
 const adminActionLogService = require('./adminActionLogService');
 const settlementService = require('./settlementService');
 const orderNotifications = require('./orderNotifications');
+const notificationService = require('./notificationService');
+const {
+  VENDOR_TYPES,
+  parseVendorType,
+  parseVendorTypeFilter,
+  vendorTypeLabel,
+} = require('../config/vendorTypes');
+
+/** Every type with how many vendors have it (zero included), for grouping. */
+const typeBreakdown = (counts) =>
+  VENDOR_TYPES.map((type) => ({ code: type.code, label: type.label, count: counts[type.code] || 0 }));
 
 const VENDOR_STATUSES = ['pending', 'approved', 'rejected', 'suspended'];
 
@@ -22,17 +33,25 @@ class AdminVendorService {
       maxLimit: config.admin.limits.listMax,
     });
     const status = parseEnum(query.status, VENDOR_STATUSES, 'status');
-    const { vendors, total } = await vendorRepository.adminList({
-      status,
-      search: query.search ? String(query.search).trim() : undefined,
-      limit,
-      offset,
-    });
+    const vendorTypes = parseVendorTypeFilter(query);
+    const [{ vendors, total }, typeCounts] = await Promise.all([
+      vendorRepository.adminList({
+        status,
+        search: query.search ? String(query.search).trim() : undefined,
+        vendorTypes,
+        limit,
+        offset,
+      }),
+      // Counts per type within the chosen status, for the type filter/grouping.
+      vendorRepository.countsByType({ status }),
+    ]);
     return {
       items: vendors.map(serializeAdminVendor),
       total,
       page,
       limit,
+      vendor_types: vendorTypes,
+      type_counts: typeBreakdown(typeCounts),
     };
   }
 
@@ -173,9 +192,67 @@ class AdminVendorService {
     return { vendor: serializeAdminVendor(updated) };
   }
 
+  /**
+   * An admin sets a vendor's type directly, or answers their change request
+   * (`decision`: 'approve' uses the requested type, 'reject' keeps the current one).
+   */
+  async setType(vendorId, body = {}, admin, req) {
+    parseObjectId(vendorId, 'vendor_id');
+    const vendor = await vendorRepository.findById(vendorId);
+    if (!vendor) throw ApiError.notFound('Vendor not found.', 'VENDOR_NOT_FOUND');
+
+    const requested = vendor.vendor_type_request?.vendor_type || null;
+    const decision = body.decision === 'approve' || body.decision === 'reject' ? body.decision : null;
+    if (decision && !requested) {
+      throw ApiError.conflict('This vendor has no pending type change request.', 'NO_TYPE_REQUEST');
+    }
+    const note = parseOptionalText(body.reason, { field: 'reason', max: 300 }) || '';
+    const nextType =
+      decision === 'reject' ? vendor.vendor_type : decision === 'approve' ? requested : parseVendorType(body.vendor_type);
+
+    const updated = await vendorRepository.update(vendorId, {
+      vendor_type: nextType,
+      vendor_type_request: { vendor_type: null, reason: '', requested_at: null },
+    });
+
+    const extra = note ? ` ${note}` : '';
+    if (nextType !== vendor.vendor_type || decision) {
+      notificationService
+        .notifyVendor(vendorId, {
+          type: 'account_update',
+          title: decision === 'reject' ? 'Vendor type change declined' : 'Vendor type updated',
+          body:
+            decision === 'reject'
+              ? `Your request to become ${vendorTypeLabel(requested)} was declined. You stay listed as ${vendorTypeLabel(vendor.vendor_type)}.${extra}`
+              : `Your kitchen is now listed as ${vendorTypeLabel(nextType)}.${extra}`,
+          link: '/vendor-dashboard/profile',
+          data: { vendor_type: nextType },
+        })
+        .catch(() => null);
+    }
+
+    await adminActionLogService.record(
+      admin,
+      {
+        action: decision ? `vendor.type_request_${decision === 'approve' ? 'approved' : 'rejected'}` : 'vendor.type_changed',
+        target_type: 'vendor',
+        target_id: vendorId,
+        target_label: vendor.name,
+        metadata: { from: vendor.vendor_type, to: nextType, requested, reason: note },
+      },
+      req
+    );
+
+    return { vendor: serializeAdminVendor(updated) };
+  }
+
   async counts() {
-    const counts = await vendorRepository.countsByVerification();
+    const [counts, typeCounts] = await Promise.all([
+      vendorRepository.countsByVerification(),
+      vendorRepository.countsByType(),
+    ]);
     return {
+      by_type: typeBreakdown(typeCounts),
       pending: counts.pending || 0,
       approved: counts.approved || 0,
       rejected: counts.rejected || 0,

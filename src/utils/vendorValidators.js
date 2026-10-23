@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
 const config = require('../config');
 const ApiError = require('./ApiError');
-const { VENDOR_TYPES, LEGACY_VENDOR_TYPES } = require('../models/Vendor');
 
 // name@domain.tld — letters/digits/._%+- before the @, a real domain with a 2+ letter ending after it.
 const EMAIL_REGEX =
@@ -205,15 +204,8 @@ function parseVendorOrderStatus(raw) {
   return raw;
 }
 
-function parseVendorType(raw) {
-  const allowed = [...VENDOR_TYPES, ...LEGACY_VENDOR_TYPES];
-  if (!allowed.includes(raw)) {
-    throw badRequest('vendor_type is invalid.', {
-      vendor_type: `expected one of: ${VENDOR_TYPES.join(', ')}`,
-    });
-  }
-  return raw;
-}
+// Accepts a type code (home_cook) or an old label (Home Cook) and returns the code.
+const { parseVendorType } = require('../config/vendorTypes');
 
 /** Accepts either an already-parsed object/array or a JSON string. */
 function parseJsonField(raw, field) {

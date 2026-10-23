@@ -28,4 +28,8 @@ const reviewDocuments = asyncHandler(async (req, res) => {
   res.json(await adminVendorService.reviewDocuments(req.params.vendorId, req.admin, req));
 });
 
-module.exports = { list, getById, setStatus, counts, reviewDocuments };
+const setType = asyncHandler(async (req, res) => {
+  res.json(await adminVendorService.setType(req.params.vendorId, req.body || {}, req.admin, req));
+});
+
+module.exports = { list, getById, setStatus, setType, counts, reviewDocuments };

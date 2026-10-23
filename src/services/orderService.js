@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { vendorTypeLabel } = require('../config/vendorTypes');
 const mongoose = require('mongoose');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
@@ -160,6 +161,7 @@ const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
         id: String(vendor._id),
         name: vendor.name,
         vendor_type: vendor.vendor_type,
+        vendor_type_label: vendorTypeLabel(vendor.vendor_type),
         banner_image_url: vendor.banner_image_url || null,
         rating: vendor.rating,
       }

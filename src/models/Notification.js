@@ -50,6 +50,8 @@ const notificationSchema = new mongoose.Schema(
         'refund_update',
         'support_message',
         'vendor_offer',
+        // A kitchen asked to change its vendor type (admin feed).
+        'vendor_type_request',
         // Delivery worker updates on an order they were offered or took.
         'delivery_update',
         'delivery_taken',

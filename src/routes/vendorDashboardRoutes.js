@@ -27,5 +27,7 @@ router.patch(
   vendorProfileController.update
 );
 router.patch('/availability', requireVendorAuth, requireApprovedVendor, vendorProfileController.setAvailability);
+router.post('/profile/type-request', requireVendorAuth, vendorProfileController.requestTypeChange);
+router.delete('/profile/type-request', requireVendorAuth, vendorProfileController.cancelTypeChange);
 
 module.exports = router;

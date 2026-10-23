@@ -3,9 +3,22 @@ const { isVendorLive } = require('./vendorPresence');
 const { isKitchenReady } = require('./deliveryReady');
 const deliverySettings = require('../services/deliverySettingsService');
 const access = require('../config/adminAccess');
+const { vendorTypeLabel } = require('../config/vendorTypes');
 
 const round1 = (value) =>
   typeof value === 'number' ? Math.round(value * 10) / 10 : null;
+
+/** A vendor's pending request to change their type (null when none). */
+function serializeVendorTypeRequest(vendor) {
+  const request = vendor.vendor_type_request;
+  if (!request?.vendor_type) return null;
+  return {
+    vendor_type: request.vendor_type,
+    vendor_type_label: vendorTypeLabel(request.vendor_type),
+    reason: request.reason || '',
+    requested_at: request.requested_at || null,
+  };
+}
 
 function serializeCategory(category) {
   return {
@@ -22,6 +35,7 @@ function serializeVendorCard(vendor, { distanceKm } = {}) {
     id: String(vendor._id),
     name: vendor.name,
     vendor_type: vendor.vendor_type,
+    vendor_type_label: vendorTypeLabel(vendor.vendor_type),
     rating: vendor.rating,
     estimated_prep_time: vendor.estimated_prep_time,
     distance_km: typeof distanceKm === 'number' ? round1(distanceKm) : null,
@@ -64,6 +78,8 @@ function serializeSearchDish(dish, { distanceKm } = {}) {
     image_url: dish.image_url || null,
     vendor_id: String(dish.vendor_id),
     vendor_name: dish.vendor?.name ?? null,
+    vendor_type: dish.vendor?.vendor_type ?? null,
+    vendor_type_label: dish.vendor?.vendor_type ? vendorTypeLabel(dish.vendor.vendor_type) : null,
     category_name: dish.category?.name ?? null,
     distance_km: typeof distanceKm === 'number' ? round1(distanceKm) : null,
     relevance_score: 0,
@@ -115,6 +131,7 @@ function serializeVendorStorefront(vendor, { menu, distanceKm } = {}) {
     id: String(vendor._id),
     name: vendor.name,
     vendor_type: vendor.vendor_type,
+    vendor_type_label: vendorTypeLabel(vendor.vendor_type),
     rating: vendor.rating,
     estimated_prep_time: vendor.estimated_prep_time,
     delivery_available: Boolean(vendor.delivery_available),
@@ -140,6 +157,8 @@ function serializeVendorAccount(vendor) {
     id: String(vendor._id),
     name: vendor.name,
     vendor_type: vendor.vendor_type,
+    vendor_type_label: vendorTypeLabel(vendor.vendor_type),
+    vendor_type_request: serializeVendorTypeRequest(vendor),
     owner_name: vendor.owner_name || null,
     description: vendor.description || '',
     email: vendor.email || null,
@@ -597,6 +616,8 @@ function serializeAdminVendor(vendor) {
     name: vendor.name,
     owner_name: vendor.owner_name || '',
     vendor_type: vendor.vendor_type,
+    vendor_type_label: vendorTypeLabel(vendor.vendor_type),
+    vendor_type_request: serializeVendorTypeRequest(vendor),
     phone: vendor.phone || null,
     email: vendor.email || null,
     neighborhood: vendor.neighborhood || null,
@@ -901,6 +922,7 @@ function serializeAdminCommission(commission) {
       : null,
     category_name: category?.name ?? null,
     vendor_type: commission.vendor_type || '',
+    vendor_type_label: commission.vendor_type ? vendorTypeLabel(commission.vendor_type) : '',
     percentage: commission.percentage,
     fixed_fee_rwf: commission.fixed_fee_rwf ?? 0,
     is_active: commission.is_active !== false,

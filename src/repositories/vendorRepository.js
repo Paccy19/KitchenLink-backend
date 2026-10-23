@@ -4,6 +4,12 @@ const { liveVendorFilter, liveVendorExpr } = require('../utils/vendorPresence');
 const escapeRegex = (value) =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** Narrows a query to the given vendor type codes (no-op when none). */
+const withVendorTypes = (query, vendorTypes) => {
+  if (vendorTypes && vendorTypes.length) query.vendor_type = { $in: vendorTypes };
+  return query;
+};
+
 const toPoint = ({ lat, lng }) => ({
   type: 'Point',
   coordinates: [lng, lat],
@@ -18,11 +24,12 @@ class VendorRepository {
     coords,
     radiusKm,
     categoryVendorIds = null,
+    vendorTypes = null,
     sort = 'distance',
     limit,
     offset = 0,
   }) {
-    const baseQuery = { is_active: true, deleted_at: null, ...liveVendorFilter() };
+    const baseQuery = withVendorTypes({ is_active: true, deleted_at: null, ...liveVendorFilter() }, vendorTypes);
     if (categoryVendorIds) baseQuery._id = { $in: categoryVendorIds };
 
     let pipeline;
@@ -70,8 +77,8 @@ class VendorRepository {
    * coordinates each one gets distance_km and they come nearest first;
    * otherwise best rated first. `limit` is a safety cap, not a page size.
    */
-  async findOpenForMap({ coords, categoryVendorIds = null, limit }) {
-    const baseQuery = { is_active: true, deleted_at: null, ...liveVendorFilter() };
+  async findOpenForMap({ coords, categoryVendorIds = null, vendorTypes = null, limit }) {
+    const baseQuery = withVendorTypes({ is_active: true, deleted_at: null, ...liveVendorFilter() }, vendorTypes);
     if (categoryVendorIds) baseQuery._id = { $in: categoryVendorIds };
 
     const pipeline = coords
@@ -113,11 +120,12 @@ class VendorRepository {
     coords,
     nearRadiusKm,
     categoryVendorIds = null,
+    vendorTypes = null,
     sort = 'distance',
     limit,
     offset = 0,
   }) {
-    const baseQuery = { is_active: true, deleted_at: null };
+    const baseQuery = withVendorTypes({ is_active: true, deleted_at: null }, vendorTypes);
     if (categoryVendorIds) baseQuery._id = { $in: categoryVendorIds };
 
     const pipeline = coords
@@ -249,8 +257,8 @@ class VendorRepository {
     ).lean();
   }
 
-  async findTopRated(limit) {
-    return Vendor.find({ is_active: true, deleted_at: null, ...liveVendorFilter() })
+  async findTopRated(limit, { vendorTypes = null } = {}) {
+    return Vendor.find(withVendorTypes({ is_active: true, deleted_at: null, ...liveVendorFilter() }, vendorTypes))
       .sort({ rating: -1, estimated_prep_time: 1, name: 1 })
       .limit(limit)
       .lean();
@@ -274,7 +282,7 @@ class VendorRepository {
    * or that own a dish matching the tokens. Limited candidate set;
    * final relevance ranking happens in the service layer.
    */
-  async search({ tokenFilter, dishVendorIds = [], limit }) {
+  async search({ tokenFilter, dishVendorIds = [], vendorTypes = null, limit }) {
     const orClauses = [tokenFilter];
     if (dishVendorIds.length > 0) {
       orClauses.push({ _id: { $in: dishVendorIds } });
@@ -282,11 +290,16 @@ class VendorRepository {
 
     // Closed kitchens are searchable too (customers can schedule for later);
     // the search service ranks open ones higher.
-    return Vendor.find({
-      is_active: true,
-      deleted_at: null,
-      $or: orClauses,
-    })
+    return Vendor.find(
+      withVendorTypes(
+        {
+          is_active: true,
+          deleted_at: null,
+          $or: orClauses,
+        },
+        vendorTypes
+      )
+    )
       .sort({ rating: -1 })
       .limit(limit)
       .lean();
@@ -294,8 +307,8 @@ class VendorRepository {
 
   /* ------------------------------- admin ------------------------------- */
 
-  async adminList({ status, search, isActive, limit, offset }) {
-    const filter = { deleted_at: null };
+  async adminList({ status, search, isActive, vendorTypes = null, limit, offset }) {
+    const filter = withVendorTypes({ deleted_at: null }, vendorTypes);
     if (status) filter.verification_status = status;
     if (isActive !== undefined) filter.is_active = isActive;
     if (search) {
@@ -314,6 +327,23 @@ class VendorRepository {
       Vendor.countDocuments(filter),
     ]);
     return { vendors, total };
+  }
+
+  /**
+   * Admin grouping: how many vendors of each type, optionally within one
+   * verification status (pending / approved / suspended …).
+   */
+  async countsByType({ status = null } = {}) {
+    const match = { deleted_at: null };
+    if (status) match.verification_status = status;
+    const rows = await Vendor.aggregate([
+      { $match: match },
+      { $group: { _id: '$vendor_type', count: { $sum: 1 } } },
+    ]);
+    return rows.reduce((acc, row) => {
+      acc[row._id || 'other'] = row.count;
+      return acc;
+    }, {});
   }
 
   async countsByVerification() {

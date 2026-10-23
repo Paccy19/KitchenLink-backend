@@ -9,4 +9,12 @@ const setAvailability = asyncHandler(async (req, res) => {
   res.json(await vendorProfileService.setAvailability(req.vendor, req.body));
 });
 
-module.exports = { update, setAvailability };
+const requestTypeChange = asyncHandler(async (req, res) => {
+  res.json(await vendorProfileService.requestTypeChange(req.vendor, req.body));
+});
+
+const cancelTypeChange = asyncHandler(async (req, res) => {
+  res.json(await vendorProfileService.cancelTypeChange(req.vendor));
+});
+
+module.exports = { update, setAvailability, requestTypeChange, cancelTypeChange };
