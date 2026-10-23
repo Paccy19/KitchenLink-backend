@@ -7,6 +7,14 @@ const menuItemRepository = require('../repositories/menuItemRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const deliveryPricingService = require('./deliveryPricingService');
 
+/** Throws unless the dish's kitchen is approved and active on the marketplace. */
+async function assertVendorListed(menuItem) {
+  const vendor = await vendorRepository.findActiveById(menuItem.vendor_id);
+  if (!vendor) {
+    throw ApiError.conflict(`${menuItem.name} is not available yet.`, 'VENDOR_UNAVAILABLE');
+  }
+}
+
 const serializeCartEntry = (entry) => {
   const item = entry.menu_item_id;
   const vendor = entry.vendor_id;
@@ -94,6 +102,7 @@ class CartService {
       );
     }
 
+    await assertVendorListed(menuItem);
     await this.assertVendorCompatible(customerId, menuItem.vendor_id);
     await cartRepository.upsertQuantity(
       customerId,
@@ -156,6 +165,7 @@ class CartService {
       if (!menuItem.is_available) {
         throw ApiError.conflict(`${menuItem.name} is currently unavailable.`, 'ITEM_UNAVAILABLE');
       }
+      await assertVendorListed(menuItem);
       const existing = aggregated.get(menuItemId);
       const nextQuantity = (existing?.quantity ?? 0) + quantity;
       if (nextQuantity > config.limits.cartMaxQuantity) {

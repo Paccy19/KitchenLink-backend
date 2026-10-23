@@ -3,6 +3,7 @@ const { vendorTypeLabel } = require('../config/vendorTypes');
 const { parseQuantity } = require('../utils/validators');
 const wishlistRepository = require('../repositories/wishlistRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
+const vendorRepository = require('../repositories/vendorRepository');
 const cartService = require('./cartService');
 
 const serializeWishlistEntry = (entry) => {
@@ -38,6 +39,10 @@ class WishlistService {
 
     const menuItem = await menuItemRepository.findById(menuItemId).catch(() => null);
     if (!menuItem) {
+      throw ApiError.notFound('Menu item not found.', 'MENU_ITEM_NOT_FOUND');
+    }
+    // Kitchens still under review (or suspended) aren't on the marketplace yet.
+    if (!(await vendorRepository.findActiveById(menuItem.vendor_id))) {
       throw ApiError.notFound('Menu item not found.', 'MENU_ITEM_NOT_FOUND');
     }
 
