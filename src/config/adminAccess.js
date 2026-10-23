@@ -139,6 +139,8 @@ const roleLabel = (role) => (role === OWNER_ROLE ? 'Owner' : ROLES[roleKey(role)
 // Which alerts each permission may see in the shared admin feed.
 const NOTIFICATION_PERMISSION = {
   vendor_application: 'vendors:read',
+  // A kitchen asked to change its vendor type.
+  vendor_type_request: 'vendors:read',
   driver_application: 'drivers:read',
   complaint_opened: 'complaints:read',
   payout_requested: 'payouts:read',
