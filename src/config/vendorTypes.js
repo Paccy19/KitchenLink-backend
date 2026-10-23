@@ -17,7 +17,15 @@ const VENDOR_TYPES = [
   { code: 'chef', label: 'Chef', description: 'A professional chef cooking signature dishes.' },
   { code: 'meal_prep', label: 'Meal Prep', description: 'Ready-made meals prepared in advance for the week.' },
   { code: 'juice_drinks', label: 'Juice & Drinks', description: 'Fresh juices, smoothies and other drinks.' },
-  { code: 'other', label: 'Other', description: 'Any other kind of food business.' },
+  // Catch-all for legitimate food businesses that don't fit the types above
+  // (kiosks, cultural or diet-specific kitchens, dessert shops, hybrids, niche
+  // sellers, pop-up/cloud kitchens). Same features as every type, no extra rules.
+  {
+    code: 'other',
+    label: 'Other',
+    title: 'Other food business',
+    description: 'Any food business that does not fit the types above (specialty, niche, or unique concept).',
+  },
 ];
 
 const VENDOR_TYPE_CODES = VENDOR_TYPES.map((type) => type.code);
