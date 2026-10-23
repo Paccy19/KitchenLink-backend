@@ -28,6 +28,77 @@ const VENDOR_TYPES = [
   },
 ];
 
+/**
+ * What each type does well, what it is less suited for, and a short note.
+ * These are SOFT guidance only: no type is blocked from any feature or food.
+ * `features` are the platform tools that suit the type best (shown as tips
+ * on the kitchen dashboard): immediate, scheduled, preorder (Tomorrow's
+ * Special), offer_days, pickup, delivery.
+ */
+const PROFILES = {
+  home_cook: {
+    strengths: ['Sell any food', 'Scheduled orders & pre-orders', "Tomorrow's Special", 'Small daily capacity', 'Personal touch'],
+    less_suited: ['High-volume immediate orders', 'Large catering', 'Formal dine-in feel'],
+    note: 'Best for homemade food with limited daily slots.',
+    features: ['preorder', 'scheduled', 'pickup'],
+  },
+  restaurant: {
+    strengths: ['Full menu', 'High volume', 'Immediate & scheduled orders', 'Delivery & pick-up'],
+    less_suited: ['Very small home-style batches'],
+    note: 'Classic full-service kitchen.',
+    features: ['immediate', 'scheduled', 'delivery', 'pickup'],
+  },
+  cafe: {
+    strengths: ['Coffee', 'Light meals', 'Breakfast', 'Snacks', 'Quick orders'],
+    less_suited: ['Heavy main meals', 'Large catering', 'Late-night heavy food'],
+    note: 'Casual and daytime-focused.',
+    features: ['immediate', 'pickup'],
+  },
+  bakery: {
+    strengths: ['Bread', 'Cakes', 'Pastries', 'Desserts', 'Pre-orders'],
+    less_suited: ['Full savoury meals', 'Hot cooked dishes as the main business'],
+    note: 'Can still sell savoury items.',
+    features: ['preorder', 'scheduled', 'offer_days'],
+  },
+  caterer: {
+    strengths: ['Bulk orders', 'Events', 'Advance & scheduled orders', 'Large quantities'],
+    less_suited: ['Small single-portion immediate orders'],
+    note: 'Strong with Offer Days and pre-orders.',
+    features: ['offer_days', 'preorder', 'scheduled'],
+  },
+  food_truck: {
+    strengths: ['Mobile location', 'Street-style food', 'Quick service'],
+    less_suited: ['Fixed-address fine dining', 'Large advance catering'],
+    note: 'Location can change.',
+    features: ['immediate', 'pickup'],
+  },
+  chef: {
+    strengths: ['Custom menus', 'Private dining', 'Premium & specialty dishes', 'Scheduled orders'],
+    less_suited: ['High-volume standard delivery', 'Cheap daily meals'],
+    note: 'More personalised and higher-end.',
+    features: ['scheduled', 'preorder', 'offer_days'],
+  },
+  meal_prep: {
+    strengths: ['Weekly plans', 'Portioned meals', 'Subscriptions', 'Scheduled orders'],
+    less_suited: ['On-demand single hot meals', 'Café-style snacks'],
+    note: 'Best with recurring orders.',
+    features: ['scheduled', 'offer_days', 'preorder'],
+  },
+  juice_drinks: {
+    strengths: ['Juices', 'Smoothies', 'Beverages', 'Light add-ons'],
+    less_suited: ['Full solid meals as the main offering'],
+    note: 'Can still sell light food.',
+    features: ['immediate', 'pickup'],
+  },
+  other: {
+    strengths: ["Any specialty or niche concept that doesn't fit the types above"],
+    less_suited: [],
+    note: 'Catch-all for unique businesses — fully open.',
+    features: ['immediate', 'scheduled', 'preorder', 'offer_days'],
+  },
+};
+VENDOR_TYPES.forEach((type) => Object.assign(type, PROFILES[type.code]));
+
 const VENDOR_TYPE_CODES = VENDOR_TYPES.map((type) => type.code);
 const BY_CODE = new Map(VENDOR_TYPES.map((type) => [type.code, type]));
 
