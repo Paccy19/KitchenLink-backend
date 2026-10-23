@@ -13,8 +13,16 @@ const requestTypeChange = asyncHandler(async (req, res) => {
   res.json(await vendorProfileService.requestTypeChange(req.vendor, req.body));
 });
 
+const getOrdering = asyncHandler(async (req, res) => {
+  res.json(await vendorProfileService.getOrdering(req.vendor));
+});
+
+const updateOrdering = asyncHandler(async (req, res) => {
+  res.json(await vendorProfileService.updateOrdering(req.vendor, req.body));
+});
+
 const cancelTypeChange = asyncHandler(async (req, res) => {
   res.json(await vendorProfileService.cancelTypeChange(req.vendor));
 });
 
-module.exports = { update, setAvailability, requestTypeChange, cancelTypeChange };
+module.exports = { update, setAvailability, requestTypeChange, cancelTypeChange, getOrdering, updateOrdering };

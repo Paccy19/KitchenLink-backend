@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { vendorTypeLabel } = require('../config/vendorTypes');
+const vendorOrderingService = require('./vendorOrderingService');
 const mongoose = require('mongoose');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
@@ -355,9 +356,11 @@ class OrderService {
     let specialText = '';
 
     if (orderType === 'scheduled') {
+      // The kitchen type sets the real notice / days-ahead window (checked
+      // below, once the kitchen is known); this only rejects past or absurd slots.
       scheduledFor = parseScheduledFor(body?.scheduled_for, {
-        minLeadMinutes: orders.schedule.minLeadMinutes,
-        maxDaysAhead: orders.schedule.maxDaysAhead,
+        minLeadMinutes: 0,
+        maxDaysAhead: 366,
       });
     }
 
@@ -433,6 +436,14 @@ class OrderService {
     }));
 
     const subtotal = items.reduce((sum, item) => sum + item.subtotal_rwf, 0);
+    // Type rules: advance-only kitchens, notice, minimum order, basket size
+    // and daily capacity (config/vendorTypes.js RULES).
+    await vendorOrderingService.assertOrderAllowed(vendor, {
+      orderType,
+      scheduledFor,
+      subtotal,
+      itemCount: items.reduce((sum, item) => sum + item.quantity, 0),
+    });
     // Delivery is priced by road distance from the kitchen to the drop-off and
     // charged on top of the food; the rider receives it in full. Pickup is free.
     const quote = isPickup

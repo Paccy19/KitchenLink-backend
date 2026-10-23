@@ -3,7 +3,7 @@ const { isVendorLive } = require('./vendorPresence');
 const { isKitchenReady } = require('./deliveryReady');
 const deliverySettings = require('../services/deliverySettingsService');
 const access = require('../config/adminAccess');
-const { vendorTypeLabel } = require('../config/vendorTypes');
+const { vendorTypeLabel, orderingRulesFor } = require('../config/vendorTypes');
 
 const round1 = (value) =>
   typeof value === 'number' ? Math.round(value * 10) / 10 : null;
@@ -36,6 +36,8 @@ function serializeVendorCard(vendor, { distanceKm } = {}) {
     name: vendor.name,
     vendor_type: vendor.vendor_type,
     vendor_type_label: vendorTypeLabel(vendor.vendor_type),
+    // Caterers, chefs and meal-prep kitchens take advance orders only.
+    advance_only: !orderingRulesFor(vendor).order_now,
     rating: vendor.rating,
     estimated_prep_time: vendor.estimated_prep_time,
     distance_km: typeof distanceKm === 'number' ? round1(distanceKm) : null,
@@ -159,6 +161,7 @@ function serializeVendorAccount(vendor) {
     vendor_type: vendor.vendor_type,
     vendor_type_label: vendorTypeLabel(vendor.vendor_type),
     vendor_type_request: serializeVendorTypeRequest(vendor),
+    ordering: orderingRulesFor(vendor),
     owner_name: vendor.owner_name || null,
     description: vendor.description || '',
     email: vendor.email || null,
@@ -620,6 +623,7 @@ function serializeAdminVendor(vendor) {
     vendor_type: vendor.vendor_type,
     vendor_type_label: vendorTypeLabel(vendor.vendor_type),
     vendor_type_request: serializeVendorTypeRequest(vendor),
+    ordering: orderingRulesFor(vendor),
     phone: vendor.phone || null,
     email: vendor.email || null,
     neighborhood: vendor.neighborhood || null,

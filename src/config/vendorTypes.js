@@ -97,7 +97,83 @@ const PROFILES = {
     features: ['immediate', 'scheduled', 'preorder', 'offer_days'],
   },
 };
-VENDOR_TYPES.forEach((type) => Object.assign(type, PROFILES[type.code]));
+/**
+ * How each type takes orders (ENFORCED at checkout), from the type profiles:
+ *  - order_now: can customers order for right now? Caterers, chefs and
+ *    meal-prep kitchens work ahead, so they take advance orders only.
+ *  - min_lead_minutes / max_days_ahead: the window a scheduled order's slot
+ *    must fall in.
+ *  - daily_order_limit: most orders served per day (small-capacity types);
+ *    null = no limit. The kitchen may change it within `limit_range`.
+ *  - min_order_rwf: smallest food subtotal (bulk / premium types). The kitchen
+ *    may change it within `min_order_range`.
+ *  - max_items_per_order: most dishes (total quantity) in one order, for
+ *    types not made for large catering; null = no maximum.
+ */
+const RULES = {
+  home_cook: {
+    order_now: true, min_lead_minutes: 45, max_days_ahead: 3,
+    daily_order_limit: 20, limit_range: [1, 60],
+    min_order_rwf: 0, min_order_range: [0, 20000],
+    max_items_per_order: 10,
+  },
+  restaurant: {
+    order_now: true, min_lead_minutes: 45, max_days_ahead: 7,
+    daily_order_limit: null, limit_range: null,
+    min_order_rwf: 0, min_order_range: [0, 20000],
+    max_items_per_order: null,
+  },
+  cafe: {
+    order_now: true, min_lead_minutes: 30, max_days_ahead: 2,
+    daily_order_limit: null, limit_range: null,
+    min_order_rwf: 0, min_order_range: [0, 10000],
+    max_items_per_order: 15,
+  },
+  bakery: {
+    order_now: true, min_lead_minutes: 45, max_days_ahead: 14,
+    daily_order_limit: null, limit_range: null,
+    min_order_rwf: 0, min_order_range: [0, 20000],
+    max_items_per_order: null,
+  },
+  caterer: {
+    order_now: false, min_lead_minutes: 24 * 60, max_days_ahead: 30,
+    daily_order_limit: null, limit_range: null,
+    min_order_rwf: 20000, min_order_range: [5000, 500000],
+    max_items_per_order: null,
+  },
+  food_truck: {
+    order_now: true, min_lead_minutes: 30, max_days_ahead: 1,
+    daily_order_limit: null, limit_range: null,
+    min_order_rwf: 0, min_order_range: [0, 10000],
+    max_items_per_order: 15,
+  },
+  chef: {
+    order_now: false, min_lead_minutes: 4 * 60, max_days_ahead: 14,
+    daily_order_limit: 8, limit_range: [1, 30],
+    min_order_rwf: 10000, min_order_range: [0, 200000],
+    max_items_per_order: null,
+  },
+  meal_prep: {
+    order_now: false, min_lead_minutes: 12 * 60, max_days_ahead: 14,
+    daily_order_limit: null, limit_range: null,
+    min_order_rwf: 0, min_order_range: [0, 50000],
+    max_items_per_order: null,
+  },
+  juice_drinks: {
+    order_now: true, min_lead_minutes: 30, max_days_ahead: 2,
+    daily_order_limit: null, limit_range: null,
+    min_order_rwf: 0, min_order_range: [0, 10000],
+    max_items_per_order: null,
+  },
+  other: {
+    order_now: true, min_lead_minutes: 45, max_days_ahead: 7,
+    daily_order_limit: null, limit_range: null,
+    min_order_rwf: 0, min_order_range: [0, 50000],
+    max_items_per_order: null,
+  },
+};
+
+VENDOR_TYPES.forEach((type) => Object.assign(type, PROFILES[type.code], { rules: RULES[type.code] }));
 
 const VENDOR_TYPE_CODES = VENDOR_TYPES.map((type) => type.code);
 const BY_CODE = new Map(VENDOR_TYPES.map((type) => [type.code, type]));
@@ -133,6 +209,35 @@ function toVendorTypeCode(value) {
 
 function vendorTypeLabel(code) {
   return BY_CODE.get(toVendorTypeCode(code))?.label || 'Other';
+}
+
+/**
+ * The ordering rules in force for a vendor: its type's rules, with the
+ * kitchen's own daily limit / minimum order (vendor.ordering_settings) when
+ * it set them.
+ */
+function orderingRulesFor(vendor) {
+  const code = toVendorTypeCode(vendor?.vendor_type) || 'other';
+  const base = RULES[code];
+  const own = vendor?.ordering_settings || {};
+  // Kept inside the type's range, e.g. after an admin changed the type.
+  const clamp = (value, [min, max]) => Math.min(max, Math.max(min, value));
+  return {
+    vendor_type: code,
+    order_now: base.order_now,
+    min_lead_minutes: base.min_lead_minutes,
+    max_days_ahead: base.max_days_ahead,
+    daily_order_limit:
+      base.limit_range && Number.isInteger(own.daily_order_limit)
+        ? clamp(own.daily_order_limit, base.limit_range)
+        : base.daily_order_limit,
+    min_order_rwf: Number.isInteger(own.min_order_rwf)
+      ? clamp(own.min_order_rwf, base.min_order_range)
+      : base.min_order_rwf,
+    max_items_per_order: base.max_items_per_order,
+    limit_range: base.limit_range,
+    min_order_range: base.min_order_range,
+  };
 }
 
 /** Required vendor type on sign-up / admin edits: a code (or an old label). */
@@ -175,6 +280,7 @@ module.exports = {
   VENDOR_TYPE_CODES,
   toVendorTypeCode,
   vendorTypeLabel,
+  orderingRulesFor,
   parseVendorType,
   parseVendorTypeFilter,
 };

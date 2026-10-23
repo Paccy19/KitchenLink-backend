@@ -11,6 +11,7 @@ const { serializeVendorAccount } = require('../utils/serializers');
 const { resolveImageUrl } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
 const notificationService = require('./notificationService');
+const vendorOrderingService = require('./vendorOrderingService');
 const { parseVendorType, vendorTypeLabel } = require('../config/vendorTypes');
 
 class VendorProfileService {
@@ -103,6 +104,18 @@ class VendorProfileService {
 
     const updated = await vendorRepository.update(vendor._id, payload);
     return { vendor: serializeVendorAccount(updated) };
+  }
+
+  /** The ordering rules of the kitchen's type, with today's bookings. */
+  async getOrdering(vendor) {
+    return { ordering: await vendorOrderingService.summary(vendor) };
+  }
+
+  /** The kitchen sets its own daily order limit / minimum order (null = type default). */
+  async updateOrdering(vendor, body = {}) {
+    const settings = vendorOrderingService.parseSettings(vendor, body);
+    const updated = await vendorRepository.update(vendor._id, { ordering_settings: settings });
+    return { ordering: await vendorOrderingService.summary(updated) };
   }
 
   /**

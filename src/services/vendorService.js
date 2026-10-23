@@ -3,6 +3,7 @@ const ApiError = require('../utils/ApiError');
 const vendorRepository = require('../repositories/vendorRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
 const deliveryPricingService = require('./deliveryPricingService');
+const vendorOrderingService = require('./vendorOrderingService');
 const { distanceFromCoords } = require('../utils/geo');
 const {
   serializeMenuItem,
@@ -55,7 +56,11 @@ class VendorService {
       ? distanceFromCoords(coords, vendor.location?.coordinates)
       : null;
 
-    return serializeVendorStorefront(vendor, { menu, distanceKm });
+    return {
+      ...serializeVendorStorefront(vendor, { menu, distanceKm }),
+      // How this kitchen type takes orders (advance-only, notice, limits).
+      ordering: await vendorOrderingService.summary(vendor),
+    };
   }
 
   /** Public feed of active "Tomorrow's Special" pre-order announcements. */

@@ -23,6 +23,12 @@ const vendorSchema = new mongoose.Schema(
       reason: { type: String, default: '', trim: true },
       requested_at: { type: Date, default: null },
     },
+    // The kitchen's own daily order limit / minimum order (null = its type's
+    // default; see config/vendorTypes.js RULES).
+    ordering_settings: {
+      daily_order_limit: { type: Number, min: 1, default: null },
+      min_order_rwf: { type: Number, min: 0, default: null },
+    },
     owner_name: { type: String, trim: true },
     description: { type: String, default: '', trim: true },
     // Credentials (Vendor Dashboard login).

@@ -142,6 +142,8 @@ CREATE TABLE vendors (
                                              'food_truck','chef','meal_prep','juice_drinks','other')),
   -- A type change the vendor asked for: {vendor_type, reason, requested_at}.
   vendor_type_request JSONB       NOT NULL DEFAULT '{"vendor_type": null, "reason": "", "requested_at": null}',
+  -- The kitchen's own daily order limit / minimum order (null = type default).
+  ordering_settings   JSONB       NOT NULL DEFAULT '{"daily_order_limit": null, "min_order_rwf": null}',
   owner_name          TEXT,
   description         TEXT        NOT NULL DEFAULT '',
   email               TEXT        UNIQUE,           -- sparse unique in MongoDB; PG allows many NULLs
@@ -497,7 +499,7 @@ CREATE TABLE notifications (
                                'vendor_application','driver_application','complaint_opened',
                                'payout_requested','payout_update','order_placed','payment_failed',
                                'owner_finance','account_update','refund_update','support_message',
-                               'vendor_offer','vendor_type_request','delivery_update','delivery_taken',
+                               'vendor_offer','vendor_type_request','chat_message','delivery_update','delivery_taken',
                                'delivery_ready','delivery_pickup_reminder','delivery_late',
                                'delivery_penalty','delivery_cancelled','late_pickup')),
   title        TEXT        NOT NULL,

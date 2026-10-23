@@ -27,6 +27,8 @@ router.patch(
   vendorProfileController.update
 );
 router.patch('/availability', requireVendorAuth, requireApprovedVendor, vendorProfileController.setAvailability);
+router.get('/ordering', requireVendorAuth, vendorProfileController.getOrdering);
+router.put('/ordering', requireVendorAuth, requireApprovedVendor, vendorProfileController.updateOrdering);
 router.post('/profile/type-request', requireVendorAuth, vendorProfileController.requestTypeChange);
 router.delete('/profile/type-request', requireVendorAuth, vendorProfileController.cancelTypeChange);
 

@@ -71,7 +71,7 @@ const SPECS = [
   {
     table: 'vendors', collection: 'vendors', sample: 'name',
     fields: {
-      name: 'text', vendor_type: 'text', vendor_type_request: 'json', owner_name: 'text', description: 'text',
+      name: 'text', vendor_type: 'text', vendor_type_request: 'json', ordering_settings: 'json', owner_name: 'text', description: 'text',
       email: 'text', phone: 'text', password_hash: 'text', last_login_at: 'date',
       location: 'json', neighborhood: 'text', address: 'text', rating: 'num',
       estimated_prep_time: 'num', is_active: 'bool', is_open: 'bool',
