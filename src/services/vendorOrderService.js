@@ -141,7 +141,9 @@ class VendorOrderService {
     // Pickup orders: the customer gets a code to show the kitchen.
     const isPickup = order.fulfillment === 'pickup';
     if (nextStatus === 'ready' && isPickup) {
-      update.pickup_code = String(crypto.randomInt(100000, 1000000));
+      // The code was given at placement; older orders without one get it now.
+      const existing = await orderRepository.findPickupCode(order._id);
+      update.pickup_code = existing || String(crypto.randomInt(100000, 1000000));
       update.pickup_code_sent_at = now;
       update.pickup_code_attempts = 0;
     }

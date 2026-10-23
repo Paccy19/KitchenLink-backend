@@ -29,7 +29,18 @@ const payOrder = asyncHandler(async (req, res) => {
   res.json(await orderService.pay(req.customer._id, req.params.order_id, req.body));
 });
 
+// Pickup order -> delivery: price the new address, then pay and switch.
+const quoteSwitchToDelivery = asyncHandler(async (req, res) => {
+  res.json(await orderService.quoteSwitchToDelivery(req.customer._id, req.params.order_id, req.body));
+});
+
+const switchToDelivery = asyncHandler(async (req, res) => {
+  res.json(await orderService.switchToDelivery(req.customer._id, req.params.order_id, req.body));
+});
+
 module.exports = {
+  quoteSwitchToDelivery,
+  switchToDelivery,
   paymentMethods,
   checkout,
   listOrders,

@@ -21,6 +21,24 @@ class OrderRepository {
   }
 
   /**
+   * Turns a pickup order into a delivery order, only while it is still an
+   * uncollected pickup (atomic, so it can't race the kitchen confirming the
+   * pickup code). Returns null when it was collected, cancelled or switched.
+   */
+  async switchPickupToDelivery(orderId, allowedStatuses, { set, inc, note, at, historyStatus }) {
+    return Order.findOneAndUpdate(
+      { _id: orderId, fulfillment: 'pickup', status: { $in: allowedStatuses } },
+      {
+        $set: { ...set, fulfillment: 'delivery', pickup_code: '', pickup_code_attempts: 0 },
+        $inc: inc,
+        // Same status as before; the note records the switch on the timeline.
+        $push: { status_history: { status: historyStatus, at, note } },
+      },
+      { new: true }
+    ).lean();
+  }
+
+  /**
    * Completes a pickup order when the code matches (atomically, so it can't
    * be collected twice). Returns null if the code was wrong or it's not ready.
    */

@@ -31,14 +31,20 @@ class NotificationService {
    * Pickup orders: the food is ready to collect. Sends the code the customer
    * shows the kitchen, in-app and over SMS.
    */
-  async notifyPickupCode(customerId, { orderNumber, code, orderId = null, vendorName = '', address = '' }) {
+  /**
+   * The pickup code: sent when the order is placed (`ready: false`) and again
+   * when the kitchen marks the food ready to collect.
+   */
+  async notifyPickupCode(customerId, { orderNumber, code, orderId = null, vendorName = '', address = '', ready = true }) {
     if (!customerId || !code) return null;
     const where = [vendorName, address].filter(Boolean).join(', ');
-    const body = `${orderNumber || 'Your order'} is ready to collect${where ? ` at ${where}` : ''}. Give the kitchen this pickup code: ${code}.`;
+    const body = ready
+      ? `${orderNumber || 'Your order'} is ready to collect${where ? ` at ${where}` : ''}. Give the kitchen this pickup code: ${code}.`
+      : `Your pickup code for ${orderNumber || 'your order'} is ${code}. Give it to the kitchen${where ? ` (${where})` : ''} when you collect your food. We'll tell you when it's ready.`;
     const notification = await notificationRepository.create({
       customer_id: customerId,
       type: 'pickup_code',
-      title: 'Your order is ready for pickup',
+      title: ready ? 'Your order is ready for pickup' : 'Your pickup code',
       body,
       order_id: orderId || null,
       data: { pickup_code: code, order_number: orderNumber || null, link: orderId ? `/track/${orderId}` : '/track' },

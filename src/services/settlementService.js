@@ -109,6 +109,32 @@ class SettlementService {
   }
 
   /**
+   * A pickup order switched to delivery and the customer paid the delivery fee
+   * separately: hold that money too and owe it to the rider (like a normal
+   * delivery fee). `order` is the already-switched order.
+   */
+  async onDeliveryFeeAdded(order, feeRwf, { reference = '' } = {}) {
+    const fee = roundRwf(feeRwf);
+    if (!order || fee <= 0) return order;
+    await transactionRepository.create({
+      type: 'order_payment',
+      direction: 'credit',
+      status: 'held',
+      amount_rwf: fee,
+      order_id: order._id,
+      customer_id: order.customer_id,
+      reference: reference || order.order_number || '',
+      description: `Delivery fee paid for ${order.order_number} (switched from pickup to delivery)`,
+      metadata: { delivery_fee_rwf: fee, switched_from_pickup: true },
+    });
+    if (order.settlement_status === 'held') {
+      // The snapshot taken at payment had no delivery fee for the rider.
+      await orderRepository.update(order._id, { rider_payout_rwf: roundRwf(order.rider_payout_rwf || 0) + fee });
+    }
+    return orderRepository.findById(order._id);
+  }
+
+  /**
    * Order completed: allocate the held food money. The platform keeps its
    * commission and owes the vendor the rest (credited to their balance). The
    * delivery fee stays held until a rider is credited for it. Unpaid orders

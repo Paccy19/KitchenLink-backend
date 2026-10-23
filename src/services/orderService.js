@@ -58,6 +58,9 @@ const generateReference = (provider) =>
 
 const CLOSED_DELIVERY_STATUSES = ['completed', 'cancelled', 'rejected'];
 
+// A pickup order can switch to delivery until it is collected or cancelled.
+const SWITCHABLE_STATUSES = ['placed', 'confirmed', 'preparing', 'ready'];
+
 /**
  * Customer-facing view of the delivery leg. The proof-of-delivery code is only
  * revealed while the delivery is in-flight (and not yet verified) — once it is
@@ -108,10 +111,14 @@ const serializePaymentDetails = (order) => {
   };
 };
 
+// Once collected or cancelled, the pickup code is no longer shown.
+const PICKUP_CODE_HIDDEN = ['delivered', 'completed', 'cancelled'];
+
 /**
- * Pickup orders: where to collect the food and, once it's ready, the code to
- * give the kitchen. `order.pickup_code` is only present when the caller
- * loaded it for the customer (it is never selected by default).
+ * Pickup orders: where to collect the food and the code to give the kitchen,
+ * shown from placement (like a delivery code) until the food is collected.
+ * `order.pickup_code` is only present when the caller loaded it for the
+ * customer (it is never selected by default).
  */
 const serializePickup = (order, vendor) => {
   if (order.fulfillment !== 'pickup') return null;
@@ -123,7 +130,7 @@ const serializePickup = (order, vendor) => {
     latitude: lat,
     longitude: lng,
     vendor_phone: vendor?.phone || null,
-    code: awaiting ? order.pickup_code || null : null,
+    code: PICKUP_CODE_HIDDEN.includes(order.status) ? null : order.pickup_code || null,
     ready_for_collection: awaiting,
     collected_at: order.collected_at ?? null,
   };
@@ -447,6 +454,11 @@ class OrderService {
       delivery_distance_source: quote.distance_source,
       total_rwf: total,
       fulfillment,
+      // Pickup orders get their code at once (like a delivery code), so the
+      // customer can see it from the start; the kitchen accepts it once ready.
+      ...(isPickup
+        ? { pickup_code: String(crypto.randomInt(100000, 1000000)), pickup_code_sent_at: now, pickup_code_attempts: 0 }
+        : {}),
       delivery_location: deliveryLocation,
       payment_method: paymentMethod,
       payment_details: paymentDetails,
@@ -483,6 +495,18 @@ class OrderService {
     if (paymentStatus === 'paid') {
       orderNotifications.newOrder({ ...order, ...updatedOrder });
       this.#offerToDrivers({ ...order, ...updatedOrder });
+      if (isPickup && order.pickup_code) {
+        notificationService
+          .notifyPickupCode(customerId, {
+            orderNumber: order.order_number,
+            code: order.pickup_code,
+            orderId: order._id,
+            vendorName: vendor.name,
+            address: [vendor.address, vendor.neighborhood].filter(Boolean).join(', '),
+            ready: false,
+          })
+          .catch((error) => console.error('[pickup] could not send pickup code:', error.message));
+      }
     }
 
     await cartRepository.clear(customerId);
@@ -603,9 +627,9 @@ class OrderService {
     return serializeDetail(order, vendor, payment, delivery, await refundService.forOrder(order._id));
   }
 
-  /** The customer's own pickup code, shown while their food awaits collection. */
+  /** The customer's own pickup code, shown from placement until the food is collected. */
   async #withPickupCode(order) {
-    if (order.fulfillment !== 'pickup' || order.status !== 'ready') return order;
+    if (order.fulfillment !== 'pickup' || PICKUP_CODE_HIDDEN.includes(order.status)) return order;
     return { ...order, pickup_code: await orderRepository.findPickupCode(order._id) };
   }
 
@@ -624,6 +648,134 @@ class OrderService {
     const { vendor, payment, delivery } = await this.#loadWithVendor(order);
     await this.#ensureDeliveryCodeNotification(order, delivery);
     return { ...serializeTracking(order, vendor, payment, delivery), refund: await refundService.forOrder(order._id) };
+  }
+
+  /* ------------------------- pickup -> delivery switch ------------------------- */
+
+  /** Checks a pickup order can still become a delivery and returns it with its kitchen. */
+  async #switchable(customerId, orderId) {
+    const order = await this.#loadOrder(customerId, orderId);
+    if (order.fulfillment !== 'pickup') {
+      throw ApiError.conflict('This order is already being delivered.', 'ALREADY_DELIVERY');
+    }
+    if (!SWITCHABLE_STATUSES.includes(order.status)) {
+      throw ApiError.conflict(
+        order.status === 'cancelled' ? 'This order was cancelled.' : 'This order was already collected.',
+        'ORDER_NOT_SWITCHABLE'
+      );
+    }
+    const vendor = await vendorRepository.findById(order.vendor_id);
+    if (!vendor) throw ApiError.notFound('Kitchen not found.', 'VENDOR_NOT_FOUND');
+    if (vendor.delivery_available === false) {
+      throw ApiError.conflict(`${vendor.name} doesn't offer delivery, so this order can only be collected.`, 'DELIVERY_NOT_AVAILABLE');
+    }
+    return { order, vendor };
+  }
+
+  /**
+   * The delivery fee for switching a pickup order to delivery to this
+   * address (shown before the customer pays). Body: { delivery_location }.
+   */
+  async quoteSwitchToDelivery(customerId, orderId, body = {}) {
+    const { order, vendor } = await this.#switchable(customerId, orderId);
+    const deliveryLocation = parseDeliveryLocation(body.delivery_location);
+    const quote = await deliveryPricingService.quote(vendor, deliveryLocation);
+    return {
+      order_id: String(order._id),
+      delivery_fee_rwf: quote.delivery_fee_rwf,
+      distance_km: quote.distance_km,
+      duration_minutes: quote.duration_minutes,
+      new_total_rwf: Number(order.total_rwf) + quote.delivery_fee_rwf,
+      // Paid orders pay just the fee now; unpaid ones pay the new total when they pay.
+      pay_now_rwf: order.payment_status === 'paid' ? quote.delivery_fee_rwf : 0,
+    };
+  }
+
+  /**
+   * The customer chose pickup but now wants it delivered: they pay the
+   * delivery fee for the new address, the pickup code is retired, and the
+   * order is offered to nearby delivery workers (at once if the food is ready
+   * or it's an immediate order; otherwise when the kitchen marks it ready).
+   * Body: { delivery_location, payment_method, payment_details, payment_simulate }.
+   */
+  async switchToDelivery(customerId, orderId, body = {}) {
+    const { order, vendor } = await this.#switchable(customerId, orderId);
+    const deliveryLocation = parseDeliveryLocation(body.delivery_location);
+    const quote = await deliveryPricingService.quote(vendor, deliveryLocation);
+    const fee = quote.delivery_fee_rwf;
+    const now = new Date();
+    const alreadyPaid = order.payment_status === 'paid';
+
+    // Paid orders: charge the delivery fee first; nothing changes if it fails.
+    let feePayment = null;
+    if (alreadyPaid && fee > 0) {
+      const paymentMethod = parsePaymentMethod(body.payment_method);
+      // Same payer checks as checkout (e.g. an MTN/Airtel number for Mobile Money).
+      parsePaymentDetails(paymentMethod, body.payment_details);
+      const provider = PROVIDERS[paymentMethod];
+      feePayment = await paymentRepository.create({
+        order_id: order._id,
+        customer_id: order.customer_id,
+        amount_rwf: fee,
+        method: paymentMethod,
+        provider,
+        status: 'processing',
+        reference: generateReference(provider),
+      });
+      if (body.payment_simulate === 'fail') {
+        await paymentRepository.update(feePayment._id, {
+          status: 'failed',
+          failure_reason: 'Payment was declined by the provider.',
+        });
+        throw ApiError.badRequest('The delivery fee payment did not go through. Your order is still a pickup order.', {
+          payment: 'declined',
+        });
+      }
+      feePayment = await paymentRepository.update(feePayment._id, { status: 'successful', paid_at: now });
+    }
+
+    const switched = await orderRepository.switchPickupToDelivery(order._id, SWITCHABLE_STATUSES, {
+      set: {
+        delivery_location: deliveryLocation,
+        delivery_fee_rwf: fee,
+        delivery_distance_km: quote.distance_km,
+        delivery_distance_source: quote.distance_source,
+      },
+      inc: { total_rwf: fee },
+      historyStatus: order.status,
+      note: `Customer switched to delivery${fee ? ` (delivery fee ${fee.toLocaleString('en-US')} RWF${alreadyPaid ? ' paid' : ''})` : ''}`,
+      at: now,
+    });
+    if (!switched) {
+      // Collected or cancelled in the meantime: give the fee back.
+      if (feePayment) await paymentRepository.update(feePayment._id, { status: 'refunded' });
+      throw ApiError.conflict('This order was just collected or cancelled, so it can no longer be delivered.', 'ORDER_NOT_SWITCHABLE');
+    }
+
+    let current = switched;
+    if (feePayment) {
+      current = await settlementService.onDeliveryFeeAdded(switched, fee, { reference: feePayment.reference });
+    }
+
+    // Find a delivery worker: now if the food is ready or it's for now; scheduled orders wait for "ready".
+    try {
+      if (current.status === 'ready') await deliveryService.handleOrderReady(current);
+      else if (alreadyPaid) await deliveryService.handleOrderPlaced(current);
+    } catch (error) {
+      console.error(`[delivery] could not dispatch switched order ${current.order_number}:`, error.message);
+    }
+
+    notificationService
+      .notifyVendor(current.vendor_id, {
+        type: 'order_update',
+        title: 'Order changed to delivery',
+        body: `${current.order_number}: the customer can't collect it, so a delivery worker will pick it up instead. Their pickup code no longer applies.`,
+        orderId: current._id,
+        link: `/vendor-dashboard/orders?order=${current._id}`,
+      })
+      .catch(() => null);
+
+    return this.track(customerId, orderId);
   }
 
   async cancel(customerId, orderId, body) {
