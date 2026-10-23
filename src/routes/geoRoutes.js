@@ -16,4 +16,13 @@ router.get('/places/autocomplete', placesLimit, placeController.autocomplete);
 router.get('/places/details', placesLimit, placeController.details);
 router.get('/places/reverse', placesLimit, placeController.reverse);
 
+// Road route + step-by-step directions (customer directions to a kitchen).
+const routeLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  code: 'ROUTE_RATE_LIMITED',
+  message: 'Too many direction requests. Please wait a moment and try again.',
+});
+router.get('/route', routeLimit, placeController.route);
+
 module.exports = router;
