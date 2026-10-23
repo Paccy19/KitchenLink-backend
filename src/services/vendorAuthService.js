@@ -12,6 +12,7 @@ const {
   parseJsonField,
   parseOperatingHours,
   parsePaymentInformation,
+  bindPayoutToPhone,
   parseFoodCategoryTokens,
   parseVerificationDocuments,
 } = require('../utils/vendorValidators');
@@ -55,7 +56,8 @@ class VendorAuthService {
     const location = parseDeliveryLocation(locationRaw);
 
     const operatingHours = parseOperatingHours(body.operating_hours);
-    const paymentInformation = parsePaymentInformation(body.payment_information);
+    // Mobile-money payouts must use the phone the kitchen registers with.
+    const paymentInformation = bindPayoutToPhone(parsePaymentInformation(body.payment_information), phone);
     const { ids: categoryIds, names: categoryNames } = await this.#resolveCategories(
       parseFoodCategoryTokens(body.food_categories)
     );

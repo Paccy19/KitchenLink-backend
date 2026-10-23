@@ -276,6 +276,23 @@ function parseOperatingHours(raw) {
   return normalized;
 }
 
+/**
+ * Mobile-money payouts go to the kitchen's registered phone only: the payout
+ * number is set to it, and a different number is refused.
+ * `phone` is the normalised registered phone (+2507XXXXXXXX).
+ */
+function bindPayoutToPhone(info, phone) {
+  if (!phone || info.payout_method === 'bank_transfer') return info;
+  if (info.payout_method !== 'mobile_money' && !info.mobile_money_number) return info;
+  const local = `0${String(phone).replace(/^\+?250/, '')}`;
+  if (info.mobile_money_number && info.mobile_money_number !== local) {
+    throw badRequest('The mobile money payout number must be the phone number you registered with.', {
+      'payment_information.mobile_money_number': `expected ${local} (your registered phone)`,
+    });
+  }
+  return { ...info, payout_method: 'mobile_money', mobile_money_number: local };
+}
+
 function parsePaymentInformation(raw) {
   const value = parseJsonField(raw, 'payment_information');
   if (value === undefined || typeof value !== 'object' || value === null) {
@@ -412,6 +429,7 @@ module.exports = {
   parseJsonField,
   parseOperatingHours,
   parsePaymentInformation,
+  bindPayoutToPhone,
   parseFoodCategoryTokens,
   parseVerificationDocuments,
   MENU_SORTS,

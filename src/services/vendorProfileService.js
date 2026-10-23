@@ -6,6 +6,7 @@ const {
   parseBooleanValue,
   parseOperatingHours,
   parsePaymentInformation,
+  bindPayoutToPhone,
 } = require('../utils/vendorValidators');
 const { serializeVendorAccount } = require('../utils/serializers');
 const { resolveImageUrl } = require('../utils/uploads');
@@ -52,8 +53,11 @@ class VendorProfileService {
       payload.operating_hours = parseOperatingHours(body.operating_hours);
     }
     if (body.payment_information !== undefined) {
-      payload.payment_information = parsePaymentInformation(
-        body.payment_information
+      // Mobile-money payouts stay on the registered phone (or the new one
+      // when the phone changes in the same update).
+      payload.payment_information = bindPayoutToPhone(
+        parsePaymentInformation(body.payment_information),
+        payload.phone || vendor.phone
       );
     }
 
