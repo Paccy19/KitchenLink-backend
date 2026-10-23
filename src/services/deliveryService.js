@@ -32,22 +32,19 @@ const NO_CLOCK = { pickup_started_at: null, pickup_warn_at: null, pickup_due_at:
 const kigaliTime = (date) =>
   new Date(date).toLocaleTimeString('en-GB', { timeZone: 'Africa/Kigali', hour: '2-digit', minute: '2-digit' });
 
-/** The admin's timing rules in words, for workers' messages. */
+/**
+ * The admin's timing rules in words, for workers' messages. Late pickups are
+ * not charged: a worker who is too late only loses the order to someone else.
+ */
 const timingText = () => {
   const rules = deliverySettingsService.current();
-  return `Collect it within ${rules.charge_after_minutes} minutes of the food being ready, or ${penaltyText(
-    deliverySettingsService.penaltyPercent()
-  )}${rules.reassign_after_minutes ? `; after ${rules.reassign_after_minutes} minutes it goes to another delivery worker` : ''}.`;
+  return `Collect it within ${rules.charge_after_minutes} minutes of the food being ready${
+    rules.reassign_after_minutes ? `; after ${rules.reassign_after_minutes} minutes it goes to another delivery worker` : ''
+  }.`;
 };
 
-/** How the late-pickup penalty is described to workers and admins. */
-const penaltyText = (percent, { capitalized = false } = {}) => {
-  const phrase =
-    percent > 0
-      ? `a late-pickup charge of ${percent}% of the delivery fee applies`
-      : 'a late-pickup charge applies';
-  return capitalized ? `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}` : phrase;
-};
+// Late pickups are recorded for support but never charged.
+const LATE_NOT_CHARGED = 'waived';
 
 const { delivery: deliveryConfig } = config;
 
@@ -401,9 +398,8 @@ class DeliveryService {
       if (now >= dueAt) {
         await deliveryRepository.update(delivery._id, {
           'late_pickup.flagged_at': now,
-          'late_pickup.charge_status': 'pending',
-          // The penalty rule in force right now is fixed for this delivery.
-          'late_pickup.penalty_percent': deliverySettingsService.penaltyPercent(),
+          'late_pickup.charge_status': LATE_NOT_CHARGED,
+          'late_pickup.penalty_percent': null,
         });
         await deliveryRepository.pushHistory(delivery._id, {
           status: delivery.status,
@@ -418,10 +414,7 @@ class DeliveryService {
           .notifyDriver(delivery.driver_id, {
             type: 'delivery_late',
             title: 'Late pickup',
-            body: `${delivery.order_number} has been ready for over ${graceMinutes} minutes. ${penaltyText(
-              deliverySettingsService.penaltyPercent(),
-              { capitalized: true }
-            )} if you collect it late. Collect it now.${reassignNote}`,
+            body: `${delivery.order_number} has been ready for over ${graceMinutes} minutes. Collect it now.${reassignNote}`,
             orderId: delivery.order_id,
             link: '/driver-dashboard/active',
             data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
@@ -446,9 +439,9 @@ class DeliveryService {
           .notifyDriver(delivery.driver_id, {
             type: 'delivery_pickup_reminder',
             title: `${minutesLeft} minute${minutesLeft === 1 ? '' : 's'} left to collect`,
-            body: `${delivery.order_number} is waiting at the kitchen. Collect it within ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'} or ${penaltyText(
-              deliverySettingsService.penaltyPercent()
-            )}.`,
+            body: `${delivery.order_number} is waiting at the kitchen. Collect it within ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'}${
+              delivery.pickup_reassign_at ? `, or it will be given to another delivery worker at ${kigaliTime(delivery.pickup_reassign_at)}` : ''
+            }.`,
             orderId: delivery.order_id,
             link: '/driver-dashboard/active',
             data: { delivery_id: String(delivery._id), order_number: delivery.order_number },
@@ -488,9 +481,9 @@ class DeliveryService {
       driver_id: driverId,
       flagged_at: delivery.late_pickup?.flagged_at || now,
       minutes_late: delivery.pickup_due_at ? Math.ceil((now - new Date(delivery.pickup_due_at)) / 60000) : null,
-      charge_status: 'pending',
-      penalty_percent: delivery.late_pickup?.penalty_percent ?? deliverySettingsService.penaltyPercent(),
-      note: 'Order taken away — no delivery fee to take the penalty from',
+      charge_status: LATE_NOT_CHARGED,
+      penalty_percent: null,
+      note: 'Order taken away and given to another delivery worker — no charge',
       reassigned_at: now,
     });
     await deliveryRepository.update(delivery._id, {
@@ -522,7 +515,7 @@ class DeliveryService {
       .notifyDriver(driverId, {
         type: 'delivery_cancelled',
         title: 'Order taken away — too late',
-        body: `${delivery.order_number} was given to another delivery worker because you didn't collect it${minutes ? ` within ${minutes} minutes` : ' in time'}. Don't go to the kitchen for it. You are not paid for this order, so no penalty is taken from your balance.`,
+        body: `${delivery.order_number} was given to another delivery worker because you didn't collect it${minutes ? ` within ${minutes} minutes` : ' in time'}. Don't go to the kitchen for it.`,
         orderId: delivery.order_id,
         data: { delivery_id: String(delivery._id), order_number: delivery.order_number, reason: 'late_pickup' },
         sms: true,
@@ -772,9 +765,9 @@ class DeliveryService {
       driver: serializeDriverAccount(fresh || driver),
       distance_to_pickup_km: distanceKm,
       message: ready
-        ? `The food is ready. Collect it by ${kigaliTime(clock.pickup_due_at)} or ${penaltyText(
-            deliverySettingsService.penaltyPercent()
-          )}${clock.pickup_reassign_at ? `; at ${kigaliTime(clock.pickup_reassign_at)} it goes to another delivery worker` : ''}.`
+        ? `The food is ready. Collect it by ${kigaliTime(clock.pickup_due_at)}${
+            clock.pickup_reassign_at ? `; at ${kigaliTime(clock.pickup_reassign_at)} it goes to another delivery worker` : ''
+          }.`
         : `Head to the kitchen${distanceKm != null ? ` (${distanceKm} km away)` : ''} and wait nearby. Once the food is ready: ${timingText()}`,
     };
   }
@@ -833,14 +826,14 @@ class DeliveryService {
     };
     await deliveryRepository.update(delivery._id, update);
     if (wasLate) {
-      // The late worker keeps their record (and pending charge).
+      // The late worker keeps a record of being late (never charged).
       await deliveryRepository.pushLateRecord(delivery._id, {
         driver_id: previous,
         flagged_at: delivery.late_pickup?.flagged_at || now,
         minutes_late: overdue ? Math.ceil((now - new Date(delivery.pickup_due_at)) / 60000) : delivery.late_pickup?.minutes_late ?? null,
-        charge_status: 'pending',
-        penalty_percent: delivery.late_pickup?.penalty_percent ?? deliverySettingsService.penaltyPercent(),
-        note: 'Order reassigned — no delivery fee to take the penalty from',
+        charge_status: LATE_NOT_CHARGED,
+        penalty_percent: null,
+        note: 'Order reassigned to another delivery worker — no charge',
         reassigned_at: now,
       });
     }
@@ -861,7 +854,7 @@ class DeliveryService {
           type: 'delivery_cancelled',
           title: lateReason ? 'Order reassigned — you were late' : 'Order reassigned',
           body: lateReason
-            ? `${delivery.order_number} was assigned to another delivery worker because you didn't collect it on time. Don't go to the kitchen for it. You are not paid for this order, so no penalty is taken from your balance.`
+            ? `${delivery.order_number} was assigned to another delivery worker because you didn't collect it on time. Don't go to the kitchen for it.`
             : `Support reassigned ${delivery.order_number} to another delivery worker. You don't need to collect it.`,
           orderId: delivery.order_id,
           data: { delivery_id: String(delivery._id), order_number: delivery.order_number, reason: lateReason ? 'late_pickup' : 'support' },
@@ -961,12 +954,11 @@ class DeliveryService {
     if (nextStatus === 'picked_up') {
       update.picked_up_at = now;
       if (delivery.pickup_due_at && now > new Date(delivery.pickup_due_at)) {
+        // Recorded as late for support, never charged.
         update['late_pickup.minutes_late'] = Math.ceil((now - new Date(delivery.pickup_due_at)) / 60000);
-        update['late_pickup.charge_status'] = 'pending';
+        update['late_pickup.charge_status'] = LATE_NOT_CHARGED;
+        update['late_pickup.penalty_percent'] = null;
         if (!delivery.late_pickup?.flagged_at) update['late_pickup.flagged_at'] = now;
-        if (delivery.late_pickup?.penalty_percent == null) {
-          update['late_pickup.penalty_percent'] = deliverySettingsService.penaltyPercent();
-        }
       }
     }
     if (nextStatus === 'out_for_delivery') update.out_for_delivery_at = now;
@@ -1050,13 +1042,8 @@ class DeliveryService {
       }) || undefined;
 
     const now = new Date();
-    // A worker who collected the food late pays a penalty: a share of the
-    // delivery fee of THIS order, taken out of this order's fee (their wallet
-    // and every other order are untouched).
-    const grossEarningsRwf = Number(delivery.promised_earnings_rwf) || 0;
-    const penalty = this.#latePenalty(delivery);
-    const penaltyRwf = penalty?.amountRwf || 0;
-    const paidEarningsRwf = Math.max(0, grossEarningsRwf - penaltyRwf);
+    // Late pickups are not charged: the worker always gets the full delivery fee.
+    const paidEarningsRwf = Number(delivery.promised_earnings_rwf) || 0;
     const wasLate = this.#wasLate(delivery);
 
     const updated = await deliveryRepository.update(id, {
@@ -1064,16 +1051,13 @@ class DeliveryService {
       completed_at: now,
       otp_verified_at: now,
       paid_earnings_rwf: paidEarningsRwf,
-      earnings_penalty_rwf: penaltyRwf,
+      earnings_penalty_rwf: 0,
       ...(wasLate
         ? {
-            'late_pickup.charge_status': penaltyRwf > 0 ? 'charged' : 'waived',
-            'late_pickup.charge_rwf': penaltyRwf > 0 ? penaltyRwf : null,
-            'late_pickup.penalty_percent': penalty?.percent ?? null,
-            'late_pickup.note':
-              penaltyRwf > 0
-                ? `Late pickup: ${penalty.percent}% of the delivery fee kept by the platform`
-                : 'Late pickup: no penalty set by the admin',
+            'late_pickup.charge_status': LATE_NOT_CHARGED,
+            'late_pickup.charge_rwf': null,
+            'late_pickup.penalty_percent': null,
+            'late_pickup.note': 'Late pickup recorded — late pickups are not charged',
           }
         : {}),
       ...(proofPhotoUrl ? { proof_photo_url: proofPhotoUrl } : {}),
@@ -1081,72 +1065,28 @@ class DeliveryService {
     await deliveryRepository.pushHistory(id, {
       status: 'completed',
       at: now,
-      note: penaltyRwf > 0
-        ? `Proof of delivery confirmed — ${penalty.percent}% late-pickup penalty (${penaltyRwf} RWF) taken from the delivery fee`
-        : 'Proof of delivery confirmed',
+      note: 'Proof of delivery confirmed',
       by: 'driver',
     });
 
     await this.#settleOrderDelivered(delivery, { completed: true });
 
-    // The worker is credited what they earned for this order: the promised
-    // fee minus the penalty taken out of it.
     const fresh = await driverRepository.recordCompletion(driver._id, {
       earningsRwf: paidEarningsRwf,
     });
 
-    // The rider keeps the rest of the delivery fee; record it on the platform
-    // ledger, with the penalty kept by the platform as its own entry.
+    // The rider keeps the delivery fee; record it on the platform ledger.
     await settlementService
       .recordDriverPayout(
         { _id: delivery.order_id, order_number: delivery.order_number },
-        {
-          driverId: driver._id,
-          amountRwf: paidEarningsRwf,
-          penaltyRwf,
-          penaltyPercent: penalty?.percent ?? null,
-        }
+        { driverId: driver._id, amountRwf: paidEarningsRwf }
       )
       .catch((error) =>
         console.log(`[delivery] could not record driver payout: ${error?.message}`)
       );
-    if (penaltyRwf > 0) {
-      await settlementService
-        .recordDriverPenalty(
-          { _id: delivery.order_id, order_number: delivery.order_number },
-          { driverId: driver._id, amountRwf: penaltyRwf, percent: penalty.percent }
-        )
-        .catch((error) =>
-          console.log(`[delivery] could not record driver penalty: ${error?.message}`)
-        );
-    }
 
-    if (penaltyRwf > 0) {
-      notificationService
-        .notifyDriver(driver._id, {
-          type: 'delivery_penalty',
-          title: 'Late pickup penalty',
-          body: `${delivery.order_number}: you collected the food late, so ${penalty.percent}% of the delivery fee (${penaltyRwf} RWF) was kept as a penalty. You were paid ${paidEarningsRwf} RWF for this delivery.`,
-          orderId: delivery.order_id,
-          link: '/driver-dashboard/earnings',
-          data: {
-            delivery_id: String(delivery._id),
-            order_number: delivery.order_number,
-            penalty_rwf: penaltyRwf,
-            penalty_percent: penalty.percent,
-            paid_rwf: paidEarningsRwf,
-          },
-          sms: true,
-        })
-        .catch(() => null);
-    }
-
-    // Workers who were late and lost this order have no delivery fee of their
-    // own here, so there is nothing to take a penalty from.
-    await deliveryRepository.waivePendingLateCharges(
-      id,
-      'The order went to another delivery worker — no delivery fee to take the penalty from'
-    );
+    // Close any late records still marked pending from before late charges were removed.
+    await deliveryRepository.waivePendingLateCharges(id, 'Late pickups are not charged');
 
     const active = fresh?.active_deliveries_count ?? 0;
     if (!fresh?.is_online) {
@@ -1160,8 +1100,8 @@ class DeliveryService {
     return {
       delivery: await this.#serialize(updated._id, {}, { revealCustomer: true }),
       earned_rwf: paidEarningsRwf,
-      penalty_rwf: penaltyRwf,
-      penalty_percent: penalty?.percent ?? null,
+      penalty_rwf: 0,
+      penalty_percent: null,
       driver: serializeDriverAccount(fresh || driver),
     };
   }
@@ -1238,9 +1178,9 @@ class DeliveryService {
           driver_id: driverId,
           flagged_at: delivery.late_pickup.flagged_at,
           minutes_late: delivery.late_pickup.minutes_late ?? null,
-          charge_status: 'pending',
-          penalty_percent: delivery.late_pickup.penalty_percent ?? deliverySettingsService.penaltyPercent(),
-          note: 'Delivery worker went offline — no delivery fee to take the penalty from',
+          charge_status: LATE_NOT_CHARGED,
+          penalty_percent: null,
+          note: 'Delivery worker went offline — no charge',
           reassigned_at: now,
         });
       }
@@ -1440,36 +1380,6 @@ class DeliveryService {
       late.charge_status === 'pending' ||
       late.charge_status === 'charged'
     );
-  }
-
-  /**
-   * The late-pickup penalty for this delivery: the admin's percentage of the
-   * delivery fee the worker would have been paid for THIS order. It comes out
-   * of that fee only — never from their wallet and never from another order.
-   * Null when the food was collected on time (or the admin has the penalty
-   * switched off).
-   */
-  #latePenalty(delivery) {
-    // The rule that was in force when the pickup became late is the one that
-    // applies (like the pickup times); older records fall back to the current
-    // setting.
-    const percent =
-      Number(delivery.late_pickup?.penalty_percent ?? deliverySettingsService.penaltyPercent()) || 0;
-    if (percent <= 0) return null;
-    if (!this.#wasLate(delivery)) return null;
-
-    const baseRwf = Number(delivery.promised_earnings_rwf) || 0;
-    if (baseRwf <= 0) return null;
-
-    const amountRwf = Math.min(baseRwf, Math.round((baseRwf * percent) / 100));
-    if (amountRwf <= 0) return null;
-
-    return {
-      percent,
-      amountRwf,
-      baseRwf,
-      minutesLate: delivery.late_pickup?.minutes_late ?? null,
-    };
   }
 
   #todayWindow() {

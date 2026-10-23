@@ -474,8 +474,6 @@ function serializeDelivery(delivery, options = {}) {
         warning_minutes: rules.warning_minutes,
         charge_after_minutes: rules.charge_after_minutes,
         reassign_after_minutes: rules.reassign_after_minutes,
-        // The penalty share of the delivery fee for a late pickup.
-        late_penalty_percent: rules.late_penalty_percent ?? 0,
       };
     })(),
     pickup_grace_minutes: delivery.pickup_started_at && delivery.pickup_due_at

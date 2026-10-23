@@ -327,11 +327,6 @@ const config = {
     // Starting value for taking a late order away and offering it to other
     // workers (0 = off). Admins change all three in Settings.
     pickupReassignMinutes: numberFromEnvOrZero(process.env.DELIVERY_PICKUP_REASSIGN_MINUTES, 30),
-    // Late-pickup penalty (percent of the delivery fee). When a worker
-    // collects a ready order late, this share of the fee they would have been
-    // paid for THAT order is kept by the platform. It never touches their
-    // wallet or any other order. Admins change it in Settings (0 = off).
-    latePenaltyPercent: numberFromEnvOrZero(process.env.DELIVERY_LATE_PENALTY_PERCENT, 20),
     // How often open offers are re-broadcast and pickups checked for lateness.
     dispatchTickSeconds: numberFromEnv(process.env.DELIVERY_DISPATCH_TICK_SECONDS, 60),
     // Max concurrent deliveries a driver can hold.

@@ -428,10 +428,7 @@ class AdminOperationsService {
         grace_minutes: timing.charge_after_minutes,
         reassign_after_minutes: timing.reassign_after_minutes,
         updated_at: timing.updated_at,
-        // The late-pickup penalty: a share of the delivery fee of the late
-        // order, taken out of that order's fee (never from the worker's wallet).
-        penalty_percent: timing.late_penalty_percent ?? 0,
-        charge_amount: `${timing.late_penalty_percent ?? 0}% of the delivery fee of the late order`,
+        // Late pickups are not charged; the order is only given to another worker.
       },
       customer_pickup: {
         delivery_fee_rwf: 0,

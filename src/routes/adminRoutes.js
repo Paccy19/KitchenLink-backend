@@ -121,13 +121,11 @@ router.put(
             warning: previous.warning_minutes,
             charge: previous.charge_after_minutes,
             reassign: previous.reassign_after_minutes,
-            penalty_percent: previous.late_penalty_percent,
           },
           after: {
             warning: current.warning_minutes,
             charge: current.charge_after_minutes,
             reassign: current.reassign_after_minutes,
-            penalty_percent: current.late_penalty_percent,
           },
         },
       },

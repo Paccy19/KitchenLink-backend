@@ -164,9 +164,9 @@ class AdminDriverService {
           driver_id: driverId,
           flagged_at: delivery.late_pickup.flagged_at,
           minutes_late: delivery.late_pickup.minutes_late ?? null,
-          charge_status: 'pending',
-          penalty_percent: delivery.late_pickup.penalty_percent ?? null,
-          note: 'Delivery worker suspended — no delivery fee to take the penalty from',
+          charge_status: 'waived',
+          penalty_percent: null,
+          note: 'Delivery worker suspended — no charge',
           reassigned_at: new Date(),
         });
       }
