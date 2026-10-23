@@ -12,6 +12,7 @@ const router = Router();
 router.use(requireVendorAuth);
 
 router.get('/categories', vendorMenuController.categories);
+router.post('/categories', vendorMenuController.createCategory);
 router.post('/upload-image', upload.single('image'), vendorMenuController.uploadImage);
 router.get('/', vendorMenuController.list);
 router.post('/', upload.single('image'), vendorMenuController.create);

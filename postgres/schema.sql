@@ -104,6 +104,9 @@ CREATE TABLE categories (
   description TEXT        NOT NULL DEFAULT '',
   sort_order  INTEGER     NOT NULL DEFAULT 0,
   is_active   BOOLEAN     NOT NULL DEFAULT TRUE,
+  -- Kitchen that created the category from its menu (NULL = admin).
+  created_by_vendor_id   CHAR(24),
+  created_by_vendor_name TEXT NOT NULL DEFAULT '',
   search_vector tsvector GENERATED ALWAYS AS
                 (to_tsvector('simple', coalesce(name, ''))) STORED,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -499,7 +502,7 @@ CREATE TABLE notifications (
                                'vendor_application','driver_application','complaint_opened',
                                'payout_requested','payout_update','order_placed','payment_failed',
                                'owner_finance','account_update','refund_update','support_message',
-                               'vendor_offer','vendor_type_request','chat_message','delivery_update','delivery_taken',
+                               'vendor_offer','vendor_type_request','category_added','chat_message','delivery_update','delivery_taken',
                                'delivery_ready','delivery_pickup_reminder','delivery_late',
                                'delivery_penalty','delivery_cancelled','late_pickup')),
   title        TEXT        NOT NULL,

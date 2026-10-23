@@ -141,6 +141,7 @@ const NOTIFICATION_PERMISSION = {
   vendor_application: 'vendors:read',
   // A kitchen asked to change its vendor type.
   vendor_type_request: 'vendors:read',
+  category_added: 'categories:read',
   driver_application: 'drivers:read',
   complaint_opened: 'complaints:read',
   payout_requested: 'payouts:read',

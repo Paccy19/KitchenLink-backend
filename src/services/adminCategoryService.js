@@ -17,6 +17,10 @@ const serializeAdminCategory = (category) => ({
   description: category.description || '',
   sort_order: category.sort_order ?? 0,
   is_active: category.is_active !== false,
+  // Kitchen that created it (null when an admin did).
+  created_by_vendor: category.created_by_vendor_id
+    ? { id: String(category.created_by_vendor_id), name: category.created_by_vendor_name || 'A kitchen' }
+    : null,
   created_at: category.created_at,
   updated_at: category.updated_at,
 });

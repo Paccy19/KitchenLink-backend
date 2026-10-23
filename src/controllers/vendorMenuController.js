@@ -1,6 +1,11 @@
 const asyncHandler = require('../utils/asyncHandler');
 const vendorMenuService = require('../services/vendorMenuService');
 
+const createCategory = asyncHandler(async (req, res) => {
+  const result = await vendorMenuService.createCategory(req.vendor, req.body);
+  res.status(result.created ? 201 : 200).json(result);
+});
+
 const categories = asyncHandler(async (req, res) => {
   res.json(await vendorMenuService.categories());
 });
@@ -39,6 +44,7 @@ const uploadImage = asyncHandler(async (req, res) => {
 
 module.exports = {
   categories,
+  createCategory,
   list,
   create,
   update,

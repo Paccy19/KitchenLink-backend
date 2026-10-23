@@ -17,6 +17,7 @@ const { serializeVendorMenuItem } = require('../utils/serializers');
 const menuItemRepository = require('../repositories/menuItemRepository');
 const menuItemOptionRepository = require('../repositories/menuItemOptionRepository');
 const categoryRepository = require('../repositories/categoryRepository');
+const notificationService = require('./notificationService');
 
 class VendorMenuService {
   async #resolveCategoryId(raw) {
@@ -264,6 +265,61 @@ class VendorMenuService {
       });
     }
     return { image_url: buildPublicUrl(file.filename) };
+  }
+
+  /**
+   * A kitchen adds a food category with a name of its choice. An existing
+   * category with the same name (any letter case) is reused instead. New
+   * categories are live straight away; admins are notified and can rename,
+   * hide or delete them on the Categories page.
+   */
+  async createCategory(vendor, body = {}) {
+    const name = parseRequiredText(String(body.name ?? '').replace(/\s+/g, ' '), {
+      field: 'name',
+      min: 2,
+      max: 40,
+    });
+    if (!/^[\p{L}\p{N}][\p{L}\p{N} &'’\-\/,.()]*$/u.test(name)) {
+      throw ApiError.badRequest('Use letters, numbers, spaces and & \' - / , . ( ) only.', {
+        name: 'expected a plain category name, e.g. Seafood',
+      });
+    }
+
+    const existing = await categoryRepository.findByName(name);
+    if (existing) {
+      if (existing.is_active === false) {
+        throw ApiError.conflict(
+          `"${existing.name}" exists but was hidden by the admin team. Pick another category or contact support.`,
+          'CATEGORY_HIDDEN'
+        );
+      }
+      return { category: this.#serializeCategory(existing), created: false };
+    }
+
+    const all = await categoryRepository.findAll(1000);
+    const category = await categoryRepository.create({
+      name,
+      sort_order: all.length,
+      is_active: true,
+      created_by_vendor_id: vendor._id,
+      created_by_vendor_name: vendor.name || '',
+    });
+
+    notificationService
+      .notifyAdmin({
+        type: 'category_added',
+        title: 'New food category',
+        body: `${vendor.name || 'A kitchen'} added the category "${name}".`,
+        link: '/admin-dashboard/categories',
+        data: { category_id: String(category._id), vendor_id: String(vendor._id), vendor_name: vendor.name || '' },
+      })
+      .catch(() => null);
+
+    return { category: this.#serializeCategory(category), created: true };
+  }
+
+  #serializeCategory(category) {
+    return { id: String(category._id), name: category.name, icon_url: category.icon_url || null };
   }
 
   async categories() {

@@ -58,6 +58,7 @@ const SPECS = [
     fields: {
       name: 'text', icon_url: 'text', description: 'text',
       sort_order: 'int', is_active: 'bool',
+      created_by_vendor_id: 'text', created_by_vendor_name: 'text',
     },
   },
   {
