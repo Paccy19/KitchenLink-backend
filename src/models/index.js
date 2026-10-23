@@ -28,12 +28,14 @@ const VendorOffer = require('./VendorOffer');
 const ChatConversation = require('./ChatConversation');
 const ChatMessage = require('./ChatMessage');
 const BankSettings = require('./BankSettings');
+const DeliveryFeeSettings = require('./DeliveryFeeSettings');
 
 module.exports = {
   VendorOffer,
   ChatConversation,
   ChatMessage,
   BankSettings,
+  DeliveryFeeSettings,
   Vendor,
   Category,
   MenuItem,

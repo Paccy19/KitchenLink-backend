@@ -26,6 +26,7 @@ const deliverySettingsService = require('../services/deliverySettingsService');
 const asyncHandler = require('../utils/asyncHandler');
 const chatService = require('../services/chatService');
 const bankSettingsService = require('../services/bankSettingsService');
+const deliveryFeeSettingsService = require('../services/deliveryFeeSettingsService');
 
 const router = Router();
 
@@ -105,6 +106,36 @@ router.get(
   requirePermission('deliveries:read'),
   asyncHandler(async (req, res) => res.json(await adminOperationsService.latePickups(req.query)))
 );
+// Delivery fee by distance ranges (no fee below 500 RWF).
+router.get(
+  '/settings/delivery-fees',
+  requirePermission('deliveries:read'),
+  asyncHandler(async (req, res) => res.json(deliveryFeeSettingsService.current()))
+);
+router.put(
+  '/settings/delivery-fees',
+  requirePermission('deliveries:write'),
+  asyncHandler(async (req, res) => {
+    const { previous, current } = await deliveryFeeSettingsService.update(req.admin, req.body);
+    const describe = (ranges) =>
+      ranges.length
+        ? ranges.map((r) => `${r.from_km}-${r.to_km ?? '∞'} km: ${r.fee_rwf} RWF`)
+        : ['standard formula'];
+    await adminActionLogService.record(
+      req.admin,
+      {
+        action: 'settings.delivery_fees',
+        target_type: 'system',
+        target_id: 'delivery_fees',
+        target_label: 'Delivery fee by distance',
+        metadata: { before: describe(previous.ranges), after: describe(current.ranges) },
+      },
+      req
+    );
+    res.json(current);
+  })
+);
+
 // Banks people can withdraw to, with each bank's account-number length.
 router.get(
   '/settings/banks',

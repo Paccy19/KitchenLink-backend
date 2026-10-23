@@ -7,6 +7,7 @@ const deliveryRepository = require('../repositories/deliveryRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const deliveryTrackingService = require('./deliveryTrackingService');
 const deliverySettingsService = require('./deliverySettingsService');
+const deliveryFeeSettingsService = require('./deliveryFeeSettingsService');
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const STALE_LOCATION_MS = 2 * 60 * 1000;
@@ -436,9 +437,11 @@ class AdminOperationsService {
         max_wrong_codes: config.orders.pickupCodeMaxAttempts,
       },
       fees: {
+        // The admin's distance ranges when set; otherwise the config formula.
+        ranges: deliveryFeeSettingsService.current().ranges,
         base_rwf: d.baseFeeRwf,
         per_km_rwf: d.perKmFeeRwf,
-        minimum_rwf: d.minFeeRwf,
+        minimum_rwf: Math.max(deliveryFeeSettingsService.MIN_FEE_RWF, d.minFeeRwf),
         driver_share_percent: d.driverSharePercent,
       },
       tracking: {

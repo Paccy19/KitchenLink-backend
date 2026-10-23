@@ -23,7 +23,7 @@ const PERMISSIONS = {
   'orders:read': { category: 'operations', label: 'See orders' },
   'orders:write': { category: 'operations', label: 'Change order status, cancel orders, reassign delivery workers' },
   'deliveries:read': { category: 'operations', label: 'See live deliveries' },
-  'deliveries:write': { category: 'operations', label: 'Set delivery timing rules (warning, late charge, automatic reassignment)' },
+  'deliveries:write': { category: 'operations', label: 'Set delivery timing rules and delivery fees by distance' },
   'vendors:read': { category: 'operations', label: 'See vendors and applications' },
   'vendors:write': { category: 'operations', label: 'Approve, reject or suspend vendors' },
   'drivers:read': { category: 'operations', label: 'See delivery workers' },
