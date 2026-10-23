@@ -25,9 +25,13 @@ const OwnerPayoutSettings = require('./OwnerPayoutSettings');
 const DeliverySettings = require('./DeliverySettings');
 const Refund = require('./Refund');
 const VendorOffer = require('./VendorOffer');
+const ChatConversation = require('./ChatConversation');
+const ChatMessage = require('./ChatMessage');
 
 module.exports = {
   VendorOffer,
+  ChatConversation,
+  ChatMessage,
   Vendor,
   Category,
   MenuItem,

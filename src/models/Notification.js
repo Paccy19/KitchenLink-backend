@@ -52,6 +52,8 @@ const notificationSchema = new mongoose.Schema(
         'vendor_offer',
         // A kitchen asked to change its vendor type (admin feed).
         'vendor_type_request',
+        // A new message in a customer–kitchen chat.
+        'chat_message',
         // Delivery worker updates on an order they were offered or took.
         'delivery_update',
         'delivery_taken',

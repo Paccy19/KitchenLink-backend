@@ -24,6 +24,7 @@ const adminOperationsService = require('../services/adminOperationsService');
 const deliverySettingsService = require('../services/deliverySettingsService');
 
 const asyncHandler = require('../utils/asyncHandler');
+const chatService = require('../services/chatService');
 
 const router = Router();
 
@@ -266,6 +267,15 @@ router.delete(
 );
 
 /* ------------------------------ complaints ------------------------------- */
+/* ------------------------- customer–kitchen chats ------------------------ */
+// Read only: support can look at a chat but never write in it.
+router.get('/chats', requirePermission('chats:read'), asyncHandler(async (req, res) => res.json(await chatService.adminList(req.query))));
+router.get(
+  '/chats/:conversationId',
+  requirePermission('chats:read'),
+  asyncHandler(async (req, res) => res.json(await chatService.adminGet(req.params.conversationId, req.query)))
+);
+
 router.get('/complaints', requirePermission('complaints:read'), adminComplaintController.list);
 router.get(
   '/complaints/:complaintId',

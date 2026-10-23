@@ -35,6 +35,7 @@ const PERMISSIONS = {
 
   'complaints:read': { category: 'support', label: 'Read support conversations and complaints' },
   'complaints:write': { category: 'support', label: 'Reply, resolve, set priority, write internal notes' },
+  'chats:read': { category: 'support', label: 'Read customer–kitchen chats (read only)' },
 
   'payments:read': { category: 'finance', label: 'See customer payments' },
   'commissions:read': { category: 'finance', label: 'See the commission settings' },
@@ -65,6 +66,7 @@ const ROLES = {
       'refunds:read',
       'complaints:read',
       'complaints:write',
+      'chats:read',
     ],
   },
   operations_manager: {
@@ -87,6 +89,7 @@ const ROLES = {
       'categories:write',
       'complaints:read',
       'complaints:write',
+      'chats:read',
     ],
   },
   finance_officer: {

@@ -18,6 +18,7 @@ const driverRoutes = require('./driverRoutes');
 const internalDeliveryRoutes = require('./internalDeliveryRoutes');
 const adminAuthRoutes = require('./adminAuthRoutes');
 const adminRoutes = require('./adminRoutes');
+const { customerChatRoutes, vendorChatRoutes } = require('./chatRoutes');
 
 const {
   customerSupportRoutes,
@@ -43,10 +44,12 @@ router.use('/vendor/orders', vendorOrderRoutes);
 router.use('/vendor/wallet', vendorWalletRoutes);
 router.use('/vendor/notifications', vendorNotificationRoutes);
 router.use('/vendor/support', vendorSupportRoutes);
+router.use('/vendor/chats', vendorChatRoutes);
 router.use('/vendor', vendorDashboardRoutes);
 router.use('/orders', orderRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/support', customerSupportRoutes);
+router.use('/chats', customerChatRoutes);
 router.use('/driver/auth', driverAuthRoutes);
 router.use('/driver/support', driverSupportRoutes);
 router.use('/driver', driverRoutes);
