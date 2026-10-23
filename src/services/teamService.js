@@ -3,6 +3,7 @@ const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { parseObjectId } = require('../utils/adminValidators');
 const { parseEmail, parsePassword } = require('../utils/vendorValidators');
+const { NAME_MAX_LENGTH, parseName } = require('../utils/validators');
 const { hashPassword } = require('../utils/password');
 const { sendEmail, escapeHtml } = require('../utils/email');
 const { Admin } = require('../models');
@@ -111,7 +112,7 @@ class TeamService {
   async invite(owner, body = {}, req) {
     const email = parseEmail(body.email);
     const role = parseRole(body.role);
-    const name = typeof body.name === 'string' ? body.name.trim().slice(0, 80) : '';
+    const name = parseName(body.name, { required: false }) || '';
 
     const existing = await Admin.findOne({ email }).lean();
     let member;
@@ -227,8 +228,8 @@ class TeamService {
   /** The invited person sets their own password; the account is then ready. */
   async acceptInvitation(token, body = {}) {
     const member = await this.#findInvitation(token);
-    const provided = typeof body.name === 'string' ? body.name.trim().slice(0, 80) : '';
-    const name = provided || member.name || member.email.split('@')[0] || 'Team member';
+    const provided = parseName(body.name, { required: false });
+    const name = provided || member.name || member.email.split('@')[0].slice(0, NAME_MAX_LENGTH) || 'Team member';
     const password = parsePassword(body.password, { field: 'password' });
     if (!/[a-zA-Z]/.test(password) || !/\d/.test(password)) {
       throw ApiError.badRequest('Use at least 8 characters with letters and numbers.', { password: 'too weak' });

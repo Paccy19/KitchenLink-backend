@@ -180,6 +180,11 @@ class VendorRepository {
     return Vendor.findOne({ phone, deleted_at: null }).lean();
   }
 
+  /** Includes removed accounts: the unique email index still covers them. */
+  async findByEmail(email) {
+    return Vendor.findOne({ email }).lean();
+  }
+
   async create(doc) {
     const vendor = await Vendor.create(doc);
     return vendor.toObject();

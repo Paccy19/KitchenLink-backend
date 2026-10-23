@@ -35,6 +35,14 @@ const normalizeError = (err) => {
   }
 
   if (err?.code === 11000) {
+    // A unique index caught a duplicate (e.g. two sign-ups racing for one phone).
+    const field = Object.keys(err.keyValue || err.keyPattern || {})[0] || '';
+    if (/phone/.test(field)) {
+      return new ApiError(409, 'PHONE_ALREADY_REGISTERED', 'This phone number is already used by another account.', { [field]: 'already registered' });
+    }
+    if (/email/.test(field)) {
+      return new ApiError(409, 'EMAIL_ALREADY_REGISTERED', 'This email is already used by another account.', { [field]: 'already registered' });
+    }
     return new ApiError(409, 'DUPLICATE_ENTRY', 'Duplicate value for a unique field.', {
       ...err.keyValue,
     });

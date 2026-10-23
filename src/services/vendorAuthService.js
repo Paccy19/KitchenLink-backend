@@ -3,8 +3,9 @@ const mongoose = require('mongoose');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { signToken } = require('../utils/jwt');
-const { normalizePhone, parseDeliveryLocation } = require('../utils/validators');
+const { NAME_MAX_LENGTH, normalizePhone, parseDeliveryLocation } = require('../utils/validators');
 const {
+  parseEmail,
   parsePassword,
   parseRequiredText,
   parseVendorType,
@@ -29,11 +30,11 @@ class VendorAuthService {
    * hidden from discovery (`is_active: false`) until an admin approves them.
    */
   async register(body = {}, files = {}) {
-    const name = parseRequiredText(body.name, { field: 'name', min: 2, max: 120 });
+    const name = parseRequiredText(body.name, { field: 'name', min: 2, max: NAME_MAX_LENGTH });
     const ownerName = parseRequiredText(body.owner_name, {
       field: 'owner_name',
       min: 2,
-      max: 120,
+      max: NAME_MAX_LENGTH,
     });
     const vendorType = parseVendorType(body.vendor_type);
     const phone = normalizePhone(body.phone);
@@ -71,8 +72,19 @@ class VendorAuthService {
         'PHONE_ALREADY_REGISTERED'
       );
     }
+    const email =
+      body.email !== undefined && body.email !== null && String(body.email).trim() !== ''
+        ? parseEmail(body.email)
+        : undefined;
+    if (email && (await vendorRepository.findByEmail(email))) {
+      throw ApiError.conflict(
+        'A vendor with this email is already registered.',
+        'EMAIL_ALREADY_REGISTERED'
+      );
+    }
 
     const vendor = await vendorRepository.create({
+      ...(email ? { email } : {}),
       name,
       vendor_type: vendorType,
       owner_name: ownerName,

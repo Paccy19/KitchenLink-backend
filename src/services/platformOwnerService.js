@@ -520,8 +520,14 @@ class PlatformOwnerService {
       label: requiredText(body.label, 'label', { max: 60 }),
       provider: requiredText(body.provider, 'provider', { max: 60 }),
       account_name: requiredText(body.account_name, 'account_name'),
-      account_number: requiredText(body.account_number, 'account_number', { min: 4, max: 40 }).replace(/\s+/g, ''),
+      account_number:
+        type === 'mobile_money'
+          ? parsePayoutPhone(body.account_number, 'account_number')
+          : requiredText(body.account_number, 'account_number', { min: 4, max: 40 }).replace(/[\s-]/g, ''),
     };
+    if (type === 'bank' && !/^\d{4,30}$/.test(doc.account_number)) {
+      throw ApiError.badRequest('account_number must contain only digits.', { account_number: 'expected 4-30 digits' });
+    }
     await this.#assertNoDefaultPassword(admin);
     await adminAuthService.verifyActionCode(admin, 'payout_destination', body.otp_code);
 

@@ -31,6 +31,7 @@ const adminSchema = new mongoose.Schema(
     status: { type: String, enum: ['invited', 'active'], default: 'active' },
     is_active: { type: Boolean, default: true },
     // Verified phone for SMS sign-in codes and money-action confirmations.
+    // Unique among admins once set (see the partial index below).
     phone: { type: String, trim: true, default: '' },
     two_factor_enabled: { type: Boolean, default: false },
     // Invitation (only the hash of the emailed token is stored).
@@ -45,6 +46,11 @@ const adminSchema = new mongoose.Schema(
     deleted_at: { type: Date, default: null },
   },
   { timestamps }
+);
+
+adminSchema.index(
+  { phone: 1 },
+  { unique: true, partialFilterExpression: { phone: { $gt: '' } } }
 );
 
 module.exports = mongoose.model('Admin', adminSchema);

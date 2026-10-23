@@ -88,7 +88,7 @@ class AdminComplaintService {
       raised_by: {
         user_id: body.user_id ? parseObjectId(body.user_id, 'user_id') : null,
         role: body.role || 'guest',
-        name: parseOptionalText(body.name, { field: 'name', max: 120 }) || '',
+        name: parseOptionalText(body.name, { field: 'name', max: 50 }) || '',
         phone: parseOptionalText(body.phone, { field: 'phone', max: 30 }) || '',
       },
       related: {

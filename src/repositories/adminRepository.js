@@ -12,6 +12,10 @@ class AdminRepository {
       .lean();
   }
 
+  async findByPhone(phone) {
+    return Admin.findOne({ phone }).lean();
+  }
+
   async findByEmail(email) {
     return Admin.findOne({ email, deleted_at: null }).lean();
   }

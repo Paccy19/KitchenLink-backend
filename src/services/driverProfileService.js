@@ -8,6 +8,7 @@ const { parseVehicleType } = require('../utils/deliveryValidators');
 const { serializeDriverAccount } = require('../utils/serializers');
 const { resolveImageUrl } = require('../utils/uploads');
 const { hashPassword, comparePassword } = require('../utils/password');
+const { NAME_MAX_LENGTH } = require('../utils/validators');
 const driverRepository = require('../repositories/driverRepository');
 
 class DriverProfileService {
@@ -15,13 +16,22 @@ class DriverProfileService {
     const payload = {};
 
     if (body.name !== undefined) {
-      payload.name = parseRequiredText(body.name, { field: 'name', min: 2, max: 120 });
+      payload.name = parseRequiredText(body.name, { field: 'name', min: 2, max: NAME_MAX_LENGTH });
     }
     if (body.email !== undefined) {
       payload.email =
         body.email === null || String(body.email).trim() === ''
           ? undefined
           : parseEmail(body.email);
+      if (payload.email) {
+        const existing = await driverRepository.findByEmail(payload.email);
+        if (existing && String(existing._id) !== String(driver._id)) {
+          throw ApiError.conflict(
+            'A delivery worker with this email is already registered.',
+            'EMAIL_ALREADY_REGISTERED'
+          );
+        }
+      }
     }
     if (body.vehicle_type !== undefined) {
       payload.vehicle_type = parseVehicleType(body.vehicle_type);

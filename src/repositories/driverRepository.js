@@ -23,6 +23,11 @@ class DriverRepository {
     return Driver.findOne({ phone, deleted_at: null }).lean();
   }
 
+  /** Includes removed accounts: the unique email index still covers them. */
+  async findByEmail(email) {
+    return Driver.findOne({ email }).lean();
+  }
+
   /** Used only by password change flows; includes the password hash. */
   async findByIdWithPassword(driverId) {
     return Driver.findOne({ _id: driverId, deleted_at: null })

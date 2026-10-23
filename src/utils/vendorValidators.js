@@ -3,7 +3,9 @@ const config = require('../config');
 const ApiError = require('./ApiError');
 const { VENDOR_TYPES, LEGACY_VENDOR_TYPES } = require('../models/Vendor');
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// name@domain.tld — letters/digits/._%+- before the @, a real domain with a 2+ letter ending after it.
+const EMAIL_REGEX =
+  /^[a-z0-9](?:[a-z0-9._%+-]{0,62}[a-z0-9_%+-])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/;
 const DAYS = [
   'monday',
   'tuesday',
@@ -22,7 +24,7 @@ function badRequest(message, details) {
 
 function parseEmail(raw) {
   const email = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-  if (!email || !EMAIL_REGEX.test(email) || email.length > 254) {
+  if (!email || email.length > 254 || email.includes('..') || !EMAIL_REGEX.test(email)) {
     throw badRequest('email is required and must be valid.', {
       email: 'expected a valid email address',
     });
@@ -309,6 +311,23 @@ function parsePaymentInformation(raw) {
     bank_name: pick('bank_name'),
     mobile_money_number: pick('mobile_money_number', 30),
   };
+
+  if (info.mobile_money_number) {
+    let digits = info.mobile_money_number.replace(/[^\d]/g, '');
+    if (digits.startsWith('250')) digits = digits.slice(3);
+    if (!digits.startsWith('0')) digits = `0${digits}`;
+    if (!/^07[2389]\d{7}$/.test(digits)) {
+      throw badRequest('payment_information.mobile_money_number is invalid.', {
+        'payment_information.mobile_money_number': 'expected an MTN or Airtel number like 0788123456',
+      });
+    }
+    info.mobile_money_number = digits;
+  }
+  if (info.account_number && info.payout_method === 'bank_transfer' && !/^\d{4,30}$/.test(info.account_number.replace(/[\s-]/g, ''))) {
+    throw badRequest('payment_information.account_number is invalid.', {
+      'payment_information.account_number': 'expected 4-30 digits',
+    });
+  }
 
   const hasDetails =
     info.payout_method ||

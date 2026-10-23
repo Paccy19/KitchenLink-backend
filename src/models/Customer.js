@@ -5,6 +5,8 @@ const customerSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     phone_number: { type: String, required: true },
+    // Optional; unique among customers when set.
+    email: { type: String, trim: true, lowercase: true },
     profile_image_url: { type: String, default: '' },
     is_verified: { type: Boolean, default: true },
     is_active: { type: Boolean, default: true },
@@ -22,6 +24,10 @@ const customerSchema = new mongoose.Schema(
 );
 
 customerSchema.index({ phone_number: 1 }, { unique: true });
+customerSchema.index(
+  { email: 1 },
+  { unique: true, partialFilterExpression: { email: { $type: 'string' } } }
+);
 customerSchema.index({ last_location: '2dsphere' }, { sparse: true });
 
 module.exports = mongoose.model('Customer', customerSchema);

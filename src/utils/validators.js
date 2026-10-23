@@ -1,8 +1,10 @@
 const ApiError = require('./ApiError');
 const config = require('../config');
 
-const PHONE_REGEX = /^\+[1-9]\d{7,14}$/;
+// Rwandan mobile numbers only: MTN 078/079, Airtel 072/073, stored as +2507XXXXXXXX.
+const PHONE_REGEX = /^\+2507[2389]\d{7}$/;
 
+/** Accepts 07XXXXXXXX, 2507XXXXXXXX or +2507XXXXXXXX (spaces/dashes ignored) and returns +2507XXXXXXXX. */
 function normalizePhone(raw) {
   if (typeof raw !== 'string' && typeof raw !== 'number') {
     throw ApiError.badRequest('phone_number is required.', {
@@ -10,32 +12,35 @@ function normalizePhone(raw) {
     });
   }
   let phone = String(raw).replace(/[\s\-().]/g, '');
-  if (!/^\+?\d{7,15}$/.test(phone)) {
-    throw ApiError.badRequest('phone_number is not a valid phone number.', {
-      phone_number: 'expected digits with optional country code, e.g. +250788123456 or 0788123456',
+  if (phone.length > 13 || !/^\+?\d+$/.test(phone)) {
+    throw ApiError.badRequest('phone_number is not a valid Rwandan phone number.', {
+      phone_number: 'expected 07XXXXXXXX or +2507XXXXXXXX',
     });
   }
-  if (phone.startsWith('0')) phone = `+250${phone.slice(1)}`;
-  if (!phone.startsWith('+')) phone = `+${phone}`;
+  if (/^07\d{8}$/.test(phone)) phone = `+250${phone.slice(1)}`;
+  else if (/^2507\d{8}$/.test(phone)) phone = `+${phone}`;
   if (!PHONE_REGEX.test(phone)) {
-    throw ApiError.badRequest('phone_number is not a valid phone number.', {
-      phone_number: 'expected a valid international phone number',
+    throw ApiError.badRequest('phone_number is not a valid Rwandan phone number.', {
+      phone_number: 'expected an MTN or Airtel number: 07XXXXXXXX or +2507XXXXXXXX',
     });
   }
   return phone;
 }
 
+// Longest name any account (customer, kitchen, owner, delivery worker, admin) may have.
+const NAME_MAX_LENGTH = 50;
+
 function parseName(raw, { required = true } = {}) {
-  const name = typeof raw === 'string' ? raw.trim() : '';
+  const name = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : '';
   if (!name) {
     if (!required) return null;
     throw ApiError.badRequest('name is required.', {
       name: 'expected a non-empty string',
     });
   }
-  if (name.length < 2 || name.length > 80) {
-    throw ApiError.badRequest('name must be between 2 and 80 characters.', {
-      name: 'expected 2-80 characters',
+  if (name.length < 2 || name.length > NAME_MAX_LENGTH) {
+    throw ApiError.badRequest(`name must be between 2 and ${NAME_MAX_LENGTH} characters.`, {
+      name: `expected 2-${NAME_MAX_LENGTH} characters`,
     });
   }
   return name;
@@ -210,6 +215,7 @@ function parseDeliveryLocation(raw) {
 }
 
 module.exports = {
+  NAME_MAX_LENGTH,
   normalizePhone,
   parseName,
   parseQuantity,

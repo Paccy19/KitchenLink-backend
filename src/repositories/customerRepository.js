@@ -8,6 +8,10 @@ class CustomerRepository {
     return Customer.findOne({ phone_number: phoneNumber }).lean();
   }
 
+  async findByEmail(email) {
+    return Customer.findOne({ email }).lean();
+  }
+
   async findById(customerId) {
     return Customer.findById(customerId).lean();
   }
@@ -48,12 +52,12 @@ class CustomerRepository {
     ).lean();
   }
 
-  async update(customerId, update) {
-    return Customer.findOneAndUpdate(
-      { _id: customerId },
-      { $set: update },
-      { new: true }
-    ).lean();
+  /** `unset` lists fields to remove (e.g. clearing the optional email). */
+  async update(customerId, update, { unset = [] } = {}) {
+    const ops = {};
+    if (Object.keys(update).length) ops.$set = update;
+    if (unset.length) ops.$unset = Object.fromEntries(unset.map((field) => [field, '']));
+    return Customer.findOneAndUpdate({ _id: customerId }, ops, { new: true }).lean();
   }
 
   /* ------------------------------- admin ------------------------------- */

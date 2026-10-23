@@ -3,6 +3,7 @@ const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { signToken } = require('../utils/jwt');
 const { normalizePhone, parseName } = require('../utils/validators');
+const { parseEmail } = require('../utils/vendorValidators');
 const { resolveImageUrl } = require('../utils/uploads');
 const customerRepository = require('../repositories/customerRepository');
 const otpRepository = require('../repositories/otpRepository');
@@ -11,6 +12,7 @@ const serializeCustomer = (customer) => ({
   id: String(customer._id),
   name: customer.name,
   phone_number: customer.phone_number,
+  email: customer.email || null,
   profile_image_url: customer.profile_image_url || null,
 });
 
@@ -153,6 +155,24 @@ class AuthService {
       payload.phone_number = phone;
     }
 
+    // Optional email: unique among customers; an empty value removes it.
+    const unset = [];
+    if (body.email !== undefined) {
+      if (body.email === null || String(body.email).trim() === '') {
+        unset.push('email');
+      } else {
+        const email = parseEmail(body.email);
+        const existing = await customerRepository.findByEmail(email);
+        if (existing && String(existing._id) !== String(customer._id)) {
+          throw ApiError.conflict(
+            'A customer with this email is already registered.',
+            'EMAIL_ALREADY_REGISTERED'
+          );
+        }
+        payload.email = email;
+      }
+    }
+
     const profileImageUrl = resolveImageUrl({
       file,
       image_url: body.profile_image_url,
@@ -160,13 +180,13 @@ class AuthService {
     });
     if (profileImageUrl !== undefined) payload.profile_image_url = profileImageUrl;
 
-    if (Object.keys(payload).length === 0) {
+    if (Object.keys(payload).length === 0 && unset.length === 0) {
       throw ApiError.badRequest('No supported profile fields were provided.', {
-        body: 'expected name, phone_number or profile_image',
+        body: 'expected name, phone_number, email or profile_image',
       });
     }
 
-    const updated = await customerRepository.update(customer._id, payload);
+    const updated = await customerRepository.update(customer._id, payload, { unset });
     return { customer: serializeCustomer(updated) };
   }
 

@@ -1,5 +1,5 @@
 const ApiError = require('../utils/ApiError');
-const { normalizePhone } = require('../utils/validators');
+const { NAME_MAX_LENGTH, normalizePhone } = require('../utils/validators');
 const {
   parseRequiredText,
   parseOptionalText,
@@ -19,13 +19,13 @@ class VendorProfileService {
       payload.name = parseRequiredText(body.name, {
         field: 'name',
         min: 2,
-        max: 120,
+        max: NAME_MAX_LENGTH,
       });
     }
     if (body.owner_name !== undefined) {
       payload.owner_name = parseOptionalText(body.owner_name, {
         field: 'owner_name',
-        max: 120,
+        max: NAME_MAX_LENGTH,
       });
     }
     if (body.description !== undefined) {

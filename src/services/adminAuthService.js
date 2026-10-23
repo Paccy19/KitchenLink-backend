@@ -115,15 +115,29 @@ class AdminAuthService {
 
   /** Step 1 of turning on SMS codes: send a code to the new phone. */
   async startTwoFactor(admin, { phone }) {
-    return adminOtpService.send(normalizePhone(phone), 'enable_2fa');
+    const normalized = normalizePhone(phone);
+    await this.#assertPhoneFree(admin, normalized);
+    return adminOtpService.send(normalized, 'enable_2fa');
   }
 
   /** Step 2: prove the phone works, then require codes from now on. */
   async enableTwoFactor(admin, { phone, code }) {
     const normalized = normalizePhone(phone);
+    await this.#assertPhoneFree(admin, normalized);
     await adminOtpService.verify(normalized, 'enable_2fa', code);
     const updated = await adminRepository.update(admin._id, { phone: normalized, two_factor_enabled: true });
     return { admin: serializeAdmin(updated) };
+  }
+
+  /** One phone per admin account: another team member cannot reuse it. */
+  async #assertPhoneFree(admin, phone) {
+    const existing = await adminRepository.findByPhone(phone);
+    if (existing && String(existing._id) !== String(admin._id)) {
+      throw ApiError.conflict(
+        'This phone number is already used by another admin account.',
+        'PHONE_ALREADY_REGISTERED'
+      );
+    }
   }
 
   async disableTwoFactor(admin, { code }) {
