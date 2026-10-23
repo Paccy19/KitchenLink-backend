@@ -27,11 +27,13 @@ const Refund = require('./Refund');
 const VendorOffer = require('./VendorOffer');
 const ChatConversation = require('./ChatConversation');
 const ChatMessage = require('./ChatMessage');
+const BankSettings = require('./BankSettings');
 
 module.exports = {
   VendorOffer,
   ChatConversation,
   ChatMessage,
+  BankSettings,
   Vendor,
   Category,
   MenuItem,

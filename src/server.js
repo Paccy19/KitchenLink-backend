@@ -10,6 +10,7 @@ const platformSweepService = require('./services/platformSweepService');
 const vendorOfferService = require('./services/vendorOfferService');
 const deliveryService = require('./services/deliveryService');
 const deliverySettingsService = require('./services/deliverySettingsService');
+const bankSettingsService = require('./services/bankSettingsService');
 
 const DEFAULT_JWT_SECRET = 'dev-secret-change-me';
 
@@ -98,6 +99,7 @@ const start = async () => {
     vendorOfferService.start();
     // Admin-set delivery timing rules (warning, late charge, reassign).
     await deliverySettingsService.load();
+    await bankSettingsService.load();
     // Re-offers open orders to drivers who came into range and runs the
     // late-pickup clock.
     deliveryService.start();

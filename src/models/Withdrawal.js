@@ -37,6 +37,8 @@ const withdrawalSchema = new mongoose.Schema(
     // Where the admin should send the money (e.g. the MoMo number).
     account_number: { type: String, default: '' },
     account_name: { type: String, default: '' },
+    // Bank transfers only: the bank the account is at.
+    bank_name: { type: String, default: '' },
     status: {
       type: String,
       enum: ['processing', 'completed', 'failed'],

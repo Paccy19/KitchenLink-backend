@@ -580,6 +580,8 @@ function serializeWithdrawal(withdrawal) {
     method: withdrawal.method,
     method_label: withdrawal.method_label || withdrawal.method,
     account_number: withdrawal.account_number || null,
+    account_name: withdrawal.account_name || null,
+    bank_name: withdrawal.bank_name || null,
     status: withdrawal.status,
     reference: withdrawal.reference || null,
     failure_reason: withdrawal.failure_reason || null,
@@ -887,6 +889,7 @@ function serializeAdminWithdrawal(withdrawal) {
       null,
     account_name:
       withdrawal.account_name || vendor?.payment_information?.account_name || payee?.name || null,
+    bank_name: withdrawal.bank_name || (withdrawal.method === 'bank_transfer' ? vendor?.payment_information?.bank_name || null : null),
     vendor_id: idOf(withdrawal.vendor_id),
     vendor_name: vendor?.name ?? null,
     driver_id: idOf(withdrawal.driver_id),

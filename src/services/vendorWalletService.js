@@ -6,7 +6,23 @@ const withdrawalRepository = require('../repositories/withdrawalRepository');
 const orderRepository = require('../repositories/orderRepository');
 const notificationService = require('./notificationService');
 const commissionService = require('./commissionService');
-const { normalizeMethod, parseAmount, generateReference } = require('../utils/withdrawals');
+const {
+  normalizeMethod,
+  parseAmount,
+  parsePayoutDestination,
+  parsePayoutPhone,
+  generateReference,
+} = require('../utils/withdrawals');
+
+/** The registered phone in the local 07… form the payout goes to (null if not a MoMo number). */
+const registeredPayoutPhone = (phone) => {
+  if (!phone) return null;
+  try {
+    return parsePayoutPhone(phone);
+  } catch {
+    return null;
+  }
+};
 
 class VendorWalletService {
   async getWallet(vendor) {
@@ -28,13 +44,21 @@ class VendorWalletService {
       withdrawn_rwf: withdrawnRwf,
       pending_balance_rwf: Math.round(activeSalesRwf * (1 - commissionRate)),
       commission_percent: commissionPercent,
+      // Suggested payout number: the phone the kitchen registered with.
+      payout_phone: registeredPayoutPhone(vendor.phone),
+      payout_name: vendor.owner_name || vendor.name || '',
       withdrawals: withdrawals.map(serializeWithdrawal),
     };
   }
 
   async requestWithdrawal(vendor, body = {}) {
     const amount = parseAmount(body.amount_rwf);
-    const { code, label } = normalizeMethod(body.method);
+    const method = normalizeMethod(body.method);
+    // Mobile money goes to the number they registered with unless they gave another.
+    const destination = parsePayoutDestination(method, body, {
+      defaultPhone: vendor.phone,
+      defaultName: vendor.owner_name || vendor.name || '',
+    });
 
     const updated = await vendorRepository.decrementBalance(vendor._id, amount);
     if (!updated) {
@@ -47,17 +71,21 @@ class VendorWalletService {
       payee_type: 'vendor',
       vendor_id: vendor._id,
       amount_rwf: amount,
-      method: code,
-      method_label: label,
+      method: method.code,
+      ...destination,
       status: 'processing',
       reference: generateReference('WD'),
     });
 
+    const where =
+      method.code === 'bank_transfer'
+        ? `${destination.bank_name} account ${destination.account_number}`
+        : `${destination.method_label} ${destination.account_number}`;
     notificationService
       .notifyAdmin({
         type: 'payout_requested',
         title: 'Payout requested',
-        body: `${vendor.name || 'A vendor'} requested a payout of ${amount.toLocaleString()} RWF.`,
+        body: `${vendor.name || 'A vendor'} requested a payout of ${amount.toLocaleString()} RWF to ${where}.`,
         link: `/admin-dashboard/payouts?payout=${withdrawal._id}`,
         data: {
           withdrawal_id: String(withdrawal._id),

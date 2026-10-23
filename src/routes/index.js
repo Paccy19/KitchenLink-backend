@@ -28,6 +28,11 @@ const {
 
 const router = Router();
 
+// Banks for withdrawals, with each bank's account-number length (public list).
+router.get('/banks', (req, res) => {
+  res.json(require('../services/bankSettingsService').list());
+});
+
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });

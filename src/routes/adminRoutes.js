@@ -25,6 +25,7 @@ const deliverySettingsService = require('../services/deliverySettingsService');
 
 const asyncHandler = require('../utils/asyncHandler');
 const chatService = require('../services/chatService');
+const bankSettingsService = require('../services/bankSettingsService');
 
 const router = Router();
 
@@ -104,6 +105,35 @@ router.get(
   requirePermission('deliveries:read'),
   asyncHandler(async (req, res) => res.json(await adminOperationsService.latePickups(req.query)))
 );
+// Banks people can withdraw to, with each bank's account-number length.
+router.get(
+  '/settings/banks',
+  requirePermission('payouts:read'),
+  asyncHandler(async (req, res) => res.json(bankSettingsService.list()))
+);
+router.put(
+  '/settings/banks',
+  requirePermission('payouts:write'),
+  asyncHandler(async (req, res) => {
+    const { previous, current } = await bankSettingsService.update(req.admin, req.body);
+    await adminActionLogService.record(
+      req.admin,
+      {
+        action: 'settings.banks',
+        target_type: 'system',
+        target_id: 'banks',
+        target_label: 'Bank account number lengths',
+        metadata: {
+          before: previous.banks.map((bank) => `${bank.name}: ${bank.digits_min ?? '?'}-${bank.digits_max ?? '?'}`),
+          after: current.banks.map((bank) => `${bank.name}: ${bank.digits_min ?? '?'}-${bank.digits_max ?? '?'}`),
+        },
+      },
+      req
+    );
+    res.json(current);
+  })
+);
+
 // Delivery timing rules: warning, late charge and automatic reassignment.
 router.get(
   '/operations/delivery-timing',

@@ -4,6 +4,7 @@ const {
   normalizeMethod,
   parseAmount,
   parsePayoutPhone,
+  parsePayoutDestination,
   generateReference,
 } = require('../utils/withdrawals');
 const driverRepository = require('../repositories/driverRepository');
@@ -39,20 +40,19 @@ class DriverWalletService {
       processing_rwf: processingRwf,
       // Default payout number, in the same local form the payout is sent to.
       payout_phone: this.#defaultPayoutPhone(driver),
+      payout_name: driver.name || '',
       withdrawals: withdrawals.map(serializeWithdrawal),
     };
   }
 
   async requestWithdrawal(driver, body = {}) {
     const amount = parseAmount(body.amount_rwf);
-    const { code, label } = normalizeMethod(body.method);
-    // Riders are paid by mobile money; default to their login number.
-    const accountNumber = parsePayoutPhone(body.phone ?? driver.phone, 'phone');
-    if (code !== 'mobile_money') {
-      throw ApiError.badRequest('Delivery workers are paid by mobile money (MTN or Airtel).', {
-        method: 'expected MTN Mobile Money or Airtel Money',
-      });
-    }
+    const method = normalizeMethod(body.method);
+    // Mobile money defaults to the number they registered with; bank needs the account details.
+    const destination = parsePayoutDestination(method, body, {
+      defaultPhone: driver.phone,
+      defaultName: driver.name || '',
+    });
 
     const updated = await driverRepository.decrementBalance(driver._id, amount);
     if (!updated) {
@@ -65,10 +65,8 @@ class DriverWalletService {
       payee_type: 'driver',
       driver_id: driver._id,
       amount_rwf: amount,
-      method: code,
-      method_label: label,
-      account_number: accountNumber,
-      account_name: driver.name || '',
+      method: method.code,
+      ...destination,
       status: 'processing',
       reference: generateReference('RWD'),
     });
@@ -77,7 +75,11 @@ class DriverWalletService {
       .notifyAdmin({
         type: 'payout_requested',
         title: 'Delivery worker payout requested',
-        body: `${driver.name || 'A delivery worker'} requested a payout of ${amount.toLocaleString()} RWF to ${label} ${accountNumber}.`,
+        body: `${driver.name || 'A delivery worker'} requested a payout of ${amount.toLocaleString()} RWF to ${
+          method.code === 'bank_transfer'
+            ? `${destination.bank_name} account ${destination.account_number}`
+            : `${destination.method_label} ${destination.account_number}`
+        }.`,
         link: `/admin-dashboard/payouts?payout=${withdrawal._id}`,
         data: {
           withdrawal_id: String(withdrawal._id),
