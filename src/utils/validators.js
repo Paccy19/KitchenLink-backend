@@ -1,5 +1,6 @@
 const ApiError = require('./ApiError');
 const config = require('../config');
+const { assertInRwanda } = require('./geo');
 
 // Rwandan mobile numbers only: MTN 078/079, Airtel 072/073, stored as +2507XXXXXXXX.
 const PHONE_REGEX = /^\+2507[2389]\d{7}$/;
@@ -229,8 +230,10 @@ function parseDeliveryLocation(raw) {
       address: 'expected a non-empty string of at most 200 characters',
     });
   }
-  const latitude = Number(raw.latitude);
-  const longitude = Number(raw.longitude);
+  // Blank values are missing, not 0 (Number('') is 0: a point in the ocean).
+  const blank = (value) => value === undefined || value === null || String(value).trim() === '';
+  const latitude = blank(raw.latitude) ? NaN : Number(raw.latitude);
+  const longitude = blank(raw.longitude) ? NaN : Number(raw.longitude);
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
     throw ApiError.badRequest('delivery_location latitude and longitude must be numbers.', {
       latitude: 'expected a number between -90 and 90',
@@ -243,6 +246,7 @@ function parseDeliveryLocation(raw) {
       longitude: 'expected a number between -180 and 180',
     });
   }
+  assertInRwanda(latitude, longitude, 'This address');
   const note = typeof raw.note === 'string' ? raw.note.trim().slice(0, 300) : '';
   const neighborhood =
     typeof raw.neighborhood === 'string' ? raw.neighborhood.trim().slice(0, 80) : '';

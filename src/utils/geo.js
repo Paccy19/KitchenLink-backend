@@ -25,6 +25,31 @@ const assertValid = (lat, lng) => {
 
 const hasValue = (value) => value !== undefined && value !== null && value !== '';
 
+// Rwanda's bounding box (config.maps.geocoderBounds: west, south, east, north)
+// with ~5 km of margin for border areas and GPS drift.
+const RWANDA_MARGIN_DEG = 0.05;
+
+/** True when the point is in (or right next to) Rwanda. */
+const isInRwanda = (lat, lng) => {
+  const [west, south, east, north] = config.maps.geocoderBounds;
+  return (
+    lat >= south - RWANDA_MARGIN_DEG &&
+    lat <= north + RWANDA_MARGIN_DEG &&
+    lng >= west - RWANDA_MARGIN_DEG &&
+    lng <= east + RWANDA_MARGIN_DEG
+  );
+};
+
+/** Throws unless the point is in Rwanda (delivery addresses, kitchens, worker positions). */
+const assertInRwanda = (lat, lng, what = 'This location') => {
+  if (!isInRwanda(lat, lng)) {
+    throw ApiError.badRequest(`${what} is outside Rwanda. KitchenLink only works within Rwanda.`, {
+      latitude: 'expected a point in Rwanda',
+      longitude: 'expected a point in Rwanda',
+    });
+  }
+};
+
 function parseOptionalCoords(query = {}) {
   const hasLat = hasValue(query.lat);
   const hasLng = hasValue(query.lng);
@@ -87,6 +112,8 @@ function distanceFromCoords(coords, coordinates) {
 }
 
 module.exports = {
+  isInRwanda,
+  assertInRwanda,
   parseOptionalCoords,
   parseRequiredCoords,
   parseRadius,

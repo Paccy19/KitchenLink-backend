@@ -1,4 +1,5 @@
 const ApiError = require('../utils/ApiError');
+const { assertInRwanda } = require('../utils/geo');
 const { NAME_MAX_LENGTH, capitalizeName, normalizePhone } = require('../utils/validators');
 const {
   parseRequiredText,
@@ -243,6 +244,7 @@ function parseKitchenCoords(latitude, longitude) {
       longitude: 'expected a number between -180 and 180',
     });
   }
+  assertInRwanda(lat, lng, 'This kitchen location');
   return { lat, lng };
 }
 

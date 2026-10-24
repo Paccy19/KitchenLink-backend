@@ -1139,7 +1139,8 @@ class DeliveryService {
   }
 
   async updateLocation(driver, body = {}) {
-    const coords = parseCoords(body, { field: 'location', required: true });
+    // A worker's position must be in Rwanda (a faked far-away one is refused).
+    const coords = parseCoords(body, { field: 'location', required: true, inRwanda: true });
     // Optional GPS extras; anything missing or out of range is dropped.
     const num = (value, min, max) => {
       const n = Number(value);

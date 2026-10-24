@@ -1,5 +1,6 @@
 const config = require('../config');
 const ApiError = require('./ApiError');
+const { assertInRwanda } = require('./geo');
 const { VEHICLE_TYPES, LEGACY_VEHICLE_TYPES } = require('../models/Driver');
 
 const ALLOWED_VEHICLE_TYPES = [...VEHICLE_TYPES, ...LEGACY_VEHICLE_TYPES];
@@ -15,9 +16,11 @@ function parseVehicleType(raw) {
   return value;
 }
 
-function parseCoords(body = {}, { field = 'location', required = true } = {}) {
-  const lat = Number(body.latitude ?? body.lat);
-  const lng = Number(body.longitude ?? body.lng);
+function parseCoords(body = {}, { field = 'location', required = true, inRwanda = false } = {}) {
+  // Blank values are missing, not 0 (Number('') is 0: a point in the ocean).
+  const pick = (value) => (value === undefined || value === null || String(value).trim() === '' ? NaN : Number(value));
+  const lat = pick(body.latitude ?? body.lat);
+  const lng = pick(body.longitude ?? body.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     if (!required) return null;
     throw ApiError.badRequest(`${field} coordinates are required.`, {
@@ -31,6 +34,7 @@ function parseCoords(body = {}, { field = 'location', required = true } = {}) {
       longitude: 'expected a number between -180 and 180',
     });
   }
+  if (inRwanda) assertInRwanda(lat, lng, 'This position');
   return { lat, lng };
 }
 
