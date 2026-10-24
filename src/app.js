@@ -5,6 +5,7 @@ const config = require('./config');
 const routes = require('./routes');
 const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
+const redactUrl = require('./utils/redactUrl');
 const { uploadsDir, ensureUploadsDir } = require('./utils/uploads');
 
 const app = express();
@@ -37,7 +38,7 @@ app.use((req, res, next) => {
   const startedAt = Date.now();
   res.on('finish', () => {
     console.log(
-      `${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - startedAt}ms`
+      `${req.method} ${redactUrl(req.originalUrl)} ${res.statusCode} ${Date.now() - startedAt}ms`
     );
   });
   next();
