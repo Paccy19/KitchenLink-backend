@@ -26,12 +26,16 @@ npm start
 
 ### Environment variables
 
+All variables are listed with comments in [`.env.example`](.env.example).
+**Before deploying, read [SECURITY.md](SECURITY.md)**: a live server refuses
+to start until the required settings are set.
+
 | Variable | Default | Description |
 | --- | --- | --- |
-| `NODE_ENV` | `development` | `production` disables dev-only OTP echoes. |
+| `NODE_ENV` | `development` | Only `development` or `test` count as a development server (codes shown on screen, simulated payments, relaxed checks). Anything else is treated as live. |
 | `PORT` | `4000` | HTTP port. |
-| `MONGODB_URI` | `mongodb://127.0.0.1:27017/online_food_kitchen` | MongoDB connection string. |
-| `JWT_SECRET` | `dev-secret-change-me` | **Set a strong secret in production.** |
+| `MONGODB_URI` | `mongodb://127.0.0.1:27017/online_food_kitchen` | MongoDB connection string. **Live: must include a username and password.** |
+| `JWT_SECRET` | (none) | **Live: required, random, 32+ characters.** |
 | `JWT_EXPIRES_IN` | `30d` | Vendor/customer token lifetime. |
 | `PUBLIC_BASE_URL` | `http://localhost:4000` | Absolute prefix used for uploaded image URLs. |
 | `UPLOAD_DIR` | `uploads` | Local directory for uploaded images. |
