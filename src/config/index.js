@@ -281,6 +281,9 @@ const config = {
     uploads: {
       dir: process.env.UPLOAD_DIR || 'uploads',
       publicPath: '/uploads',
+      // Verification documents (IDs, licences): never served publicly, only
+      // through signed-in endpoints (see privateDocumentsService).
+      privateDir: process.env.PRIVATE_UPLOAD_DIR || 'private-uploads',
       maxFileSizeBytes: numberFromEnv(process.env.UPLOAD_MAX_MB, 5) * 1024 * 1024,
       maxDocumentSizeBytes:
         numberFromEnv(process.env.UPLOAD_DOC_MAX_MB, 10) * 1024 * 1024,

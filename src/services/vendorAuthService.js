@@ -18,7 +18,7 @@ const {
 } = require('../utils/vendorValidators');
 const { serializeVendorAccount } = require('../utils/serializers');
 const { hashPassword, comparePassword } = require('../utils/password');
-const { buildPublicUrl, resolveImageUrl } = require('../utils/uploads');
+const { privateRef, resolveImageUrl } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
 const categoryRepository = require('../repositories/categoryRepository');
 const otpRepository = require('../repositories/otpRepository');
@@ -296,7 +296,8 @@ class VendorAuthService {
     for (const file of files.documents || []) {
       documents.push({
         label: file.originalname || 'Verification document',
-        url: buildPublicUrl(file.filename),
+        // Private: only signed-in admins and the kitchen can open it.
+        url: privateRef(file.filename),
         uploaded_at: new Date(),
       });
     }

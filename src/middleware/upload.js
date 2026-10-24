@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
-const { uploadsDir, ensureUploadsDir } = require('../utils/uploads');
+const { uploadsDir, ensureUploadsDir, ensurePrivateUploadsDir } = require('../utils/uploads');
 
 // Extension is derived from the (allowlist-validated) MIME type rather than the
 // client-supplied filename, so uploads always land with a correct extension and
@@ -16,10 +16,12 @@ const EXT_BY_MIME = {
   'application/pdf': '.pdf',
 };
 
+// Verification documents ("documents" field: IDs, licences) go to the private
+// folder, which is never served publicly; images go to the public one.
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     try {
-      cb(null, ensureUploadsDir());
+      cb(null, file.fieldname === 'documents' ? ensurePrivateUploadsDir() : ensureUploadsDir());
     } catch (error) {
       cb(error);
     }

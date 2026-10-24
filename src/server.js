@@ -13,6 +13,7 @@ const deliverySettingsService = require('./services/deliverySettingsService');
 const bankSettingsService = require('./services/bankSettingsService');
 const deliveryFeeSettingsService = require('./services/deliveryFeeSettingsService');
 const dispatchSettingsService = require('./services/dispatchSettingsService');
+const privateDocumentsService = require('./services/privateDocumentsService');
 
 
 const bootstrapAdmin = async () => {
@@ -113,6 +114,15 @@ const start = async () => {
     await connectPostgres();
 
     await bootstrapAdmin();
+
+    // Verification documents uploaded before they were private leave the
+    // public uploads folder (old links stop working).
+    try {
+      const moved = await privateDocumentsService.migratePublicDocuments();
+      if (moved > 0) console.log(`Moved ${moved} verification document(s) to private storage`);
+    } catch (error) {
+      console.error('Moving verification documents to private storage failed:', error.message);
+    }
 
     platformSweepService.start();
     vendorOfferService.start();

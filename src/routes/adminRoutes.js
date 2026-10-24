@@ -25,6 +25,9 @@ const adminOperationsService = require('../services/adminOperationsService');
 const deliverySettingsService = require('../services/deliverySettingsService');
 const dispatchSettingsService = require('../services/dispatchSettingsService');
 const deliveryService = require('../services/deliveryService');
+const privateDocumentsService = require('../services/privateDocumentsService');
+const vendorRepository = require('../repositories/vendorRepository');
+const ApiError = require('../utils/ApiError');
 
 const asyncHandler = require('../utils/asyncHandler');
 const chatService = require('../services/chatService');
@@ -59,6 +62,16 @@ router.patch(
 router.get('/vendors', requirePermission('vendors:read'), adminVendorController.list);
 router.get('/vendors/counts', requirePermission('vendors:read'), adminVendorController.counts);
 router.get('/vendors/:vendorId', requirePermission('vendors:read'), adminVendorController.getById);
+// A verification document (private file): only admins who can see vendors.
+router.get(
+  '/vendors/:vendorId/documents/:index',
+  requirePermission('vendors:read'),
+  asyncHandler(async (req, res) => {
+    const vendor = await vendorRepository.findById(req.params.vendorId).catch(() => null);
+    if (!vendor) throw ApiError.notFound('Vendor not found.', 'VENDOR_NOT_FOUND');
+    return privateDocumentsService.send(res, vendor, req.params.index);
+  })
+);
 router.post(
   '/vendors/:vendorId/documents/review',
   requirePermission('vendors:write'),

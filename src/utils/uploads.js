@@ -20,6 +20,31 @@ const ensureUploadsDir = () => {
   return uploadsDir;
 };
 
+// Private files (verification documents) are stored as "private:<filename>"
+// and live outside the public folder.
+const privateUploadsDir = path.isAbsolute(config.vendor.uploads.privateDir)
+  ? config.vendor.uploads.privateDir
+  : path.join(process.cwd(), config.vendor.uploads.privateDir);
+const PRIVATE_REF = 'private:';
+
+const ensurePrivateUploadsDir = () => {
+  fs.mkdirSync(privateUploadsDir, { recursive: true });
+  return privateUploadsDir;
+};
+
+const isSafeFilename = (filename) =>
+  Boolean(filename) && filename === path.basename(filename) && /^[A-Za-z0-9._-]+$/.test(filename);
+
+const privateRef = (filename) => `${PRIVATE_REF}${filename}`;
+const isPrivateRef = (url) => typeof url === 'string' && url.startsWith(PRIVATE_REF);
+
+/** Full path of a private file, or null when the reference isn't a plain filename. */
+const privateFilePath = (ref) => {
+  if (!isPrivateRef(ref)) return null;
+  const filename = ref.slice(PRIVATE_REF.length);
+  return isSafeFilename(filename) ? path.join(privateUploadsDir, filename) : null;
+};
+
 const buildPublicUrl = (filename) =>
   `${config.publicBaseUrl}${config.vendor.uploads.publicPath}/${filename}`;
 
@@ -31,17 +56,30 @@ const publicUrlPrefix = `${config.vendor.uploads.publicPath}/`;
  * External URLs and already-missing files are ignored; never throws.
  * Returns true only when a local file was removed.
  */
-const deleteLocalUpload = (url) => {
-  if (typeof url !== 'string' || !url) return false;
-
+/** The filename of a file in the public uploads folder, from its URL (null otherwise). */
+const publicUploadFilename = (url) => {
+  if (typeof url !== 'string' || !url) return null;
   let filename;
   if (url.startsWith(localUrlPrefix)) filename = url.slice(localUrlPrefix.length);
   else if (url.startsWith(publicUrlPrefix)) filename = url.slice(publicUrlPrefix.length);
-  else return false;
-
+  else return null;
   // Reject anything that is not a plain filename (no traversal, no subpaths).
-  if (!filename || filename !== path.basename(filename)) return false;
-  if (!/^[A-Za-z0-9._-]+$/.test(filename)) return false;
+  return isSafeFilename(filename) ? filename : null;
+};
+
+/** Moves a public upload into the private folder; returns its private reference (null if not local). */
+const moveToPrivate = (url) => {
+  const filename = publicUploadFilename(url);
+  if (!filename) return null;
+  const from = path.join(uploadsDir, filename);
+  if (!fs.existsSync(from)) return null;
+  fs.renameSync(from, path.join(ensurePrivateUploadsDir(), filename));
+  return privateRef(filename);
+};
+
+const deleteLocalUpload = (url) => {
+  const filename = publicUploadFilename(url);
+  if (!filename) return false;
 
   try {
     fs.unlinkSync(path.join(uploadsDir, filename));
@@ -110,6 +148,12 @@ const resolveImageUrl = ({ file, image_url, image_base64 } = {}) => {
 module.exports = {
   uploadsDir,
   ensureUploadsDir,
+  privateUploadsDir,
+  ensurePrivateUploadsDir,
+  privateRef,
+  isPrivateRef,
+  privateFilePath,
+  moveToPrivate,
   buildPublicUrl,
   resolveImageUrl,
   deleteLocalUpload,

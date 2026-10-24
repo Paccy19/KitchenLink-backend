@@ -6,6 +6,24 @@ const dispatchSettingsService = require('../services/dispatchSettingsService');
 const access = require('../config/adminAccess');
 const { vendorTypeLabel, orderingRulesFor, nationwideFor } = require('../config/vendorTypes');
 const { usesHandoverCode, isKitchenDelivered } = require('./fulfillment');
+const { isPrivateRef } = require('./uploads');
+
+/**
+ * Verification documents: private files have no public URL; they are opened
+ * through `download_path` (relative to the API, signed in). Outside links stay links.
+ */
+const serializeVerificationDocuments = (vendor, downloadBase) =>
+  (vendor.verification_documents || []).map((doc, index) => {
+    const isPrivate = isPrivateRef(doc.url);
+    return {
+      label: doc.label || '',
+      url: isPrivate ? null : doc.url,
+      private: isPrivate,
+      download_path: isPrivate ? `${downloadBase}/${index}` : null,
+      file_type: /\.pdf$/i.test(doc.url || '') ? 'pdf' : /\.(png|jpe?g|webp|gif)$/i.test(doc.url || '') ? 'image' : 'other',
+      uploaded_at: doc.uploaded_at,
+    };
+  });
 
 const round1 = (value) =>
   typeof value === 'number' ? Math.round(value * 10) / 10 : null;
@@ -191,11 +209,7 @@ function serializeVendorAccount(vendor) {
     special: serializeVendorSpecial(vendor.special),
     payment_information: vendor.payment_information || {},
     verification_status: vendor.verification_status || 'pending',
-    verification_documents: (vendor.verification_documents || []).map((doc) => ({
-      label: doc.label || '',
-      url: doc.url,
-      uploaded_at: doc.uploaded_at,
-    })),
+    verification_documents: serializeVerificationDocuments(vendor, '/vendor/documents'),
     available_balance_rwf: vendor.available_balance ?? 0,
     total_sales_rwf: vendor.total_sales ?? 0,
     commission_percent: config.vendor.commissionPercent,
@@ -648,11 +662,7 @@ function serializeAdminVendor(vendor) {
     rejection_reason: vendor.rejection_reason || '',
     suspension_reason: vendor.suspension_reason || '',
     documents_reviewed_at: vendor.documents_reviewed_at ?? null,
-    verification_documents: (vendor.verification_documents || []).map((doc) => ({
-      label: doc.label || '',
-      url: doc.url,
-      uploaded_at: doc.uploaded_at,
-    })),
+    verification_documents: serializeVerificationDocuments(vendor, `/admin/vendors/${vendor._id}/documents`),
     profile_image_url: vendor.profile_image_url || null,
     banner_image_url: vendor.banner_image_url || null,
     // The kitchen's registered position (entered by the vendor, not GPS).
