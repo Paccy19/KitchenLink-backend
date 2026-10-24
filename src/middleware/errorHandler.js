@@ -65,14 +65,17 @@ const errorHandler = (err, req, res, next) => {
 
   // Full details (stack included) go to the server log only, which only the
   // people running the server can read; secrets in the URL are hidden.
-  if (normalized.statusCode >= 500) {
-    console.error(`[error] ${req.method} ${redactUrl(req.originalUrl)}`, err);
+  const serverError = normalized.statusCode >= 500;
+  if (serverError) {
+    console.error(`[error] [${req.id}] ${req.method} ${redactUrl(req.originalUrl)}`, err);
   }
 
   res.status(normalized.statusCode).json({
     error: {
       code: normalized.code,
-      message: normalized.message,
+      // Server errors carry the reference, so a user's report can be found in the log.
+      message: serverError && req.id ? `${normalized.message} Reference: ${req.id}` : normalized.message,
+      ...(req.id ? { request_id: req.id } : {}),
       ...(normalized.details ? { details: normalized.details } : {}),
     },
   });

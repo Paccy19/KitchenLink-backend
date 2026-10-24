@@ -5,11 +5,15 @@ const config = require('./config');
 const routes = require('./routes');
 const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
+const requestId = require('./middleware/requestId');
 const rejectOperatorKeys = require('./middleware/rejectOperatorKeys');
 const redactUrl = require('./utils/redactUrl');
 const { uploadsDir, ensureUploadsDir } = require('./utils/uploads');
 
 const app = express();
+
+// First, so every log line and error of a request carries its id.
+app.use(requestId);
 
 // Real visitor IPs behind a hosting proxy (see config.trustProxy).
 if (config.trustProxy) {
@@ -30,6 +34,8 @@ const allowedOrigins = new Set(config.allowedOrigins);
 app.use(
   cors({
     origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin)),
+    // Lets the website read the request id (shown with server errors).
+    exposedHeaders: ['X-Request-Id'],
   })
 );
 app.use(express.json({ limit: '1mb' }));
@@ -46,7 +52,7 @@ app.use((req, res, next) => {
   const startedAt = Date.now();
   res.on('finish', () => {
     console.log(
-      `${req.method} ${redactUrl(req.originalUrl)} ${res.statusCode} ${Date.now() - startedAt}ms`
+      `${req.method} ${redactUrl(req.originalUrl)} ${res.statusCode} ${Date.now() - startedAt}ms [${req.id}]`
     );
   });
   next();
