@@ -28,6 +28,7 @@ const changePassword = asyncHandler(async (req, res) => {
     await adminAuthService.changePassword(req.admin, {
       current_password: req.body?.current_password,
       new_password: req.body?.new_password,
+      currentToken: req.tokenPayload,
     })
   );
 });

@@ -1,6 +1,7 @@
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { verifyToken } = require('../utils/jwt');
+const { assertSessionActive } = require('../utils/sessions');
 const adminRepository = require('../repositories/adminRepository');
 
 const requireAdminAuth = async (req, res, next) => {
@@ -40,6 +41,9 @@ const requireAdminAuth = async (req, res, next) => {
       throw ApiError.forbidden('Accept your invitation first.', 'INVITATION_PENDING');
     }
 
+    // Signed out (this device, or everywhere) or password changed since.
+    await assertSessionActive(payload, admin);
+    req.tokenPayload = payload;
     req.admin = admin;
     next();
   } catch (error) {

@@ -489,6 +489,8 @@ const config = {
   admin: {
     // Role claim embedded in admin JWT access tokens.
     jwtRole: 'admin',
+    // Admin sessions are short: the most powerful accounts sign in again daily.
+    jwtExpiresIn: process.env.ADMIN_JWT_EXPIRES_IN || '12h',
     // Seeded super-admin credentials (override in production via env).
     seedName: process.env.ADMIN_SEED_NAME || 'Platform Admin',
     seedEmail: process.env.ADMIN_SEED_EMAIL || 'admin@foodkitchen.rw',

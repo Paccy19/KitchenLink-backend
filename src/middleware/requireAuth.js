@@ -1,5 +1,6 @@
 const ApiError = require('../utils/ApiError');
 const { verifyToken } = require('../utils/jwt');
+const { assertSessionActive } = require('../utils/sessions');
 const customerRepository = require('../repositories/customerRepository');
 
 const requireAuth = async (req, res, next) => {
@@ -25,7 +26,13 @@ const requireAuth = async (req, res, next) => {
     if (!customer) {
       throw ApiError.unauthorized('Account no longer exists.', 'INVALID_TOKEN');
     }
+    if (customer.is_active === false) {
+      throw ApiError.forbidden('This account has been deactivated. Contact support.', 'ACCOUNT_DISABLED');
+    }
 
+    // Signed out (this device, or everywhere) or password changed since.
+    await assertSessionActive(payload, customer);
+    req.tokenPayload = payload;
     req.customer = customer;
     next();
   } catch (error) {

@@ -37,6 +37,10 @@ const adminSchema = new mongoose.Schema(
     // Still on the seeded (publicly known) password: every admin action is
     // refused until it is changed (see requirePasswordChanged).
     must_change_password: { type: Boolean, default: false },
+    // Sessions (see utils/sessions.js): tokens issued before this are refused,
+    // except the one kept for the device that signed the others out.
+    sessions_valid_after: { type: Date, default: null },
+    sessions_kept_jti: { type: String, default: null },
     // Invitation (only the hash of the emailed token is stored).
     invite_token_hash: { type: String, select: false, default: null },
     invite_expires_at: { type: Date, default: null },

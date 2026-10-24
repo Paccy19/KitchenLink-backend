@@ -11,6 +11,10 @@ const customerSchema = new mongoose.Schema(
     is_verified: { type: Boolean, default: true },
     is_active: { type: Boolean, default: true },
     last_login_at: { type: Date },
+    // Sessions (see utils/sessions.js): tokens issued before this are refused,
+    // except the one kept for the device that signed the others out.
+    sessions_valid_after: { type: Date, default: null },
+    sessions_kept_jti: { type: String, default: null },
     // Last GPS position reported by the customer's browser while using
     // "Use my location" (updated as they move). Absent until first shared.
     last_location: {

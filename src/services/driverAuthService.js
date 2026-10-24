@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
+const { revokeAllSessions } = require('../utils/sessions');
+const { Driver } = require('../models');
 const { signToken } = require('../utils/jwt');
 const { NAME_MAX_LENGTH, capitalizeName, normalizePhone } = require('../utils/validators');
 const { parseEmail, parsePassword, parseRequiredText } = require('../utils/vendorValidators');
@@ -177,7 +179,7 @@ class DriverAuthService {
     return { driver: serializeDriverAccount(driver) };
   }
 
-  async changePassword(driver, { current_password, new_password }) {
+  async changePassword(driver, { current_password, new_password, currentToken = null }) {
     const currentPassword = parsePassword(current_password, {
       field: 'current_password',
     });
@@ -194,10 +196,15 @@ class DriverAuthService {
 
     const password_hash = await hashPassword(newPassword);
     await driverRepository.update(driver._id, { password_hash });
+    // Anyone else signed in with the old password is signed out.
+    await revokeAllSessions(Driver, driver._id, { keepPayload: currentToken });
     return { updated: true };
   }
 
   #assertCanLogin(driver) {
+    if (driver.verification_status === 'suspended') {
+      throw ApiError.forbidden('This delivery worker account is suspended. Contact support.', 'DRIVER_SUSPENDED');
+    }
     if (driver.verification_status === 'rejected') {
       throw ApiError.forbidden(
         'This delivery worker account was rejected. Contact support.',

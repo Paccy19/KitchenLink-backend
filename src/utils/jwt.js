@@ -1,10 +1,11 @@
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const config = require('../config');
 
-const signToken = (payload) =>
-  jwt.sign(payload, config.auth.jwtSecret, {
-    expiresIn: config.auth.jwtExpiresIn,
-  });
+// Each session token has its own id (jti) so signing out can revoke just it.
+const signToken = (payload, { expiresIn = config.auth.jwtExpiresIn } = {}) =>
+  // iat_ms: when it was issued, to the millisecond (iat is whole seconds).
+  jwt.sign({ ...payload, jti: crypto.randomUUID(), iat_ms: Date.now() }, config.auth.jwtSecret, { expiresIn });
 
 const verifyToken = (token) => jwt.verify(token, config.auth.jwtSecret);
 

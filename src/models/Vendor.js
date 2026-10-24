@@ -140,6 +140,10 @@ const vendorSchema = new mongoose.Schema(
     total_sales: { type: Number, min: 0, default: 0 },
     // Soft delete.
     deleted_at: { type: Date, default: null },
+    // Sessions (see utils/sessions.js): tokens issued before this are refused,
+    // except the one kept for the device that signed the others out.
+    sessions_valid_after: { type: Date, default: null },
+    sessions_kept_jti: { type: String, default: null },
   },
   { timestamps }
 );

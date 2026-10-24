@@ -1,4 +1,6 @@
 const { Router } = require('express');
+const { sessionHandlers } = require('../utils/sessions');
+const { Admin } = require('../models');
 const requireAdminAuth = require('../middleware/requireAdminAuth');
 const adminAuthController = require('../controllers/adminAuthController');
 const asyncHandler = require('../utils/asyncHandler');
@@ -20,6 +22,10 @@ router.post(
 // Second sign-in step when SMS codes are on.
 router.post('/verify-2fa', adminAuthController.verifyTwoFactor);
 router.get('/me', requireAdminAuth, adminAuthController.me);
+// Sign out: this device, or every device (the token stops working at once).
+const adminSessions = sessionHandlers(Admin, 'admin');
+router.post('/logout', requireAdminAuth, adminSessions.logout);
+router.post('/logout-all', requireAdminAuth, adminSessions.logoutAll);
 router.post('/change-password', requireAdminAuth, adminAuthController.changePassword);
 
 // SMS codes: set up / turn off, and codes that confirm money actions.

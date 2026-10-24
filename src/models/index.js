@@ -31,6 +31,7 @@ const BankSettings = require('./BankSettings');
 const DeliveryFeeSettings = require('./DeliveryFeeSettings');
 const DispatchSettings = require('./DispatchSettings');
 const OtpGuard = require('./OtpGuard');
+const RevokedToken = require('./RevokedToken');
 
 module.exports = {
   VendorOffer,
@@ -40,6 +41,7 @@ module.exports = {
   DeliveryFeeSettings,
   DispatchSettings,
   OtpGuard,
+  RevokedToken,
   Vendor,
   Category,
   MenuItem,

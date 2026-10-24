@@ -1,6 +1,7 @@
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { verifyToken } = require('../utils/jwt');
+const { assertSessionActive } = require('../utils/sessions');
 const vendorRepository = require('../repositories/vendorRepository');
 const { assertVendorNotBlocked } = require('../utils/vendorAccess');
 
@@ -37,6 +38,9 @@ const requireVendorAuth = async (req, res, next) => {
     // Vendors suspended or rejected while signed in lose access immediately.
     assertVendorNotBlocked(vendor);
 
+    // Signed out (this device, or everywhere) or password changed since.
+    await assertSessionActive(payload, vendor);
+    req.tokenPayload = payload;
     req.vendor = vendor;
     next();
   } catch (error) {

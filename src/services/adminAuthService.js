@@ -1,5 +1,7 @@
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
+const { revokeAllSessions } = require('../utils/sessions');
+const { Admin } = require('../models');
 const { signToken, signShortToken, verifyToken } = require('../utils/jwt');
 const { normalizePhone } = require('../utils/validators');
 const adminOtpService = require('./adminOtpService');
@@ -203,7 +205,7 @@ class AdminAuthService {
     }
   }
 
-  async changePassword(admin, { current_password, new_password }) {
+  async changePassword(admin, { current_password, new_password, currentToken = null }) {
     const currentPassword = parsePassword(current_password, {
       field: 'current_password',
     });
@@ -225,6 +227,8 @@ class AdminAuthService {
 
     const password_hash = await hashPassword(newPassword);
     await adminRepository.update(admin._id, { password_hash, must_change_password: false });
+    // Anyone else signed in with the old password is signed out.
+    await revokeAllSessions(Admin, admin._id, { keepPayload: currentToken });
     return { updated: true };
   }
 
@@ -262,14 +266,14 @@ class AdminAuthService {
   }
 
   #issueSession(admin, { usesDefaultPassword = false } = {}) {
-    const token = signToken({
-      sub: String(admin._id),
-      role: config.admin.jwtRole,
-    });
+    const token = signToken(
+      { sub: String(admin._id), role: config.admin.jwtRole },
+      { expiresIn: config.admin.jwtExpiresIn }
+    );
     return {
       token,
       token_type: 'Bearer',
-      expires_in: config.auth.jwtExpiresIn,
+      expires_in: config.admin.jwtExpiresIn,
       admin: serializeAdmin(admin, { usesDefaultPassword }),
     };
   }

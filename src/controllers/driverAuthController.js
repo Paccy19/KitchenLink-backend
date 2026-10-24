@@ -27,6 +27,7 @@ const changePassword = asyncHandler(async (req, res) => {
     await driverAuthService.changePassword(req.driver, {
       current_password: req.body?.current_password,
       new_password: req.body?.new_password,
+      currentToken: req.tokenPayload,
     })
   );
 });

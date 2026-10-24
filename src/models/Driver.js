@@ -74,6 +74,10 @@ const driverSchema = new mongoose.Schema(
     is_active: { type: Boolean, default: true },
     // Soft delete.
     deleted_at: { type: Date, default: null },
+    // Sessions (see utils/sessions.js): tokens issued before this are refused,
+    // except the one kept for the device that signed the others out.
+    sessions_valid_after: { type: Date, default: null },
+    sessions_kept_jti: { type: String, default: null },
   },
   { timestamps }
 );

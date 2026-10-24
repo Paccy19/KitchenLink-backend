@@ -2,6 +2,8 @@ const crypto = require('crypto');
 const mongoose = require('mongoose');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
+const { revokeAllSessions } = require('../utils/sessions');
+const { Vendor } = require('../models');
 const { signToken } = require('../utils/jwt');
 const { NAME_MAX_LENGTH, capitalizeName, normalizePhone, parseDeliveryLocation } = require('../utils/validators');
 const {
@@ -228,7 +230,7 @@ class VendorAuthService {
     return { vendor: serializeVendorAccount(vendor) };
   }
 
-  async changePassword(vendor, { current_password, new_password }) {
+  async changePassword(vendor, { current_password, new_password, currentToken = null }) {
     const currentPassword = parsePassword(current_password, {
       field: 'current_password',
     });
@@ -245,6 +247,8 @@ class VendorAuthService {
 
     const password_hash = await hashPassword(newPassword);
     await vendorRepository.update(vendor._id, { password_hash });
+    // Anyone else signed in with the old password is signed out.
+    await revokeAllSessions(Vendor, vendor._id, { keepPayload: currentToken });
     return { updated: true };
   }
 
