@@ -100,8 +100,9 @@ Triggered automatically when a vendor marks an order **Ready**. Algorithm in
 `deliveryService.dispatch`:
 
 1. Load delivery (created on the fly if missing).
-2. Find online, available drivers within `DELIVERY_RADIUS_KM` of the pickup
-   point via `$geoNear`.
+2. Find online, available drivers within the notification radius of the pickup
+   point via `$geoNear` (set by admins in Settings → Delivery & pickup rules;
+   `DELIVERY_RADIUS_KM` is only the starting value).
 3. Rank: `distance → active_deliveries_count → rating`.
 4. Open an offer window (`DELIVERY_OFFER_TIMEOUT_SECONDS`) on each candidate.
 5. First driver to `accept` atomically locks the delivery (`findOneAndUpdate`
@@ -118,6 +119,10 @@ Triggered automatically when a vendor marks an order **Ready**. Algorithm in
 - **Mid-transit cancellation** → only allowed by a guarding transition; terminal.
 
 ## Env vars (see `.env.example`)
+
+The radius, workers per broadcast, location age, re-offer interval, deliveries
+per worker and wrong pickup codes allowed are starting values only: once an
+admin saves Settings → Delivery & pickup rules, the saved values are used.
 
 `DELIVERY_OFFER_TIMEOUT_SECONDS`, `DELIVERY_RADIUS_KM`, `DELIVERY_MAX_ACTIVE`,
 `DELIVERY_ROAD_FACTOR`, `DELIVERY_BASE_FEE_RWF`, `DELIVERY_PER_KM_FEE_RWF`,

@@ -12,6 +12,7 @@ const deliveryService = require('./services/deliveryService');
 const deliverySettingsService = require('./services/deliverySettingsService');
 const bankSettingsService = require('./services/bankSettingsService');
 const deliveryFeeSettingsService = require('./services/deliveryFeeSettingsService');
+const dispatchSettingsService = require('./services/dispatchSettingsService');
 
 const DEFAULT_JWT_SECRET = 'dev-secret-change-me';
 
@@ -102,6 +103,8 @@ const start = async () => {
     await deliverySettingsService.load();
     await bankSettingsService.load();
     await deliveryFeeSettingsService.load();
+    // Admin-set dispatch rules (notification radius, re-offer interval...).
+    await dispatchSettingsService.load();
     // Re-offers open orders to drivers who came into range and runs the
     // late-pickup clock.
     deliveryService.start();

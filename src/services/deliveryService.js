@@ -24,6 +24,10 @@ const settlementService = require('./settlementService');
 const deliveryPricingService = require('./deliveryPricingService');
 const orderNotifications = require('./orderNotifications');
 const deliverySettingsService = require('./deliverySettingsService');
+const dispatchSettingsService = require('./dispatchSettingsService');
+
+// Admin-set dispatch rules in force right now (Settings → Delivery & pickup rules).
+const dispatchRules = () => dispatchSettingsService.current();
 
 // A delivery with no pickup clock running.
 const NO_CLOCK = { pickup_started_at: null, pickup_warn_at: null, pickup_due_at: null, pickup_reassign_at: null };
@@ -280,9 +284,9 @@ class DeliveryService {
     try {
       candidates = await driverRepository.findNearbyAvailable({
         coords: pickup,
-        radiusKm: deliveryConfig.defaultRadiusKm,
+        radiusKm: dispatchRules().radius_km,
         excludeDriverIds: [...(delivery.rejected_by || []).map(String), ...alreadyOffered],
-        limit: deliveryConfig.maxOfferRecipients,
+        limit: dispatchRules().max_offer_recipients,
         locationSince: this.#locationCutoff(),
       });
     } catch (error) {
@@ -291,9 +295,7 @@ class DeliveryService {
     }
 
     const eligible = candidates.filter(
-      (driver) =>
-        (driver.active_deliveries_count ?? 0) <
-        (driver.max_active_deliveries || deliveryConfig.maxActiveDeliveries)
+      (driver) => (driver.active_deliveries_count ?? 0) < dispatchRules().max_active_deliveries
     );
 
     const now = Date.now();
@@ -544,24 +546,31 @@ class DeliveryService {
     return true;
   }
 
-  /** Runs re-broadcasts and pickup checks on an interval (in-process). */
-  start({ intervalMs = deliveryConfig.dispatchTickSeconds * 1000 } = {}) {
-    let running = false;
+  #ticker = null;
+  #ticking = false;
+
+  /**
+   * Runs re-broadcasts and pickup checks on an interval (in-process). The
+   * interval is the admin's "re-offered every" rule; calling start() again
+   * (after the rule changes) restarts it with the new value.
+   */
+  start() {
+    if (this.#ticker) clearInterval(this.#ticker);
     const tick = async () => {
-      if (running) return;
-      running = true;
+      if (this.#ticking) return;
+      this.#ticking = true;
       try {
         await this.expireStaleOffers();
         await this.checkLatePickups();
       } catch (error) {
         console.error('[delivery] dispatch tick failed:', error.message);
       } finally {
-        running = false;
+        this.#ticking = false;
       }
     };
-    const timer = setInterval(tick, intervalMs);
-    timer.unref?.();
-    return timer;
+    this.#ticker = setInterval(tick, dispatchRules().rebroadcast_every_seconds * 1000);
+    this.#ticker.unref?.();
+    return this.#ticker;
   }
 
   /* ============================ driver reads ========================= */
@@ -576,7 +585,7 @@ class DeliveryService {
     // The board shows the orders this driver was offered (they were within
     // the dispatch radius) plus any open order within that radius of where
     // they are now, nearest first.
-    const radiusKm = deliveryConfig.defaultRadiusKm;
+    const radiusKm = dispatchRules().radius_km;
     const driverId = String(driver._id);
 
     const raw = await deliveryRepository.listAvailable({
@@ -703,10 +712,10 @@ class DeliveryService {
       : null;
     if (
       !this.#wasOffered(current, String(driver._id)) &&
-      !(distanceToKitchen != null && distanceToKitchen <= deliveryConfig.defaultRadiusKm)
+      !(distanceToKitchen != null && distanceToKitchen <= dispatchRules().radius_km)
     ) {
       throw ApiError.forbidden(
-        `This order is more than ${deliveryConfig.defaultRadiusKm} km from you. Only nearby delivery workers can take it.`,
+        `This order is more than ${dispatchRules().radius_km} km from you. Only nearby delivery workers can take it.`,
         'DELIVERY_OUT_OF_RANGE'
       );
     }
@@ -739,7 +748,7 @@ class DeliveryService {
 
     const fresh = await driverRepository.incrementActive(driver._id);
     const activeCount = fresh?.active_deliveries_count ?? 1;
-    if (activeCount >= (fresh?.max_active_deliveries || deliveryConfig.maxActiveDeliveries)) {
+    if (activeCount >= dispatchRules().max_active_deliveries) {
       await driverRepository.setAvailability(driver._id, { status: 'busy' });
     }
 
@@ -864,7 +873,7 @@ class DeliveryService {
     }
 
     const fresh = await driverRepository.incrementActive(driver._id);
-    if ((fresh?.active_deliveries_count ?? 1) >= (fresh?.max_active_deliveries || deliveryConfig.maxActiveDeliveries)) {
+    if ((fresh?.active_deliveries_count ?? 1) >= dispatchRules().max_active_deliveries) {
       await driverRepository.setAvailability(driver._id, { status: 'busy' });
     }
     notificationService
@@ -1283,7 +1292,7 @@ class DeliveryService {
   }
 
   #locationCutoff() {
-    return new Date(Date.now() - deliveryConfig.locationMaxAgeMinutes * 60 * 1000);
+    return new Date(Date.now() - dispatchRules().location_max_age_minutes * 60 * 1000);
   }
 
   #wasOffered(delivery, driverId) {

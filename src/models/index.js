@@ -29,6 +29,7 @@ const ChatConversation = require('./ChatConversation');
 const ChatMessage = require('./ChatMessage');
 const BankSettings = require('./BankSettings');
 const DeliveryFeeSettings = require('./DeliveryFeeSettings');
+const DispatchSettings = require('./DispatchSettings');
 
 module.exports = {
   VendorOffer,
@@ -36,6 +37,7 @@ module.exports = {
   ChatMessage,
   BankSettings,
   DeliveryFeeSettings,
+  DispatchSettings,
   Vendor,
   Category,
   MenuItem,

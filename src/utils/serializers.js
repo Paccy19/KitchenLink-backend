@@ -2,6 +2,7 @@ const config = require('../config');
 const { isVendorLive } = require('./vendorPresence');
 const { isKitchenReady } = require('./deliveryReady');
 const deliverySettings = require('../services/deliverySettingsService');
+const dispatchSettingsService = require('../services/dispatchSettingsService');
 const access = require('../config/adminAccess');
 const { vendorTypeLabel, orderingRulesFor } = require('../config/vendorTypes');
 
@@ -257,7 +258,7 @@ function serializeVendorOrder(order, { customer } = {}) {
   const isPickup = order.fulfillment === 'pickup';
   const pickupAttemptsLeft = Math.max(
     0,
-    config.orders.pickupCodeMaxAttempts - (order.pickup_code_attempts || 0)
+    dispatchSettingsService.current().pickup_code_max_attempts - (order.pickup_code_attempts || 0)
   );
 
   return {
@@ -388,7 +389,7 @@ function serializeDriverAccount(driver) {
     is_available: Boolean(driver.is_available),
     status: driver.status || 'offline',
     active_deliveries_count: driver.active_deliveries_count ?? 0,
-    max_active_deliveries: driver.max_active_deliveries ?? config.delivery.maxActiveDeliveries,
+    max_active_deliveries: dispatchSettingsService.current().max_active_deliveries,
     completed_deliveries: driver.completed_deliveries ?? 0,
     total_earnings_rwf: driver.total_earnings_rwf ?? 0,
     available_balance_rwf: driver.available_balance_rwf ?? 0,
@@ -698,7 +699,7 @@ function serializeAdminDriver(driver) {
       latitude: typeof lat === 'number' ? lat : null,
       longitude: typeof lng === 'number' ? lng : null,
       // When the phone last reported it; dispatch ignores positions older
-      // than config.delivery.locationMaxAgeMinutes.
+      // than the admin's location age rule.
       updated_at: driver.location_updated_at ?? null,
       heading: driver.location_heading ?? null,
       speed_mps: driver.location_speed_mps ?? null,
@@ -706,7 +707,7 @@ function serializeAdminDriver(driver) {
       counts_for_dispatch:
         Boolean(driver.location_updated_at) &&
         Date.now() - new Date(driver.location_updated_at).getTime() <=
-          config.delivery.locationMaxAgeMinutes * 60000,
+          dispatchSettingsService.current().location_max_age_minutes * 60000,
     },
     created_at: driver.created_at,
     updated_at: driver.updated_at,
@@ -735,8 +736,8 @@ function serializeAdminOrder(order) {
         ? {
             code_sent_at: order.pickup_code_sent_at ?? null,
             wrong_attempts: order.pickup_code_attempts || 0,
-            max_attempts: config.orders.pickupCodeMaxAttempts,
-            locked: (order.pickup_code_attempts || 0) >= config.orders.pickupCodeMaxAttempts,
+            max_attempts: dispatchSettingsService.current().pickup_code_max_attempts,
+            locked: (order.pickup_code_attempts || 0) >= dispatchSettingsService.current().pickup_code_max_attempts,
             collected_at: order.collected_at ?? null,
           }
         : null,

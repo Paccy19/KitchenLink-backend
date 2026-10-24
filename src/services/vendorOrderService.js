@@ -15,6 +15,7 @@ const deliveryService = require('./deliveryService');
 const settlementService = require('./settlementService');
 const orderNotifications = require('./orderNotifications');
 const notificationService = require('./notificationService');
+const dispatchSettingsService = require('./dispatchSettingsService');
 
 const { vendor: vendorConfig } = config;
 
@@ -210,7 +211,7 @@ class VendorOrderService {
     if (order.status !== 'ready') {
       throw ApiError.conflict('Mark the order ready before the customer collects it.', 'ORDER_NOT_READY');
     }
-    const maxAttempts = config.orders.pickupCodeMaxAttempts;
+    const maxAttempts = dispatchSettingsService.current().pickup_code_max_attempts;
     if ((order.pickup_code_attempts || 0) >= maxAttempts) {
       throw ApiError.tooMany(
         'Too many wrong pickup codes for this order. Contact support to complete it.',

@@ -7,6 +7,7 @@ const deliveryRepository = require('../repositories/deliveryRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const deliveryTrackingService = require('./deliveryTrackingService');
 const deliverySettingsService = require('./deliverySettingsService');
+const dispatchSettingsService = require('./dispatchSettingsService');
 const deliveryFeeSettingsService = require('./deliveryFeeSettingsService');
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -111,7 +112,7 @@ class AdminOperationsService {
           // Matching only counts positions newer than this.
           counts_for_dispatch:
             Boolean(driver.location_updated_at) &&
-            Date.now() - new Date(driver.location_updated_at).getTime() <= config.delivery.locationMaxAgeMinutes * 60000,
+            Date.now() - new Date(driver.location_updated_at).getTime() <= dispatchSettingsService.current().location_max_age_minutes * 60000,
         })),
       kitchens: kitchens.map((vendor) => ({
         id: String(vendor._id),
@@ -268,11 +269,11 @@ class AdminOperationsService {
       { $limit: 40 },
     ]);
 
-    const maxAgeMs = config.delivery.locationMaxAgeMinutes * 60000;
+    const maxAgeMs = dispatchSettingsService.current().location_max_age_minutes * 60000;
     const current = delivery?.driver_id ? await Driver.findById(delivery.driver_id).select('name phone').lean() : null;
     const drivers = rows.map((driver) => {
       const updatedAt = driver.location_updated_at ? new Date(driver.location_updated_at) : null;
-      const max = driver.max_active_deliveries || config.delivery.maxActiveDeliveries;
+      const max = dispatchSettingsService.current().max_active_deliveries;
       return {
         id: String(driver._id),
         name: driver.name,
@@ -288,7 +289,7 @@ class AdminOperationsService {
         location_updated_at: updatedAt,
         location_fresh: Boolean(updatedAt) && Date.now() - updatedAt.getTime() <= maxAgeMs,
         distance_km: updatedAt ? Math.round((driver.distance_m / 1000) * 10) / 10 : null,
-        within_radius: Boolean(updatedAt) && driver.distance_m / 1000 <= config.delivery.defaultRadiusKm,
+        within_radius: Boolean(updatedAt) && driver.distance_m / 1000 <= dispatchSettingsService.current().radius_km,
       };
     });
     // Known positions first (nearest first), then workers who never shared one.
@@ -305,7 +306,7 @@ class AdminOperationsService {
       ),
       collected: Boolean(delivery && ['picked_up', 'out_for_delivery', 'delivered', 'completed'].includes(delivery.status)),
       current_driver: current ? { id: String(current._id), name: current.name, phone: current.phone || null } : null,
-      radius_km: config.delivery.defaultRadiusKm,
+      radius_km: dispatchSettingsService.current().radius_km,
       drivers,
     };
   }
@@ -327,7 +328,7 @@ class AdminOperationsService {
     return {
       broadcasts: delivery.dispatch?.broadcast_count || 0,
       last_broadcast_at: delivery.dispatch?.last_broadcast_at ?? null,
-      radius_km: config.delivery.defaultRadiusKm,
+      radius_km: dispatchSettingsService.current().radius_km,
       offers: offers.map((offer) => ({
         driver_id: String(offer.driver_id),
         driver_name: names.get(String(offer.driver_id))?.name || 'Delivery worker',
@@ -364,13 +365,13 @@ class AdminOperationsService {
       Order.countDocuments({
         fulfillment: 'pickup',
         status: 'ready',
-        pickup_code_attempts: { $gte: config.orders.pickupCodeMaxAttempts },
+        pickup_code_attempts: { $gte: dispatchSettingsService.current().pickup_code_max_attempts },
       }),
       vendorRepository.findOpenForMap({ coords: null, limit: 1 }).then((result) => result.total),
       Driver.countDocuments({
         deleted_at: null,
         is_online: true,
-        location_updated_at: { $gte: new Date(now - config.delivery.locationMaxAgeMinutes * 60000) },
+        location_updated_at: { $gte: new Date(now - dispatchSettingsService.current().location_max_age_minutes * 60000) },
       }),
     ]);
     const pickupOrdersToday = await Order.countDocuments({
@@ -414,15 +415,19 @@ class AdminOperationsService {
     const maps = config.maps;
     const sms = config.notifications.sms;
     const timing = deliverySettingsService.current();
+    const dispatch = dispatchSettingsService.current();
     return {
+      // Set by admins in Settings → Delivery & pickup rules (see dispatchSettingsService).
       dispatch: {
-        radius_km: d.defaultRadiusKm,
+        radius_km: dispatch.radius_km,
         offered_when: 'Immediate orders: the moment they are paid. Scheduled orders and pre-orders: when the kitchen marks them ready.',
-        max_drivers_per_broadcast: d.maxOfferRecipients,
-        driver_location_max_age_minutes: d.locationMaxAgeMinutes,
-        rebroadcast_every_seconds: d.dispatchTickSeconds,
-        max_active_deliveries_per_driver: d.maxActiveDeliveries,
+        max_drivers_per_broadcast: dispatch.max_offer_recipients,
+        driver_location_max_age_minutes: dispatch.location_max_age_minutes,
+        rebroadcast_every_seconds: dispatch.rebroadcast_every_seconds,
+        max_active_deliveries_per_driver: dispatch.max_active_deliveries,
+        updated_at: dispatch.updated_at,
       },
+      limits: dispatchSettingsService.LIMITS,
       // Set by admins in Settings (see deliverySettingsService).
       pickup_clock: {
         warning_after_minutes: timing.warning_minutes,
@@ -434,7 +439,7 @@ class AdminOperationsService {
       customer_pickup: {
         delivery_fee_rwf: 0,
         code_digits: 6,
-        max_wrong_codes: config.orders.pickupCodeMaxAttempts,
+        max_wrong_codes: dispatchSettingsService.current().pickup_code_max_attempts,
       },
       fees: {
         // The admin's distance ranges when set; otherwise the config formula.

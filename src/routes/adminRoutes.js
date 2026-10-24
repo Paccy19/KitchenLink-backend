@@ -22,6 +22,8 @@ const adminNotificationController = require('../controllers/adminNotificationCon
 const adminActionLogService = require('../services/adminActionLogService');
 const adminOperationsService = require('../services/adminOperationsService');
 const deliverySettingsService = require('../services/deliverySettingsService');
+const dispatchSettingsService = require('../services/dispatchSettingsService');
+const deliveryService = require('../services/deliveryService');
 
 const asyncHandler = require('../utils/asyncHandler');
 const chatService = require('../services/chatService');
@@ -206,6 +208,30 @@ router.get(
   '/operations/rules',
   requirePermission('dashboard:read'),
   asyncHandler(async (req, res) => res.json(adminOperationsService.rules()))
+);
+// Dispatch and customer-pickup rules: who is notified of new orders, how often
+// they are re-offered, deliveries per worker and wrong pickup codes allowed.
+router.put(
+  '/operations/rules',
+  requirePermission('deliveries:write'),
+  asyncHandler(async (req, res) => {
+    const { previous, current } = await dispatchSettingsService.update(req.admin, req.body);
+    // The re-offer interval is a timer: restart it so the new value applies now.
+    if (previous.rebroadcast_every_seconds !== current.rebroadcast_every_seconds) deliveryService.start();
+    const pick = (rules) => Object.fromEntries(dispatchSettingsService.FIELDS.map((field) => [field, rules[field]]));
+    await adminActionLogService.record(
+      req.admin,
+      {
+        action: 'settings.dispatch_rules',
+        target_type: 'system',
+        target_id: 'dispatch_rules',
+        target_label: 'Delivery & pickup rules',
+        metadata: { before: pick(previous), after: pick(current) },
+      },
+      req
+    );
+    res.json(adminOperationsService.rules());
+  })
 );
 
 /* --------------------------------- orders -------------------------------- */
