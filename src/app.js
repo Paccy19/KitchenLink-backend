@@ -5,6 +5,7 @@ const config = require('./config');
 const routes = require('./routes');
 const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
+const rejectOperatorKeys = require('./middleware/rejectOperatorKeys');
 const redactUrl = require('./utils/redactUrl');
 const { uploadsDir, ensureUploadsDir } = require('./utils/uploads');
 
@@ -27,6 +28,8 @@ app.use(
   })
 );
 app.use(express.json({ limit: '1mb' }));
+// Central safety net: no MongoDB operator keys in any body or query string.
+app.use(rejectOperatorKeys);
 
 ensureUploadsDir();
 app.use(
