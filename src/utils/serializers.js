@@ -270,8 +270,32 @@ const toVendorStatus = (status) =>
 const vendorStatusLabel = (status) =>
   config.vendor.orderStatusLabels[status] || status;
 
+/**
+ * What the kitchen can do with an order right now, by the same rules the
+ * server enforces in vendorOrderService.updateStatus: unpaid orders can only
+ * be cancelled; once a worker has collected it, it can't be cancelled; a
+ * scheduled order can be marked ready only near its slot (`ready_available_at`).
+ */
+function vendorOrderActions(order, status) {
+  let allowed = config.vendor.orderTransitions[status] || [];
+  if (order.payment_status !== 'paid') allowed = allowed.filter((next) => next === 'cancelled');
+  if (['picked_up', 'out_for_delivery', 'delivered'].includes(order.status)) {
+    allowed = allowed.filter((next) => next !== 'cancelled');
+  }
+  let readyAvailableAt = null;
+  if (allowed.includes('ready') && order.order_type && order.order_type !== 'immediate' && order.scheduled_for && !isKitchenDelivered(order)) {
+    const from = new Date(new Date(order.scheduled_for).getTime() - config.orders.schedule.readyWindowMinutes * 60 * 1000);
+    if (from > new Date()) {
+      readyAvailableAt = from;
+      allowed = allowed.filter((next) => next !== 'ready');
+    }
+  }
+  return { allowed, readyAvailableAt };
+}
+
 function serializeVendorOrder(order, { customer } = {}) {
   const status = toVendorStatus(order.status);
+  const actions = vendorOrderActions(order, status);
 
   // Pickup orders, and orders the kitchen delivers itself, end with the customer's code.
   const isPickup = usesHandoverCode(order);
@@ -285,7 +309,9 @@ function serializeVendorOrder(order, { customer } = {}) {
     order_number: order.order_number,
     status,
     status_label: vendorStatusLabel(status),
-    allowed_next_statuses: config.vendor.orderTransitions[status] || [],
+    // Only what the server will accept right now (see vendorOrderActions).
+    allowed_next_statuses: actions.allowed,
+    ready_available_at: actions.readyAvailableAt,
     fulfillment: order.fulfillment || 'delivery',
     fulfillment_label: config.orders.fulfillmentLabels[order.fulfillment || 'delivery'],
     // Too far for platform workers: the kitchen brings it and keeps the travel fee.
