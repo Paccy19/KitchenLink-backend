@@ -1,4 +1,5 @@
 const { Router } = require('express');
+const rateLimit = require('../middleware/rateLimit');
 const { sessionHandlers } = require('../utils/sessions');
 const { Vendor } = require('../models');
 const config = require('../config');
@@ -13,9 +14,16 @@ const registrationFiles = upload.registration.fields([
   { name: 'documents', maxCount: config.vendor.uploads.maxDocuments },
 ]);
 
-router.post('/register', registrationFiles, vendorAuthController.register);
-router.post('/send-otp', vendorAuthController.sendOtp);
-router.post('/verify-otp', vendorAuthController.verifyOtp);
+// Public sign-in: at most 20 requests a minute per IP.
+const authLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  code: 'AUTH_RATE_LIMITED',
+  message: 'Too many sign-in attempts from this network. Please wait a minute and try again.',
+});
+router.post('/register', authLimit, registrationFiles, vendorAuthController.register);
+router.post('/send-otp', authLimit, vendorAuthController.sendOtp);
+router.post('/verify-otp', authLimit, vendorAuthController.verifyOtp);
 router.get('/me', requireVendorAuth, vendorAuthController.me);
 // Sign out: this device, or every device (the token stops working at once).
 const vendorSessions = sessionHandlers(Vendor, 'vendor');

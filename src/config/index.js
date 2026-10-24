@@ -54,6 +54,10 @@ const jwtSecretProblem = (secret) => {
 const config = {
   env: process.env.NODE_ENV || 'development',
   explicitDev,
+  // Behind a hosting proxy/load balancer every request seems to come from the
+  // proxy: TRUST_PROXY (e.g. 1 = one proxy in front) makes req.ip the real
+  // visitor's IP, so per-IP limits work. Leave empty when the API is reached directly.
+  trustProxy: process.env.TRUST_PROXY || '',
   port,
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(
     /\/+$/,
@@ -107,6 +111,8 @@ const config = {
       maxSendsPerDay: 20,
       // Admins confirm several money actions a day with codes.
       adminMaxSendsPerDay: 60,
+      // Wrong admin passwords (per email) before the account is locked out.
+      adminLoginMaxFailures: 5,
     },
   },
   maps: {

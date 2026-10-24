@@ -11,6 +11,11 @@ const { uploadsDir, ensureUploadsDir } = require('./utils/uploads');
 
 const app = express();
 
+// Real visitor IPs behind a hosting proxy (see config.trustProxy).
+if (config.trustProxy) {
+  app.set('trust proxy', /^\d+$/.test(config.trustProxy) ? Number(config.trustProxy) : config.trustProxy);
+}
+
 // Security headers (nosniff, no framing, referrer policy, HSTS, ...). The
 // website runs on another address and shows the photos in /uploads, so other
 // sites may load our files (Cross-Origin-Resource-Policy: cross-origin);

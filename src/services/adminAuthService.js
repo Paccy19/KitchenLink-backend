@@ -2,6 +2,7 @@ const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { revokeAllSessions } = require('../utils/sessions');
 const { Admin } = require('../models');
+const otpGuardService = require('./otpGuardService');
 const { signToken, signShortToken, verifyToken } = require('../utils/jwt');
 const { normalizePhone } = require('../utils/validators');
 const adminOtpService = require('./adminOtpService');
@@ -34,8 +35,12 @@ class AdminAuthService {
       });
     }
 
+    // Locked after too many wrong passwords for this email (any email, so the
+    // lockout never tells whether an admin account exists).
+    await otpGuardService.assertNotLocked(normalizedEmail, 'admin-login');
     const admin = await adminRepository.findByEmailWithPassword(normalizedEmail);
     if (!admin) {
+      await otpGuardService.recordFailedAttempt(normalizedEmail, 'admin-login');
       throw ApiError.unauthorized('Invalid email or password.', 'INVALID_CREDENTIALS');
     }
     if (admin.status === 'invited' && admin.is_active !== false) {
@@ -45,16 +50,19 @@ class AdminAuthService {
       );
     }
 
+    const ok = await comparePassword(rawPassword, admin.password_hash || '');
+    if (!ok) {
+      await otpGuardService.recordFailedAttempt(normalizedEmail, 'admin-login');
+      throw ApiError.unauthorized('Invalid email or password.', 'INVALID_CREDENTIALS');
+    }
+    await otpGuardService.clearFailures(normalizedEmail, 'admin-login');
+
+    // Only after the right password, so it never reveals which accounts exist.
     if (admin.is_active === false) {
       throw ApiError.forbidden(
         'This admin account has been deactivated.',
         'ADMIN_DISABLED'
       );
-    }
-
-    const ok = await comparePassword(rawPassword, admin.password_hash || '');
-    if (!ok) {
-      throw ApiError.unauthorized('Invalid email or password.', 'INVALID_CREDENTIALS');
     }
 
     const usesDefaultPassword = await this.#isDefaultPassword(admin.password_hash);

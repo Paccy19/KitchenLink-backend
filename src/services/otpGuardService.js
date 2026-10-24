@@ -25,8 +25,15 @@ class OtpGuardService {
     return OtpGuard.findOne({ key: this.#key(phone, purpose) }).lean();
   }
 
-  #lockedError(until) {
+  #lockedError(until, purpose) {
     const minutes = Math.max(1, Math.ceil((new Date(until).getTime() - Date.now()) / 60000));
+    if (purpose === 'admin-login') {
+      return ApiError.tooMany(
+        `Too many failed sign-ins for this account. Try again in ${minutesText(minutes)}.`,
+        'LOGIN_LOCKED',
+        { retry_after_minutes: minutes }
+      );
+    }
     return ApiError.tooMany(
       `Too many incorrect codes for this phone number. Try again in ${minutesText(minutes)}.`,
       'OTP_LOCKED',
@@ -34,17 +41,34 @@ class OtpGuardService {
     );
   }
 
+  /**
+   * Password sign-ins use the same lockout (purpose 'admin-login', keyed by
+   * email): counts a failed attempt and throws the lockout when it is reached.
+   */
+  async recordFailedAttempt(id, purpose) {
+    const lockedUntil = await this.#recordFailure(id, purpose);
+    if (lockedUntil) throw this.#lockedError(lockedUntil, purpose);
+  }
+
+  /** A successful sign-in clears the failure count and any lockout level. */
+  async clearFailures(id, purpose) {
+    await OtpGuard.updateOne(
+      { key: this.#key(id, purpose) },
+      { $set: { failures: 0, failures_since: null, lock_level: 0, locked_until: null } }
+    );
+  }
+
   /** Throws while this phone is locked out. */
   async assertNotLocked(phone, purpose) {
     const guard = await this.#guard(phone, purpose);
-    if (guard?.locked_until && new Date(guard.locked_until) > new Date()) throw this.#lockedError(guard.locked_until);
+    if (guard?.locked_until && new Date(guard.locked_until) > new Date()) throw this.#lockedError(guard.locked_until, purpose);
   }
 
   /** Before sending a code: not locked, and under the daily cap. Counts the send. */
   async beforeSend(phone, purpose) {
     const guard = await this.#guard(phone, purpose);
     const now = new Date();
-    if (guard?.locked_until && new Date(guard.locked_until) > now) throw this.#lockedError(guard.locked_until);
+    if (guard?.locked_until && new Date(guard.locked_until) > now) throw this.#lockedError(guard.locked_until, purpose);
 
     const { maxSendsPerDay: userCap, adminMaxSendsPerDay } = config.auth.otpLockout;
     const maxSendsPerDay = purpose === 'admin' ? adminMaxSendsPerDay : userCap;
@@ -101,7 +125,7 @@ class OtpGuardService {
       const lockedUntil = await this.#recordFailure(phone, purpose);
       if (lockedUntil) {
         await OtpCode.updateOne({ _id: otp._id }, { $set: { consumed_at: new Date() } });
-        throw this.#lockedError(lockedUntil);
+        throw this.#lockedError(lockedUntil, purpose);
       }
       throw new ApiError(400, 'OTP_INVALID', 'Incorrect code.', {
         code: 'incorrect code',
@@ -123,7 +147,8 @@ class OtpGuardService {
 
   /** Counts a wrong code; returns the lock end when this one locks the phone out. */
   async #recordFailure(phone, purpose) {
-    const { maxFailures, lockMinutes } = config.auth.otpLockout;
+    const { lockMinutes } = config.auth.otpLockout;
+    const maxFailures = purpose === 'admin-login' ? config.auth.otpLockout.adminLoginMaxFailures : config.auth.otpLockout.maxFailures;
     const key = this.#key(phone, purpose);
     const now = new Date();
     const updated = await this.#bump(key, 'failures', 'failures_since', now);
@@ -142,7 +167,8 @@ class OtpGuardService {
       const current = await OtpGuard.findOne({ key }).lean();
       return current?.locked_until && new Date(current.locked_until) > now ? current.locked_until : null;
     }
-    console.warn(`[security] sign-in codes locked for ${purpose} ${phone.slice(0, -4)}**** for ${minutes} min`);
+    const what = purpose === 'admin-login' ? 'admin sign-in' : `${purpose} sign-in codes`;
+    console.warn(`[security] ${what} locked for ${phone.slice(0, -4)}**** for ${minutes} min`);
     return lockedUntil;
   }
 }
