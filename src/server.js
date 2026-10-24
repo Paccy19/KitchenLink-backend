@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const config = require('./config');
 const app = require('./app');
-const { connectPostgres, closePostgres } = require('./db/postgres');
+const { connectPostgres, closePostgres, maskUri } = require('./db/postgres');
 const adminAuthService = require('./services/adminAuthService');
 const commissionRepository = require('./repositories/commissionRepository');
 const driverRepository = require('./repositories/driverRepository');
@@ -95,9 +95,19 @@ const start = async () => {
     console.warn(`[security] JWT_SECRET is ${secretProblem}. Fine for local development; ${fix} before going live.`);
   }
 
+  // Databases without a password are open to anyone who can reach them.
+  if (config.databaseProblems.length) {
+    if (!config.explicitDev) {
+      console.error(`Refusing to start: ${config.databaseProblems.join('; ')}.`);
+      process.exit(1);
+    }
+    console.warn(`[security] ${config.databaseProblems.join('; ')}. Fine for local development; use password-protected databases before going live.`);
+  }
+
   try {
     await mongoose.connect(config.mongoUri);
-    console.log(`MongoDB connected: ${config.mongoUri}`);
+    // Never print the database password.
+    console.log(`MongoDB connected: ${maskUri(config.mongoUri)}`);
 
     // Same-server PostgreSQL mirror: both databases run with this one server.
     await connectPostgres();

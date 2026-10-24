@@ -13,6 +13,22 @@ const numberFromEnvOrZero = (value, fallback = 0) => {
 
 const port = Number(process.env.PORT) || 4000;
 
+// A database address with a username and password (user:pass@host).
+const hasDbCredentials = (uri) => /^[a-z][a-z0-9+.-]*:\/\/[^:@/]+:[^@/]+@/i.test(uri || '');
+
+/** What's unsafe about the database settings; a live server refuses to start with any. */
+const databaseProblems = () =>
+  [
+    ['MONGODB_URI', process.env.MONGODB_URI],
+    ['PG_URI', process.env.PG_URI],
+  ]
+    .map(([name, uri]) => {
+      if (!uri) return `${name} is not set`;
+      if (!hasDbCredentials(uri)) return `${name} has no username and password (the database would be open to anyone who can reach it)`;
+      return null;
+    })
+    .filter(Boolean);
+
 // Only a server whose .env explicitly says development/test may run with the
 // public example secrets below (a live server that forgot NODE_ENV can't).
 const explicitDev = ['development', 'test'].includes(process.env.NODE_ENV);
@@ -43,8 +59,11 @@ const config = {
     /\/+$/,
     ''
   ),
+  // The local fallbacks only suit a development PC (server.js refuses to
+  // start a live server without password-protected databases).
   mongoUri:
     process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/online_food_kitchen',
+  databaseProblems: databaseProblems(),
   geo: {
     defaultRadiusKm: numberFromEnv(process.env.DEFAULT_RADIUS_KM, 5),
     maxRadiusKm: numberFromEnv(process.env.MAX_RADIUS_KM, 50),
