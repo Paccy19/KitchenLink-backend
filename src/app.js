@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const config = require('./config');
 const routes = require('./routes');
 const notFound = require('./middleware/notFound');
@@ -7,6 +8,12 @@ const errorHandler = require('./middleware/errorHandler');
 const { uploadsDir, ensureUploadsDir } = require('./utils/uploads');
 
 const app = express();
+
+// Security headers (nosniff, no framing, referrer policy, HSTS, ...). The
+// website runs on another address and shows the photos in /uploads, so other
+// sites may load our files (Cross-Origin-Resource-Policy: cross-origin);
+// reading API responses is still limited by CORS below.
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
 // Browsers may only call the API from KitchenLink's own website(s). Requests
 // without an Origin (server-to-server, Postman, health checks) aren't
