@@ -50,6 +50,10 @@ const bootstrapAdmin = async () => {
       );
     }
   } catch (error) {
+    if (error.code === 'SEED_PASSWORD_REQUIRED') {
+      console.error(`Refusing to start: ${error.message}`);
+      process.exit(1);
+    }
     console.error('Admin bootstrap failed:', error);
   }
 
@@ -83,9 +87,8 @@ const start = async () => {
   // a live server that forgot NODE_ENV can't run with a public secret.
   const secretProblem = config.auth.jwtSecretProblem;
   if (secretProblem) {
-    const explicitDev = ['development', 'test'].includes(process.env.NODE_ENV);
     const fix = `set JWT_SECRET to a random string of at least ${config.auth.jwtSecretMinLength} characters`;
-    if (!explicitDev) {
+    if (!config.explicitDev) {
       console.error(`Refusing to start: JWT_SECRET is ${secretProblem}; ${fix}.`);
       process.exit(1);
     }

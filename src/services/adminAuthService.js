@@ -56,6 +56,7 @@ class AdminAuthService {
     }
 
     const usesDefaultPassword = await this.#isDefaultPassword(admin.password_hash);
+    await this.#flagDefaultPassword(admin, usesDefaultPassword);
 
     // Second step: a code sent to the admin's verified phone (only when 2FA is on).
     if (admin.two_factor_enabled && admin.phone) {
@@ -103,7 +104,16 @@ class AdminAuthService {
 
   async usesDefaultPassword(admin) {
     const withPassword = await adminRepository.findByEmailWithPassword(admin.email);
-    return this.#isDefaultPassword(withPassword?.password_hash);
+    const uses = await this.#isDefaultPassword(withPassword?.password_hash);
+    await this.#flagDefaultPassword(admin, uses);
+    return uses;
+  }
+
+  /** Keeps `must_change_password` in step with whether the seeded password is still in use. */
+  async #flagDefaultPassword(admin, usesDefaultPassword) {
+    if (Boolean(admin.must_change_password) !== usesDefaultPassword) {
+      await adminRepository.update(admin._id, { must_change_password: usesDefaultPassword });
+    }
   }
 
   async #isDefaultPassword(hash) {
@@ -214,7 +224,7 @@ class AdminAuthService {
     }
 
     const password_hash = await hashPassword(newPassword);
-    await adminRepository.update(admin._id, { password_hash });
+    await adminRepository.update(admin._id, { password_hash, must_change_password: false });
     return { updated: true };
   }
 
@@ -227,6 +237,16 @@ class AdminAuthService {
     const existing = await adminRepository.findByEmail(email);
     if (existing) return { created: false, admin: existing };
 
+    // Everyone can read the example password in this code, so a live server
+    // never creates the first (super) admin with it.
+    if (config.admin.seedPasswordIsWeak && !config.explicitDev) {
+      const error = new Error(
+        'no admin account exists yet. Set ADMIN_SEED_PASSWORD in .env to a private password of at least 12 characters (not the example one) to create the first admin.'
+      );
+      error.code = 'SEED_PASSWORD_REQUIRED';
+      throw error;
+    }
+
     const password_hash = await hashPassword(config.admin.seedPassword);
     const admin = await adminRepository.create({
       name: config.admin.seedName,
@@ -235,6 +255,8 @@ class AdminAuthService {
       role: 'super_admin',
       permissions: [],
       is_active: true,
+      // Whoever set up the server knows this password: change it on first sign-in.
+      must_change_password: true,
     });
     return { created: true, admin };
   }

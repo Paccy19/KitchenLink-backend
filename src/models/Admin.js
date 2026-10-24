@@ -34,6 +34,9 @@ const adminSchema = new mongoose.Schema(
     // Unique among admins once set (see the partial index below).
     phone: { type: String, trim: true, default: '' },
     two_factor_enabled: { type: Boolean, default: false },
+    // Still on the seeded (publicly known) password: every admin action is
+    // refused until it is changed (see requirePasswordChanged).
+    must_change_password: { type: Boolean, default: false },
     // Invitation (only the hash of the emailed token is stored).
     invite_token_hash: { type: String, select: false, default: null },
     invite_expires_at: { type: Date, default: null },

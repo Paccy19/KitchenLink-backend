@@ -13,6 +13,15 @@ const numberFromEnvOrZero = (value, fallback = 0) => {
 
 const port = Number(process.env.PORT) || 4000;
 
+// Only a server whose .env explicitly says development/test may run with the
+// public example secrets below (a live server that forgot NODE_ENV can't).
+const explicitDev = ['development', 'test'].includes(process.env.NODE_ENV);
+
+// The example admin password everyone can read in this code: only a
+// development server may create the first admin with it.
+const PUBLIC_ADMIN_PASSWORD = 'Admin@12345';
+const seedPassword = process.env.ADMIN_SEED_PASSWORD || PUBLIC_ADMIN_PASSWORD;
+
 // Secrets anyone can read in this code or in .env.example: tokens signed with
 // them can be forged, so they (and short ones) never count as a real secret.
 const PUBLIC_JWT_SECRETS = ['dev-secret-change-me', 'change-me-to-a-long-random-string'];
@@ -28,6 +37,7 @@ const jwtSecretProblem = (secret) => {
 
 const config = {
   env: process.env.NODE_ENV || 'development',
+  explicitDev,
   port,
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(
     /\/+$/,
@@ -438,7 +448,9 @@ const config = {
     // Seeded super-admin credentials (override in production via env).
     seedName: process.env.ADMIN_SEED_NAME || 'Platform Admin',
     seedEmail: process.env.ADMIN_SEED_EMAIL || 'admin@foodkitchen.rw',
-    seedPassword: process.env.ADMIN_SEED_PASSWORD || 'Admin@12345',
+    seedPassword,
+    // Public or short: a live server refuses to create the first admin with it.
+    seedPasswordIsWeak: seedPassword === PUBLIC_ADMIN_PASSWORD || seedPassword.length < 12,
     // Default platform commission applied when no commission config matches.
     commissionDefaultPercent: numberFromEnvOrZero(
       process.env.PLATFORM_COMMISSION_PERCENT,

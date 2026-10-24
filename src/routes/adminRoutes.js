@@ -3,6 +3,7 @@ const requireAdminAuth = require('../middleware/requireAdminAuth');
 const adminRateLimit = require('../middleware/adminRateLimit');
 const requirePermission = require('../middleware/requirePermission');
 const requireSuperAdmin = require('../middleware/requireSuperAdmin');
+const requirePasswordChanged = require('../middleware/requirePasswordChanged');
 const refundService = require('../services/refundService');
 const teamService = require('../services/teamService');
 
@@ -33,6 +34,8 @@ const deliveryFeeSettingsService = require('../services/deliveryFeeSettingsServi
 const router = Router();
 
 router.use(requireAdminAuth);
+// Still on the seeded password: nothing but changing it (under /admin/auth).
+router.use(requirePasswordChanged);
 router.use(adminRateLimit);
 
 /* ------------------------------- dashboard ------------------------------- */
