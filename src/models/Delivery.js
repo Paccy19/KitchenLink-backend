@@ -157,6 +157,13 @@ deliverySchema.index({ status: 1, created_at: -1 });
 deliverySchema.index({ status: 1, pickup_due_at: 1 });
 deliverySchema.index({ driver_id: 1, status: 1 });
 deliverySchema.index({ vendor_id: 1, status: 1 });
+// Sorted lists, so MongoDB reads them in order instead of sorting in memory:
+// open deliveries for dispatch (every minute: driver_id null, oldest first),
+// a worker's current delivery and history, and a kitchen's delivery list.
+deliverySchema.index({ driver_id: 1, status: 1, created_at: 1 });
+deliverySchema.index({ driver_id: 1, status: 1, assigned_at: -1 });
+deliverySchema.index({ driver_id: 1, created_at: -1 });
+deliverySchema.index({ vendor_id: 1, created_at: -1 });
 deliverySchema.index({ customer_id: 1, created_at: -1 });
 deliverySchema.index({ 'pickup_location.neighborhood': 1 });
 

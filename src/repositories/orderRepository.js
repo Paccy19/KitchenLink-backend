@@ -316,7 +316,18 @@ class OrderRepository {
    */
   async heldTotal() {
     const [row] = await Order.aggregate([
-      { $match: { settlement_status: { $in: ['held', 'settled'] } } },
+      // Only orders that can still hold money: held ones, and settled ones
+      // whose delivery fee no rider has been credited for. (Settled orders with
+      // the rider paid add 0, so leaving them out keeps the same total while
+      // the query stays fast as orders pile up.)
+      {
+        $match: {
+          $or: [
+            { settlement_status: 'held' },
+            { settlement_status: 'settled', rider_payout_settled_at: null },
+          ],
+        },
+      },
       {
         $group: {
           _id: null,

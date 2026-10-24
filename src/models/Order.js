@@ -159,5 +159,7 @@ orderSchema.index({ vendor_id: 1, completed_at: -1 });
 orderSchema.index({ status: 1, created_at: -1 });
 orderSchema.index({ driver_id: 1, status: 1 });
 orderSchema.index({ order_type: 1, scheduled_for: 1 });
+// "Money still held": only orders that can still hold money (see heldTotal).
+orderSchema.index({ settlement_status: 1, rider_payout_settled_at: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);
