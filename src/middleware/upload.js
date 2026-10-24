@@ -3,7 +3,9 @@ const crypto = require('crypto');
 const multer = require('multer');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
+const fs = require('fs');
 const { uploadsDir, ensureUploadsDir, ensurePrivateUploadsDir } = require('../utils/uploads');
+const { detectFileMime } = require('../utils/fileSignature');
 
 // Extension is derived from the (allowlist-validated) MIME type rather than the
 // client-supplied filename, so uploads always land with a correct extension and
@@ -92,7 +94,41 @@ const registrationUpload = multer({
   },
 });
 
-module.exports = imageUpload;
+/**
+ * After multer saved the files: each file's real content (its first bytes)
+ * must match the type the uploader claimed, so e.g. a script or web page
+ * labelled "image/png" is refused. Every file of the request is deleted when
+ * one fails.
+ */
+const verifyFileContents = (req, res, next) => {
+  const files = [
+    ...(req.file ? [req.file] : []),
+    ...(Array.isArray(req.files) ? req.files : Object.values(req.files || {}).flat()),
+  ];
+  const bad = files.find((file) => {
+    try {
+      return detectFileMime(file.path) !== file.mimetype;
+    } catch {
+      return true;
+    }
+  });
+  if (!bad) return next();
+  files.forEach((file) => fs.unlink(file.path, () => {}));
+  return next(
+    ApiError.badRequest(`"${bad.originalname || bad.fieldname}" is not a real ${EXT_BY_MIME[bad.mimetype]?.slice(1).toUpperCase() || 'supported'} file.`, {
+      [bad.fieldname]: 'file content does not match its type',
+    })
+  );
+};
+
+/** A multer instance whose single/fields/array middlewares also verify file contents. */
+const withContentCheck = (instance) => ({
+  single: (...args) => [instance.single(...args), verifyFileContents],
+  fields: (...args) => [instance.fields(...args), verifyFileContents],
+  array: (...args) => [instance.array(...args), verifyFileContents],
+});
+
+module.exports = withContentCheck(imageUpload);
 module.exports.uploadsDir = uploadsDir;
-module.exports.documents = documentUpload;
-module.exports.registration = registrationUpload;
+module.exports.documents = withContentCheck(documentUpload);
+module.exports.registration = withContentCheck(registrationUpload);

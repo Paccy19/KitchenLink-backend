@@ -403,6 +403,12 @@ function parseVerificationDocuments(raw) {
         [`verification_documents[${index}].url`]: 'expected a document URL',
       });
     }
+    // Admins open these links: only web links (never javascript:, data:, ...).
+    if (!/^https?:\/\//i.test(url) || url.length > 2048) {
+      throw badRequest('verification_documents url must be an http or https link.', {
+        [`verification_documents[${index}].url`]: 'expected http(s)://...',
+      });
+    }
     return {
       label:
         doc && doc.label !== undefined

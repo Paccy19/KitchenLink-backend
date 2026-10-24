@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const config = require('../config');
 const ApiError = require('./ApiError');
+const { detectMime } = require('./fileSignature');
 
 const uploadsDir = path.isAbsolute(config.vendor.uploads.dir)
   ? config.vendor.uploads.dir
@@ -118,6 +119,10 @@ const saveDataUri = (dataUri) => {
       image: `maximum size is ${Math.round(config.vendor.uploads.maxFileSizeBytes / (1024 * 1024))}MB`,
     });
   }
+  // The data must really be the image type it claims (not e.g. a script).
+  if (detectMime(buffer) !== mime) {
+    throw ApiError.badRequest('This file is not a real image.', { image: 'file content does not match its type' });
+  }
   return writeBuffer(buffer, EXT_BY_MIME[mime] || '');
 };
 
@@ -141,6 +146,10 @@ const resolveImageUrl = ({ file, image_url, image_base64 } = {}) => {
     throw ApiError.badRequest('image_url is too long.', {
       image_url: 'maximum length is 2048 characters',
     });
+  }
+  // Only web links (or our own /uploads paths): no javascript:, data:, file: ...
+  if (url && !/^https?:\/\//i.test(url) && !url.startsWith(publicUrlPrefix)) {
+    throw ApiError.badRequest('image_url must be an http or https link.', { image_url: 'expected http(s)://...' });
   }
   return url || undefined;
 };
