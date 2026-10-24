@@ -33,6 +33,11 @@ class OtpRepository {
       .sort({ created_at: -1 });
   }
 
+  /** A code whose SMS never left: removed, so it can't be used or block a retry. */
+  async remove(otpId) {
+    await OtpCode.deleteOne({ _id: otpId });
+  }
+
   async incrementAttempts(otpId) {
     await OtpCode.updateOne({ _id: otpId }, { $inc: { attempts: 1 } });
   }

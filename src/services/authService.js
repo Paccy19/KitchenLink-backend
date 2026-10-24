@@ -8,7 +8,7 @@ const { resolveImageUrl } = require('../utils/uploads');
 const customerRepository = require('../repositories/customerRepository');
 const otpRepository = require('../repositories/otpRepository');
 const otpGuardService = require('./otpGuardService');
-const { sendSms } = require('../utils/sms');
+const { sendCodeSms } = require('../utils/sms');
 
 const serializeCustomer = (customer) => ({
   id: String(customer._id),
@@ -50,14 +50,18 @@ class AuthService {
     await otpGuardService.beforeSend(phone, 'customer');
 
     const code = String(crypto.randomInt(100000, 1000000));
-    await otpRepository.create({
+    const created = await otpRepository.create({
       phoneNumber: phone,
       code,
       name: pendingName || undefined,
       expiresAt: new Date(now + config.auth.otpTtlMinutes * 60 * 1000),
     });
 
-    await sendSms(phone, `KitchenLink: your sign-in code is ${code}. It expires in ${config.auth.otpTtlMinutes} minutes. Never share it.`);
+    await sendCodeSms(
+      phone,
+      `KitchenLink: your sign-in code is ${code}. It expires in ${config.auth.otpTtlMinutes} minutes. Never share it.`,
+      { onFail: () => otpRepository.remove(created._id) }
+    );
 
     // Only a server whose .env explicitly says development/test shows the code
     // (in the console and the response) so the flow can be tried without SMS.

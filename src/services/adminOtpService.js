@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
-const { sendSms } = require('../utils/sms');
+const { sendCodeSms } = require('../utils/sms');
 const otpRepository = require('../repositories/otpRepository');
 const otpGuardService = require('./otpGuardService');
 
@@ -57,14 +57,16 @@ class AdminOtpService {
     await otpGuardService.beforeSend(phone, 'admin');
 
     const code = String(crypto.randomInt(100000, 1000000));
-    await otpRepository.create({
+    const created = await otpRepository.create({
       phoneNumber: phone,
       purpose: 'admin',
       context,
       code,
       expiresAt: new Date(now + config.admin.otpTtlMinutes * 60 * 1000),
     });
-    await sendSms(phone, `KitchenLink admin: your code to ${CONTEXT_LABELS[context]} is ${code}. Never share it.`);
+    await sendCodeSms(phone, `KitchenLink admin: your code to ${CONTEXT_LABELS[context]} is ${code}. Never share it.`, {
+      onFail: () => otpRepository.remove(created._id),
+    });
 
     const isDev = config.explicitDev;
     if (isDev) console.log(`[admin otp] ${context} ${phone} -> ${code}`);

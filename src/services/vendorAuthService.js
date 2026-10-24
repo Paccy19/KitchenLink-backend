@@ -25,7 +25,7 @@ const vendorRepository = require('../repositories/vendorRepository');
 const categoryRepository = require('../repositories/categoryRepository');
 const otpRepository = require('../repositories/otpRepository');
 const otpGuardService = require('./otpGuardService');
-const { sendSms } = require('../utils/sms');
+const { sendCodeSms } = require('../utils/sms');
 const notificationService = require('./notificationService');
 const { assertVendorNotBlocked } = require('../utils/vendorAccess');
 
@@ -169,14 +169,18 @@ class VendorAuthService {
     await otpGuardService.beforeSend(normalizedPhone, 'vendor');
 
     const code = String(crypto.randomInt(100000, 1000000));
-    await otpRepository.create({
+    const created = await otpRepository.create({
       phoneNumber: normalizedPhone,
       purpose: 'vendor',
       code,
       expiresAt: new Date(now + config.auth.otpTtlMinutes * 60 * 1000),
     });
 
-    await sendSms(normalizedPhone, `KitchenLink: your sign-in code is ${code}. It expires in ${config.auth.otpTtlMinutes} minutes. Never share it.`);
+    await sendCodeSms(
+      normalizedPhone,
+      `KitchenLink: your sign-in code is ${code}. It expires in ${config.auth.otpTtlMinutes} minutes. Never share it.`,
+      { onFail: () => otpRepository.remove(created._id) }
+    );
 
     // Only a server whose .env explicitly says development/test shows the code
     // (in the console and the response) so the flow can be tried without SMS.

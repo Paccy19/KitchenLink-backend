@@ -10,6 +10,7 @@
  */
 
 const config = require('../config');
+const ApiError = require('./ApiError');
 
 const { sms } = config.notifications;
 
@@ -29,6 +30,8 @@ async function sendSms(to, message) {
 
   try {
     const response = await fetch(sms.apiUrl, {
+      // A slow gateway must not hang sign-in.
+      signal: AbortSignal.timeout(10000),
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -52,4 +55,18 @@ async function sendSms(to, message) {
   }
 }
 
-module.exports = { sendSms };
+/**
+ * Sends a sign-in / confirmation code. On a live server the code must really
+ * leave: if the gateway fails (down, out of credit, wrong key) `onFail` runs
+ * (the caller cancels the code) and the user is told to try again, instead of
+ * waiting for a message that never comes. A development server only logs it.
+ */
+async function sendCodeSms(to, message, { onFail } = {}) {
+  const result = await sendSms(to, message);
+  if (result.status === 'sent' || config.explicitDev) return result;
+  console.error(`[sms] code to ${String(to).slice(0, -4)}**** not delivered: ${result.status}${result.error ? ` (${result.error})` : ''}`);
+  if (onFail) await onFail().catch(() => null);
+  throw new ApiError(503, 'SMS_NOT_SENT', "We couldn't send the SMS code right now. Please try again in a moment.");
+}
+
+module.exports = { sendSms, sendCodeSms };
