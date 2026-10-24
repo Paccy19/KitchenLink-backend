@@ -20,7 +20,6 @@ const SYSTEM_ACTOR = { _id: null, name: 'System (payout schedule)', email: 'syst
 
 const owner = config.admin.owner;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const DEFAULT_JWT_SECRET = 'dev-secret-change-me';
 
 const money = (value) => `${Math.round(value).toLocaleString()} RWF`;
 
@@ -129,7 +128,7 @@ class PlatformOwnerService {
       security: {
         two_factor_enabled: Boolean(admin.two_factor_enabled && admin.phone),
         uses_default_password: usesDefaultPassword,
-        default_jwt_secret: config.auth.jwtSecret === DEFAULT_JWT_SECRET,
+        default_jwt_secret: Boolean(config.auth.jwtSecretProblem),
       },
       destinations: destinations.map(serializeDestination),
       withdrawals: withdrawals.map(serializeWithdrawal),

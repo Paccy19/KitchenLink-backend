@@ -14,7 +14,6 @@ const bankSettingsService = require('./services/bankSettingsService');
 const deliveryFeeSettingsService = require('./services/deliveryFeeSettingsService');
 const dispatchSettingsService = require('./services/dispatchSettingsService');
 
-const DEFAULT_JWT_SECRET = 'dev-secret-change-me';
 
 const bootstrapAdmin = async () => {
   try {
@@ -79,13 +78,18 @@ const bootstrapAdmin = async () => {
 };
 
 const start = async () => {
-  // Signed sessions are only as safe as this secret.
-  if (config.auth.jwtSecret === DEFAULT_JWT_SECRET) {
-    if (config.env === 'production') {
-      console.error('Refusing to start: set a strong JWT_SECRET in the environment.');
+  // Signed sessions are only as safe as this secret. A weak one is only
+  // allowed when .env explicitly says this is a development or test server, so
+  // a live server that forgot NODE_ENV can't run with a public secret.
+  const secretProblem = config.auth.jwtSecretProblem;
+  if (secretProblem) {
+    const explicitDev = ['development', 'test'].includes(process.env.NODE_ENV);
+    const fix = `set JWT_SECRET to a random string of at least ${config.auth.jwtSecretMinLength} characters`;
+    if (!explicitDev) {
+      console.error(`Refusing to start: JWT_SECRET is ${secretProblem}; ${fix}.`);
       process.exit(1);
     }
-    console.warn('[security] JWT_SECRET is the default value. Set a strong one before going live.');
+    console.warn(`[security] JWT_SECRET is ${secretProblem}. Fine for local development; ${fix} before going live.`);
   }
 
   try {

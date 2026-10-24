@@ -13,6 +13,19 @@ const numberFromEnvOrZero = (value, fallback = 0) => {
 
 const port = Number(process.env.PORT) || 4000;
 
+// Secrets anyone can read in this code or in .env.example: tokens signed with
+// them can be forged, so they (and short ones) never count as a real secret.
+const PUBLIC_JWT_SECRETS = ['dev-secret-change-me', 'change-me-to-a-long-random-string'];
+const JWT_SECRET_MIN_LENGTH = 32;
+
+/** Why JWT_SECRET is unsafe ('missing' | 'a placeholder' | 'too short'), or null when it's fine. */
+const jwtSecretProblem = (secret) => {
+  if (!secret) return 'missing';
+  if (PUBLIC_JWT_SECRETS.includes(secret)) return 'a placeholder';
+  if (secret.length < JWT_SECRET_MIN_LENGTH) return 'too short';
+  return null;
+};
+
 const config = {
   env: process.env.NODE_ENV || 'development',
   port,
@@ -46,7 +59,11 @@ const config = {
     ordersMax: 50,
   },
   auth: {
-    jwtSecret: process.env.JWT_SECRET || 'dev-secret-change-me',
+    // Only a local development server may run without a real secret (see
+    // server.js: anything else refuses to start).
+    jwtSecret: process.env.JWT_SECRET || PUBLIC_JWT_SECRETS[0],
+    jwtSecretProblem: jwtSecretProblem(process.env.JWT_SECRET),
+    jwtSecretMinLength: JWT_SECRET_MIN_LENGTH,
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '30d',
     otpTtlMinutes: numberFromEnv(process.env.OTP_TTL_MINUTES, 5),
     otpMaxAttempts: 5,
