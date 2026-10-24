@@ -1,9 +1,11 @@
 const ApiError = require('../utils/ApiError');
 
 /**
- * Minimal in-memory fixed-window rate limiter keyed by client IP, for public
- * endpoints that call paid or fair-use third-party services. Suitable for a
- * single instance; swap for a shared store if the API scales out.
+ * Minimal in-memory fixed-window rate limiter keyed by client IP: the overall
+ * API limit (app.js), sign-in endpoints, and endpoints that call paid or
+ * fair-use third-party services. Suitable for a single instance; swap for a
+ * shared store if the API scales out. Behind a proxy, set TRUST_PROXY so the
+ * IP is the visitor's.
  */
 function rateLimit({ windowMs, max, code = 'RATE_LIMITED', message = 'Too many requests. Please slow down.' }) {
   const buckets = new Map();

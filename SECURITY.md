@@ -55,6 +55,7 @@ Money, a gateway) is integrated in `orderService`.
 - Suspended or rejected kitchens and drivers, and deactivated customers and admins, lose access on their next request.
 
 **Requests**
+- Per-IP limits: 600 requests a minute for the whole API (`API_RATE_MAX_PER_MINUTE`); 30 a minute for the public delivery price check, which may call the paid Google Routes API (`DELIVERY_QUOTE_RATE_MAX_PER_MINUTE`); plus the sign-in limits above and limits on place search, directions and chat. Kept in memory: fine for one server; several servers would need a shared store (e.g. Redis).
 - Helmet security headers; CORS limited to `FRONTEND_URL` / `ALLOWED_ORIGINS`.
 - Any body or query containing MongoDB operator keys (`$ne`, `$where`, …) is refused before reaching a route (`rejectOperatorKeys`).
 - Clients never see internal error details. Logs hide secrets in URLs (invitation tokens, `?token=` …).

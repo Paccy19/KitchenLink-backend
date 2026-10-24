@@ -6,6 +6,7 @@ const routes = require('./routes');
 const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
 const requestId = require('./middleware/requestId');
+const rateLimit = require('./middleware/rateLimit');
 const rejectOperatorKeys = require('./middleware/rejectOperatorKeys');
 const redactUrl = require('./utils/redactUrl');
 const { uploadsDir, ensureUploadsDir } = require('./utils/uploads');
@@ -58,6 +59,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// Overall per-IP limit for the whole API (config.rateLimits.apiPerMinute).
+app.use(
+  '/api/v1',
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: config.rateLimits.apiPerMinute,
+    code: 'API_RATE_LIMITED',
+    message: 'Too many requests from this network. Please wait a moment and try again.',
+  })
+);
 app.use('/api/v1', routes);
 
 app.use(notFound);

@@ -58,6 +58,14 @@ const config = {
   // proxy: TRUST_PROXY (e.g. 1 = one proxy in front) makes req.ip the real
   // visitor's IP, so per-IP limits work. Leave empty when the API is reached directly.
   trustProxy: process.env.TRUST_PROXY || '',
+  // Per-IP request limits (see app.js and the routes). The overall limit is far
+  // above normal use (people, the driver app, the admin panel) and stops
+  // scraping and runaway scripts; endpoints that call paid map services have
+  // their own lower limits.
+  rateLimits: {
+    apiPerMinute: numberFromEnv(process.env.API_RATE_MAX_PER_MINUTE, 600),
+    deliveryQuotePerMinute: numberFromEnv(process.env.DELIVERY_QUOTE_RATE_MAX_PER_MINUTE, 30),
+  },
   port,
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(
     /\/+$/,
