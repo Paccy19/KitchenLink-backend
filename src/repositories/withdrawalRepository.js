@@ -86,7 +86,7 @@ class WithdrawalRepository {
     return Withdrawal.findOneAndUpdate(
       { _id: withdrawalId, deleted_at: null },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -98,7 +98,7 @@ class WithdrawalRepository {
     return Withdrawal.findOneAndUpdate(
       { _id: withdrawalId, deleted_at: null, status: 'processing' },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

@@ -36,7 +36,7 @@ class PlatformWithdrawalRepository {
     return PlatformWithdrawal.findOneAndUpdate(
       { _id: withdrawalId, status: 'processing' },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 }

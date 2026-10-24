@@ -105,7 +105,7 @@ class MenuItemRepository {
     return MenuItem.findOneAndUpdate(
       { _id: menuItemId, vendor_id: vendorId, deleted_at: null },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -113,7 +113,7 @@ class MenuItemRepository {
     return MenuItem.findOneAndUpdate(
       { _id: menuItemId, vendor_id: vendorId, deleted_at: null },
       { $set: { is_available: isAvailable } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -121,7 +121,7 @@ class MenuItemRepository {
     return MenuItem.findOneAndUpdate(
       { _id: menuItemId, vendor_id: vendorId, deleted_at: null },
       { $set: { deleted_at: new Date(), is_available: false } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

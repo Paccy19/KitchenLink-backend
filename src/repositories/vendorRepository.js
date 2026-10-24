@@ -202,7 +202,7 @@ class VendorRepository {
     return Vendor.findOneAndUpdate(
       { _id: vendorId, deleted_at: null },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -217,7 +217,7 @@ class VendorRepository {
     return Vendor.findOneAndUpdate(
       { _id: vendorId, deleted_at: null },
       { $inc: { total_sales: totalRwf, available_balance: balanceRwf } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -230,7 +230,7 @@ class VendorRepository {
         available_balance: { $gte: amountRwf },
       },
       { $inc: { available_balance: -amountRwf } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -245,7 +245,7 @@ class VendorRepository {
     return Vendor.findOneAndUpdate(
       { _id: vendorId },
       { $inc: { available_balance: amountRwf } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -253,7 +253,7 @@ class VendorRepository {
     return Vendor.findOneAndUpdate(
       { _id: vendorId, deleted_at: null },
       { $set: { deleted_at: new Date(), is_active: false } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

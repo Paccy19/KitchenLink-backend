@@ -29,7 +29,7 @@ class AdminRepository {
     return Admin.findOneAndUpdate(
       { _id: adminId, deleted_at: null },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

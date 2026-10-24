@@ -40,7 +40,7 @@ class CategoryRepository {
     return Category.findOneAndUpdate(
       { _id: categoryId },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

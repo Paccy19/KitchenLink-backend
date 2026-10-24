@@ -102,7 +102,7 @@ class BankSettingsService {
     await BankSettings.findOneAndUpdate(
       { key: 'primary' },
       { $set: { banks, updated_by: admin?._id || null } },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
     await this.load();
     return { previous, current: this.list() };

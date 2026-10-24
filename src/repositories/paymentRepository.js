@@ -29,7 +29,7 @@ class PaymentRepository {
     return Payment.findOneAndUpdate(
       { _id: paymentId },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

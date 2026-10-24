@@ -1045,7 +1045,7 @@ class DeliveryService {
       const claimed = await Delivery.findOneAndUpdate(
         { _id: id, otp_attempts: { $lt: maxTries } },
         { $inc: { otp_attempts: 1 } },
-        { new: true }
+        { returnDocument: 'after' }
       ).lean();
       if (!claimed) {
         throw ApiError.tooMany(

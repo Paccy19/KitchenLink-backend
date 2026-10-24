@@ -109,7 +109,7 @@ class DeliveryRepository {
           },
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -117,7 +117,7 @@ class DeliveryRepository {
     return Delivery.findOneAndUpdate(
       { _id: deliveryId },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -143,7 +143,7 @@ class DeliveryRepository {
     return Delivery.findOneAndUpdate(
       { _id: deliveryId, driver_id: driverId, status: 'assigned_to_driver' },
       { $set: { ...update, driver_id: null, assigned_at: null } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -341,7 +341,7 @@ class DeliveryRepository {
           status_history: { status, at: new Date(), note: note || 'Reassigned by admin', by: 'admin' },
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 }

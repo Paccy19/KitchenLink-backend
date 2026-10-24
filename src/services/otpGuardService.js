@@ -114,7 +114,7 @@ class OtpGuardService {
     const claimed = await OtpCode.findOneAndUpdate(
       { _id: otp._id, consumed_at: null, attempts: { $lt: max } },
       { $inc: { attempts: 1 } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
     if (!claimed) {
       await OtpCode.updateOne({ _id: otp._id }, { $set: { consumed_at: new Date() } });

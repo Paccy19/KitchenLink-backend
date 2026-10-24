@@ -18,7 +18,7 @@ class PayoutDestinationRepository {
     return PayoutDestination.findOneAndUpdate(
       { _id: destinationId, status: 'active' },
       { $set: { status: 'removed', removed_at: new Date() } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 }

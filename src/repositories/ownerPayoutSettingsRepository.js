@@ -22,7 +22,7 @@ class OwnerPayoutSettingsRepository {
           },
         },
       },
-      { upsert: true, new: true, lean: true }
+      { upsert: true, returnDocument: 'after', lean: true }
     );
   }
 
@@ -30,7 +30,7 @@ class OwnerPayoutSettingsRepository {
     return OwnerPayoutSettings.findOneAndUpdate(
       { key: 'primary' },
       { $set: { ...update, key: 'primary' } },
-      { upsert: true, new: true, lean: true }
+      { upsert: true, returnDocument: 'after', lean: true }
     );
   }
 }

@@ -78,12 +78,12 @@ class RefundRepository {
     return Refund.findOneAndUpdate(
       { _id: refundId, status: { $in: from } },
       update,
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
   async update(refundId, update) {
-    return Refund.findByIdAndUpdate(refundId, update, { new: true }).lean();
+    return Refund.findByIdAndUpdate(refundId, update, { returnDocument: 'after' }).lean();
   }
 }
 

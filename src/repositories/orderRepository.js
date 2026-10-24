@@ -34,7 +34,7 @@ class OrderRepository {
         // Same status as before; the note records the switch on the timeline.
         $push: { status_history: { status: historyStatus, at, note } },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -50,7 +50,7 @@ class OrderRepository {
         $set: { status: 'delivered', delivered_at: at, completed_at: at, collected_at: at },
         $push: { status_history: { status: 'delivered', at, note } },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -58,7 +58,7 @@ class OrderRepository {
     return Order.findOneAndUpdate(
       { _id: orderId },
       { $inc: { pickup_code_attempts: 1 } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -199,7 +199,7 @@ class OrderRepository {
   }
 
   async update(orderId, update) {
-    return Order.findOneAndUpdate({ _id: orderId }, { $set: update }, { new: true }).lean();
+    return Order.findOneAndUpdate({ _id: orderId }, { $set: update }, { returnDocument: 'after' }).lean();
   }
 
   async pushHistory(orderId, entry) {
@@ -355,7 +355,7 @@ class OrderRepository {
     return Order.findOneAndUpdate(
       { _id: orderId, settlement_status: from },
       { $set: { settlement_status: to, ...extra } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

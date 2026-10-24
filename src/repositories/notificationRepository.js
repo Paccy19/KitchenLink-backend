@@ -44,7 +44,7 @@ class NotificationRepository {
     return Notification.findOneAndUpdate(
       { _id: notificationId, customer_id: customerId },
       { $set: { read_at: new Date() } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -119,7 +119,7 @@ class NotificationRepository {
     return Notification.findOneAndUpdate(
       { _id: notificationId, audience: 'admin' },
       { $addToSet: { read_by: adminId } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -151,7 +151,7 @@ class NotificationRepository {
     return Notification.findOneAndUpdate(
       { _id: notificationId, driver_id: driverId },
       { $set: { read_at: new Date() } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -195,7 +195,7 @@ class NotificationRepository {
     return Notification.findOneAndUpdate(
       { _id: notificationId, vendor_id: vendorId, audience: 'vendor' },
       { $set: { read_at: new Date() } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

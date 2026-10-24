@@ -11,7 +11,7 @@ class ChatRepository {
     return ChatConversation.findOneAndUpdate(
       { customer_id: customerId, vendor_id: vendorId },
       { $setOnInsert: { customer_id: customerId, vendor_id: vendorId } },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     ).lean();
   }
 
@@ -63,13 +63,13 @@ class ChatRepository {
         },
         $inc: { [UNREAD_FIELD[other]]: 1, messages_count: 1 },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
     return { message: message.toObject(), conversation: updated };
   }
 
   async markRead(side, conversationId) {
-    return ChatConversation.findByIdAndUpdate(conversationId, { $set: { [UNREAD_FIELD[side]]: 0 } }, { new: true }).lean();
+    return ChatConversation.findByIdAndUpdate(conversationId, { $set: { [UNREAD_FIELD[side]]: 0 } }, { returnDocument: 'after' }).lean();
   }
 
   /**

@@ -72,7 +72,7 @@ class DispatchSettingsService {
     await DispatchSettings.findOneAndUpdate(
       { key: 'primary' },
       { $set: { ...values, updated_by: admin?._id || null } },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
     await this.load();
     return { previous, current: this.#current };

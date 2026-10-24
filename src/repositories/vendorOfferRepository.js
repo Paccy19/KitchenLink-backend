@@ -25,7 +25,7 @@ class VendorOfferRepository {
     return VendorOffer.findOneAndUpdate(
       { _id: offerId, vendor_id: vendorId, status: 'active' },
       { $set: { status: 'cancelled' } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -46,7 +46,7 @@ class VendorOfferRepository {
     return VendorOffer.findOneAndUpdate(
       { status: 'active', offer_date: offerDate, reminder_sent_at: null },
       { $set: { reminder_sent_at: new Date() } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

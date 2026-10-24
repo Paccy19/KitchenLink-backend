@@ -36,7 +36,7 @@ class CartRepository {
         $inc: { quantity: quantity },
         $setOnInsert: { customer_id: customerId, menu_item_id: menuItemId },
       },
-      { new: true, upsert: true }
+      { returnDocument: 'after', upsert: true }
     );
     return doc;
   }
@@ -45,7 +45,7 @@ class CartRepository {
     return CartItem.findOneAndUpdate(
       { customer_id: customerId, menu_item_id: menuItemId },
       { $set: { quantity } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

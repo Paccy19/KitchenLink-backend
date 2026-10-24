@@ -39,7 +39,7 @@ class DriverRepository {
     return Driver.findOneAndUpdate(
       { _id: driverId, deleted_at: null },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -62,7 +62,7 @@ class DriverRepository {
           location_accuracy_m: accuracyM,
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -80,7 +80,7 @@ class DriverRepository {
     return Driver.findOneAndUpdate(
       { _id: driverId, deleted_at: null },
       { $inc: { active_deliveries_count: 1 } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -88,7 +88,7 @@ class DriverRepository {
     return Driver.findOneAndUpdate(
       { _id: driverId, deleted_at: null },
       { $inc: { active_deliveries_count: -1 } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -103,7 +103,7 @@ class DriverRepository {
           active_deliveries_count: -1,
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -226,7 +226,7 @@ class DriverRepository {
     return Driver.findOneAndUpdate(
       { _id: driverId, deleted_at: null, available_balance_rwf: { $gte: amountRwf } },
       { $inc: { available_balance_rwf: -amountRwf } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -241,7 +241,7 @@ class DriverRepository {
     return Driver.findOneAndUpdate(
       { _id: driverId },
       { $inc: { available_balance_rwf: amountRwf } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

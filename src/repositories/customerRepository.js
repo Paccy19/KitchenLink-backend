@@ -48,7 +48,7 @@ class CustomerRepository {
           last_location_at: new Date(),
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -57,7 +57,7 @@ class CustomerRepository {
     const ops = {};
     if (Object.keys(update).length) ops.$set = update;
     if (unset.length) ops.$unset = Object.fromEntries(unset.map((field) => [field, '']));
-    return Customer.findOneAndUpdate({ _id: customerId }, ops, { new: true }).lean();
+    return Customer.findOneAndUpdate({ _id: customerId }, ops, { returnDocument: 'after' }).lean();
   }
 
   /* ------------------------------- admin ------------------------------- */

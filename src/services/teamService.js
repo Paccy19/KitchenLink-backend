@@ -128,7 +128,7 @@ class TeamService {
       member = await Admin.findOneAndUpdate(
         { _id: existing._id },
         { $set: { name, role, deleted_at: null, is_active: true, status: 'invited', phone: '', two_factor_enabled: false, deactivated_at: null }, $unset: { password_hash: 1 } },
-        { new: true }
+        { returnDocument: 'after' }
       ).lean();
     } else {
       member = (await Admin.create({ email, name, role, status: 'invited', is_active: true, permissions: [] })).toObject();
@@ -155,7 +155,7 @@ class TeamService {
     const member = await this.#findMember(memberId);
     const role = parseRole(body.role);
     await adminAuthService.verifyActionCode(owner, 'team_change', body.action_code);
-    const updated = await Admin.findOneAndUpdate({ _id: member._id }, { $set: { role } }, { new: true }).lean();
+    const updated = await Admin.findOneAndUpdate({ _id: member._id }, { $set: { role } }, { returnDocument: 'after' }).lean();
     await this.#audit(owner, req, 'team.change_role', member, { from: access.roleKey(member.role), to: role });
     return { member: serializeMember(updated) };
   }
@@ -166,7 +166,7 @@ class TeamService {
     const updated = await Admin.findOneAndUpdate(
       { _id: member._id },
       { $set: { is_active: false, deactivated_at: new Date() } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
     await this.#audit(owner, req, 'team.deactivate', member);
     return { member: serializeMember(updated) };
@@ -178,7 +178,7 @@ class TeamService {
     const updated = await Admin.findOneAndUpdate(
       { _id: member._id },
       { $set: { is_active: true, deactivated_at: null } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
     await this.#audit(owner, req, 'team.reactivate', member);
     return { member: serializeMember(updated) };

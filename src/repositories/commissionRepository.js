@@ -14,7 +14,7 @@ class CommissionRepository {
     return Commission.findOneAndUpdate(
       { _id: commissionId, deleted_at: null },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -22,7 +22,7 @@ class CommissionRepository {
     return Commission.findOneAndUpdate(
       { _id: commissionId, deleted_at: null },
       { $set: { deleted_at: new Date(), is_active: false } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

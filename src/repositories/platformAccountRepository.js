@@ -12,7 +12,7 @@ class PlatformAccountRepository {
     return PlatformAccount.findOneAndUpdate(
       { key: PRIMARY_KEY },
       { $setOnInsert: { key: PRIMARY_KEY } },
-      { upsert: true, new: true, lean: true }
+      { upsert: true, returnDocument: 'after', lean: true }
     );
   }
 
@@ -20,7 +20,7 @@ class PlatformAccountRepository {
     return PlatformAccount.findOneAndUpdate(
       { key: PRIMARY_KEY },
       { $set: { ...snapshot, key: PRIMARY_KEY } },
-      { upsert: true, new: true, lean: true }
+      { upsert: true, returnDocument: 'after', lean: true }
     );
   }
 }

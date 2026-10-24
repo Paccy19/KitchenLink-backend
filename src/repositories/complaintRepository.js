@@ -44,7 +44,7 @@ class ComplaintRepository {
     return Complaint.findOneAndUpdate(
       { _id: complaintId, deleted_at: null },
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -52,7 +52,7 @@ class ComplaintRepository {
     return Complaint.findOneAndUpdate(
       { _id: complaintId, deleted_at: null },
       { $push: { notes: note } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 
@@ -99,7 +99,7 @@ class ComplaintRepository {
     return Complaint.findOneAndUpdate(
       { _id: complaintId, deleted_at: null },
       { $push: { messages: message }, $set: { last_message_at: message.at, ...set } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
   }
 

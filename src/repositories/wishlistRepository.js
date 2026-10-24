@@ -26,7 +26,7 @@ class WishlistRepository {
     const doc = await WishlistItem.findOneAndUpdate(
       { customer_id: customerId, menu_item_id: menuItemId },
       { $setOnInsert: { customer_id: customerId, menu_item_id: menuItemId } },
-      { new: true, upsert: true }
+      { returnDocument: 'after', upsert: true }
     );
     return doc;
   }
