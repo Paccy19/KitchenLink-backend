@@ -8,7 +8,16 @@ const { uploadsDir, ensureUploadsDir } = require('./utils/uploads');
 
 const app = express();
 
-app.use(cors());
+// Browsers may only call the API from KitchenLink's own website(s). Requests
+// without an Origin (server-to-server, Postman, health checks) aren't
+// affected: CORS only applies in browsers. Other sites simply get no CORS
+// headers, so the browser refuses to give them the response.
+const allowedOrigins = new Set(config.allowedOrigins);
+app.use(
+  cors({
+    origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin)),
+  })
+);
 app.use(express.json({ limit: '1mb' }));
 
 ensureUploadsDir();

@@ -112,6 +112,12 @@ const config = {
   },
   // Where the website runs; used for links in emails (e.g. team invitations).
   frontendUrl: (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, ''),
+  // Websites allowed to call the API from a browser (CORS): ALLOWED_ORIGINS,
+  // comma-separated, or just FRONTEND_URL. Exact origins, e.g. https://kitchenlink.rw.
+  allowedOrigins: (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:3000')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .filter(Boolean),
   mail: {
     // Two delivery options. If EMAIL_PROVIDER + EMAIL_API_KEY are set, an HTTP
     // email API (resend | sendgrid | mailgun | brevo) is used. Otherwise an
