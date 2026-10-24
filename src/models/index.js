@@ -30,6 +30,7 @@ const ChatMessage = require('./ChatMessage');
 const BankSettings = require('./BankSettings');
 const DeliveryFeeSettings = require('./DeliveryFeeSettings');
 const DispatchSettings = require('./DispatchSettings');
+const OtpGuard = require('./OtpGuard');
 
 module.exports = {
   VendorOffer,
@@ -38,6 +39,7 @@ module.exports = {
   BankSettings,
   DeliveryFeeSettings,
   DispatchSettings,
+  OtpGuard,
   Vendor,
   Category,
   MenuItem,

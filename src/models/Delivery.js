@@ -54,6 +54,9 @@ const deliverySchema = new mongoose.Schema(
 
     // Proof-of-delivery OTP shared with the customer at dispatch time.
     otp_code: { type: String, default: '' },
+    // Wrong delivery codes entered by the worker; at the limit the delivery
+    // locks and only support can complete it (no guessing the customer's code).
+    otp_attempts: { type: Number, default: 0 },
     otp_verified_at: { type: Date },
     proof_photo_url: { type: String, default: '' },
 

@@ -99,6 +99,15 @@ const config = {
     otpResendCooldownSeconds: 60,
     otpRateWindowMinutes: 10,
     otpRateMaxSends: 5,
+    // Per phone number (see otpGuardService): wrong codes within a day before a
+    // lockout, how long each lockout in a row lasts, and codes sent per day.
+    otpLockout: {
+      maxFailures: 10,
+      lockMinutes: [30, 120, 24 * 60],
+      maxSendsPerDay: 20,
+      // Admins confirm several money actions a day with codes.
+      adminMaxSendsPerDay: 60,
+    },
   },
   maps: {
     // Server-side Google Maps key used for real road distances (Routes API).

@@ -3,6 +3,7 @@ const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { sendSms } = require('../utils/sms');
 const otpRepository = require('../repositories/otpRepository');
+const otpGuardService = require('./otpGuardService');
 
 /**
  * One-time codes sent to an admin's phone. Each code is bound to a `context`
@@ -53,6 +54,8 @@ class AdminOtpService {
       throw ApiError.tooMany('Too many code requests. Please try again later.', 'OTP_RATE_LIMITED');
     }
 
+    await otpGuardService.beforeSend(phone, 'admin');
+
     const code = String(crypto.randomInt(100000, 1000000));
     await otpRepository.create({
       phoneNumber: phone,
@@ -63,7 +66,7 @@ class AdminOtpService {
     });
     await sendSms(phone, `KitchenLink admin: your code to ${CONTEXT_LABELS[context]} is ${code}. Never share it.`);
 
-    const isDev = config.env !== 'production';
+    const isDev = config.explicitDev;
     if (isDev) console.log(`[admin otp] ${context} ${phone} -> ${code}`);
     return {
       sent_to: maskPhone(phone),
@@ -78,21 +81,12 @@ class AdminOtpService {
     if (!/^\d{6}$/.test(code)) {
       throw new ApiError(400, 'OTP_REQUIRED', 'Enter the 6-digit code sent to your phone.', { otp_code: 'expected 6 digits' });
     }
+    await otpGuardService.assertNotLocked(phone, 'admin');
     const otp = await otpRepository.findLatestActive(phone, 'admin', context);
     if (!otp) {
       throw new ApiError(400, 'OTP_NOT_FOUND', 'No active code. Request a new one.');
     }
-    if (otp.attempts >= config.auth.otpMaxAttempts) {
-      await otpRepository.consume(otp._id);
-      throw ApiError.tooMany('Too many incorrect attempts. Request a new code.', 'OTP_TOO_MANY_ATTEMPTS');
-    }
-    if (otp.code !== code) {
-      await otpRepository.incrementAttempts(otp._id);
-      throw new ApiError(400, 'OTP_INVALID', 'Incorrect code.', {
-        attempts_remaining: Math.max(config.auth.otpMaxAttempts - (otp.attempts + 1), 0),
-      });
-    }
-    await otpRepository.consume(otp._id);
+    await otpGuardService.check(otp, code, phone, 'admin');
     return true;
   }
 }

@@ -9,6 +9,8 @@ const { serializeDriverAccount } = require('../utils/serializers');
 const { hashPassword, comparePassword } = require('../utils/password');
 const driverRepository = require('../repositories/driverRepository');
 const otpRepository = require('../repositories/otpRepository');
+const otpGuardService = require('./otpGuardService');
+const { sendSms } = require('../utils/sms');
 const notificationService = require('./notificationService');
 
 class DriverAuthService {
@@ -108,6 +110,9 @@ class DriverAuthService {
       );
     }
 
+    // Locked-out phones get no codes; at most a set number a day.
+    await otpGuardService.beforeSend(normalizedPhone, 'driver');
+
     const code = String(crypto.randomInt(100000, 1000000));
     await otpRepository.create({
       phoneNumber: normalizedPhone,
@@ -117,7 +122,11 @@ class DriverAuthService {
       expiresAt: new Date(now + config.auth.otpTtlMinutes * 60 * 1000),
     });
 
-    const isDev = config.env !== 'production';
+    await sendSms(normalizedPhone, `KitchenLink: your sign-in code is ${code}. It expires in ${config.auth.otpTtlMinutes} minutes. Never share it.`);
+
+    // Only a server whose .env explicitly says development/test shows the code
+    // (in the console and the response) so the flow can be tried without SMS.
+    const isDev = config.explicitDev;
     if (isDev) console.log(`[driver otp] ${normalizedPhone} -> ${code}`);
 
     return {
@@ -136,6 +145,7 @@ class DriverAuthService {
       });
     }
 
+    await otpGuardService.assertNotLocked(normalizedPhone, 'driver');
     const otp = await otpRepository.findLatestActive(normalizedPhone, 'driver');
     if (!otp) {
       const latest = await otpRepository.findLatestAny(normalizedPhone, 'driver');
@@ -148,24 +158,9 @@ class DriverAuthService {
       );
     }
 
-    if (otp.attempts >= config.auth.otpMaxAttempts) {
-      await otpRepository.consume(otp._id);
-      throw ApiError.tooMany(
-        'Too many incorrect attempts. Request a new code.',
-        'OTP_TOO_MANY_ATTEMPTS'
-      );
-    }
-
-    if (otp.code !== rawCode) {
-      await otpRepository.incrementAttempts(otp._id);
-      const remaining = config.auth.otpMaxAttempts - (otp.attempts + 1);
-      throw ApiError.badRequest('Incorrect code.', 'OTP_INVALID', {
-        code: 'incorrect code',
-        attempts_remaining: Math.max(remaining, 0),
-      });
-    }
-
-    await otpRepository.consume(otp._id);
+    // Counts the try atomically, locks the phone out after too many wrong
+    // codes, and uses the code up when it is right.
+    await otpGuardService.check(otp, rawCode, normalizedPhone, 'driver');
     const driver = await driverRepository.findByPhone(normalizedPhone);
     if (!driver) {
       throw ApiError.notFound(

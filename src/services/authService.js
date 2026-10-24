@@ -7,6 +7,8 @@ const { parseEmail } = require('../utils/vendorValidators');
 const { resolveImageUrl } = require('../utils/uploads');
 const customerRepository = require('../repositories/customerRepository');
 const otpRepository = require('../repositories/otpRepository');
+const otpGuardService = require('./otpGuardService');
+const { sendSms } = require('../utils/sms');
 
 const serializeCustomer = (customer) => ({
   id: String(customer._id),
@@ -44,6 +46,9 @@ class AuthService {
       );
     }
 
+    // Locked-out phones get no codes; at most a set number a day.
+    await otpGuardService.beforeSend(phone, 'customer');
+
     const code = String(crypto.randomInt(100000, 1000000));
     await otpRepository.create({
       phoneNumber: phone,
@@ -52,9 +57,11 @@ class AuthService {
       expiresAt: new Date(now + config.auth.otpTtlMinutes * 60 * 1000),
     });
 
-    // No SMS provider is wired up yet: in development the code is returned
-    // directly and also logged so the flow can be exercised end to end.
-    const isDev = config.env !== 'production';
+    await sendSms(phone, `KitchenLink: your sign-in code is ${code}. It expires in ${config.auth.otpTtlMinutes} minutes. Never share it.`);
+
+    // Only a server whose .env explicitly says development/test shows the code
+    // (in the console and the response) so the flow can be tried without SMS.
+    const isDev = config.explicitDev;
     if (isDev) console.log(`[otp] ${phone} -> ${code}`);
 
     return {
@@ -74,6 +81,7 @@ class AuthService {
       });
     }
 
+    await otpGuardService.assertNotLocked(phone, 'customer');
     const otp = await otpRepository.findLatestActive(phone);
     if (!otp) {
       const latest = await otpRepository.findLatestAny(phone);
@@ -85,24 +93,9 @@ class AuthService {
       );
     }
 
-    if (otp.attempts >= config.auth.otpMaxAttempts) {
-      await otpRepository.consume(otp._id);
-      throw ApiError.tooMany(
-        'Too many incorrect attempts. Request a new code.',
-        'OTP_TOO_MANY_ATTEMPTS'
-      );
-    }
-
-    if (otp.code !== rawCode) {
-      await otpRepository.incrementAttempts(otp._id);
-      const remaining = config.auth.otpMaxAttempts - (otp.attempts + 1);
-      throw ApiError.badRequest('Incorrect code.', 'OTP_INVALID', {
-        code: 'incorrect code',
-        attempts_remaining: Math.max(remaining, 0),
-      });
-    }
-
-    await otpRepository.consume(otp._id);
+    // Counts the try atomically, locks the phone out after too many wrong
+    // codes, and uses the code up when it is right.
+    await otpGuardService.check(otp, rawCode, phone, 'customer');
 
     let customer = await customerRepository.findByPhone(phone);
     if (!customer) {

@@ -20,7 +20,8 @@ const { sms } = config.notifications;
  */
 async function sendSms(to, message) {
   if (!sms.enabled || !sms.apiUrl || !sms.apiKey) {
-    if (config.env !== 'production') {
+    // Messages hold codes: only printed on an explicit development server.
+    if (config.explicitDev) {
       console.log(`[sms] ${to} -> ${message}`);
     }
     return { status: 'skipped' };

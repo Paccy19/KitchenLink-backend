@@ -129,7 +129,8 @@ async function sendEmail(message) {
   const useSmtp = Boolean(config.mail.host);
 
   if (!useHttp && !useSmtp) {
-    if (config.env !== 'production') console.log(`[email] to ${message.to}: ${message.subject}\n${message.text}`);
+    // Emails can hold invitation links: only printed on an explicit development server.
+    if (config.explicitDev) console.log(`[email] to ${message.to}: ${message.subject}\n${message.text}`);
     return { status: 'skipped' };
   }
 

@@ -15,6 +15,7 @@ const { resolveImageUrl } = require('../utils/uploads');
 const { serializeDelivery, serializeDriverAccount } = require('../utils/serializers');
 const { isKitchenReady } = require('../utils/deliveryReady');
 const deliveryRepository = require('../repositories/deliveryRepository');
+const { Delivery } = require('../models');
 const driverRepository = require('../repositories/driverRepository');
 const orderRepository = require('../repositories/orderRepository');
 const vendorRepository = require('../repositories/vendorRepository');
@@ -128,7 +129,7 @@ class DeliveryService {
       await this.#notifyCustomerDeliveryCode(order, delivery);
     }
 
-    const isDev = config.env !== 'production';
+    const isDev = config.explicitDev;
     if (isDev) {
       console.log(
         `[delivery] order ${order.order_number} ${ready ? 'ready' : 'placed'} (otp ${delivery.otp_code}, ${distanceKm}km, ${fee} RWF)`
@@ -1038,10 +1039,31 @@ class DeliveryService {
     }
 
     const code = parseOtpCode(body?.otp_code);
-    if (delivery.otp_code && code !== delivery.otp_code) {
-      throw ApiError.badRequest('Incorrect delivery code.', 'OTP_INVALID', {
-        otp_code: 'incorrect code',
-      });
+    if (delivery.otp_code) {
+      // Each try is counted atomically, so the customer's code can't be guessed.
+      const maxTries = config.auth.otpMaxAttempts;
+      const claimed = await Delivery.findOneAndUpdate(
+        { _id: id, otp_attempts: { $lt: maxTries } },
+        { $inc: { otp_attempts: 1 } },
+        { new: true }
+      ).lean();
+      if (!claimed) {
+        throw ApiError.tooMany(
+          'Too many wrong delivery codes for this order. Contact support to complete it.',
+          'DELIVERY_CODE_LOCKED'
+        );
+      }
+      if (code !== delivery.otp_code) {
+        const left = Math.max(maxTries - claimed.otp_attempts, 0);
+        throw new ApiError(
+          400,
+          'OTP_INVALID',
+          left > 0
+            ? `Incorrect delivery code. ${left} attempt${left === 1 ? '' : 's'} left.`
+            : 'Incorrect delivery code. This delivery is now locked; contact support to complete it.',
+          { otp_code: 'incorrect code', attempts_remaining: left }
+        );
+      }
     }
 
     const proofPhotoUrl =
@@ -1426,7 +1448,7 @@ class DeliveryService {
     });
 
     // Development convenience: surface the pickup OTP so the flow is testable.
-    if (config.env !== 'production' && delivery.otp_code) {
+    if (config.explicitDev && delivery.otp_code) {
       serialized.dev_otp = delivery.otp_code;
     }
     return serialized;
