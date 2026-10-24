@@ -97,9 +97,9 @@ class TeamService {
     const greeting = member.name ? `Hello ${member.name},` : 'Hello,';
     const sent = await sendEmail({
       to: member.email,
-      subject: `You're invited to the Online Food Kitchen admin team (${role.label})`,
-      text: `${greeting}\n\n${owner.name || 'The owner'} invited you to join the Online Food Kitchen admin team as ${role.label}.\n\nWhat you will be able to do: ${role.description}\n\nCreate your password here (the link works for ${hours} hours):\n${link}\n\nThen sign in on the website: Sign in > Admin, with this email and the password you set.\n\nIf you did not expect this, ignore this email.`,
-      html: `<p>${escapeHtml(greeting)}</p><p><strong>${escapeHtml(owner.name || 'The owner')}</strong> invited you to join the Online Food Kitchen admin team as <strong>${escapeHtml(role.label)}</strong>.</p><p>${escapeHtml(role.description)}</p><p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 18px;background:#1f2937;color:#fff;border-radius:8px;text-decoration:none">Create my password</a></p><p style="color:#666">The link works for ${hours} hours. Then sign in on the website: Sign in &gt; Admin, with this email and the password you set.</p>`,
+      subject: `You're invited to the KitchenLink admin team (${role.label})`,
+      text: `${greeting}\n\n${owner.name || 'The owner'} invited you to join the KitchenLink admin team as ${role.label}.\n\nWhat you will be able to do: ${role.description}\n\nCreate your password here (the link works for ${hours} hours):\n${link}\n\nThen sign in on the website: Sign in > Admin, with this email and the password you set.\n\nIf you did not expect this, ignore this email.`,
+      html: `<p>${escapeHtml(greeting)}</p><p><strong>${escapeHtml(owner.name || 'The owner')}</strong> invited you to join the KitchenLink admin team as <strong>${escapeHtml(role.label)}</strong>.</p><p>${escapeHtml(role.description)}</p><p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 18px;background:#1f2937;color:#fff;border-radius:8px;text-decoration:none">Create my password</a></p><p style="color:#666">The link works for ${hours} hours. Then sign in on the website: Sign in &gt; Admin, with this email and the password you set.</p>`,
     });
     return {
       email_status: sent.status,

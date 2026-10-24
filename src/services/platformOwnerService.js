@@ -178,7 +178,7 @@ class PlatformOwnerService {
     notificationService
       .notifyAdmin({ type: 'owner_finance', title: 'Platform money', body: message, link: '/admin-dashboard/platform' })
       .catch(() => null);
-    if (admin?.phone) sendSms(admin.phone, `FoodKitchen: ${message}`).catch(() => null);
+    if (admin?.phone) sendSms(admin.phone, `KitchenLink: ${message}`).catch(() => null);
   }
 
   /* ---------------------------- withdrawals ---------------------------- */

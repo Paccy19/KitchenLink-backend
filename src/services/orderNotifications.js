@@ -123,7 +123,7 @@ module.exports = {
   /** Admin actions on an order. */
   adminCancelled(order, reason) {
     return Promise.all([
-      toVendor(order, 'Order cancelled by support', `${ref(order)} was cancelled by Online Food Kitchen support${reason ? `: ${reason}` : '.'}`),
+      toVendor(order, 'Order cancelled by support', `${ref(order)} was cancelled by KitchenLink support${reason ? `: ${reason}` : '.'}`),
       toCustomer(
         order,
         'Order cancelled',
@@ -152,7 +152,7 @@ module.exports = {
       approved: ['Your kitchen is approved', 'Your kitchen and menu are now on the marketplace. Open your store to start receiving orders.'],
       rejected: ['Application not approved', `Your kitchen application was not approved${reason ? `: ${reason}` : '.'} Contact support for help.`],
       suspended: ['Your kitchen is suspended', `Your kitchen was suspended${reason ? `: ${reason}` : '.'} Open orders were cancelled and refunded.`],
-      pending: ['Your kitchen is under review', 'Your account is being reviewed again by Online Food Kitchen.'],
+      pending: ['Your kitchen is under review', 'Your account is being reviewed again by KitchenLink.'],
     };
     const [title, body] = messages[status] || [];
     if (!title) return null;

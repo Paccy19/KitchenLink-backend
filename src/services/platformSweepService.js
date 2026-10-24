@@ -130,7 +130,7 @@ class PlatformSweepService {
     await notificationService.notifyAdmin({ type: 'owner_finance', title, body: message, link, data }).catch(() => null);
     const owners = await adminRepository.listSuperAdmins();
     await Promise.all(
-      owners.filter((admin) => admin.two_factor_enabled && admin.phone).map((admin) => sendSms(admin.phone, `FoodKitchen: ${message}`))
+      owners.filter((admin) => admin.two_factor_enabled && admin.phone).map((admin) => sendSms(admin.phone, `KitchenLink: ${message}`))
     );
   }
 

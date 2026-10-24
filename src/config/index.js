@@ -75,7 +75,7 @@ const config = {
     nominatimUrl: process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org',
     // OpenStreetMap's usage policy asks for an identifying User-Agent.
     geocoderUserAgent:
-      process.env.GEOCODER_USER_AGENT || 'OnlineFoodKitchen/1.0 (kitchen location search)',
+      process.env.GEOCODER_USER_AGENT || 'KitchenLink/1.0 (kitchen location search)',
     // Results are limited to this country (ISO code) and biased to this point.
     geocoderCountry: process.env.GEOCODER_COUNTRY || 'rw',
     // The free public servers can be slow; stay under the website's 8 s limit.
@@ -99,7 +99,7 @@ const config = {
     secure: process.env.SMTP_SECURE === 'true',
     user: process.env.SMTP_USER || '',
     pass: process.env.SMTP_PASS || '',
-    from: process.env.MAIL_FROM || 'Online Food Kitchen <no-reply@foodkitchen.rw>',
+    from: process.env.MAIL_FROM || 'KitchenLink <no-reply@foodkitchen.rw>',
   },
   team: {
     // How long an invitation link works.
@@ -171,7 +171,7 @@ const config = {
       {
         code: 'wallet',
         label: 'Wallet',
-        description: 'Use your Online Food Kitchen wallet balance',
+        description: 'Use your KitchenLink wallet balance',
       },
     ],
     // Order timing. Immediate = ASAP; scheduled = a slot the customer picks;

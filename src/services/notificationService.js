@@ -16,7 +16,7 @@ const buildDeliveryCodeBody = (orderNumber, code, reminder) => {
 
 const buildDeliveryCodeSms = (orderNumber, code) => {
   const orderRef = orderNumber ? ` for order ${orderNumber}` : '';
-  return `FoodKitchen delivery confirmation code${orderRef}: ${code}. Share it with the delivery worker at handover, only once your food arrives.`;
+  return `KitchenLink delivery confirmation code${orderRef}: ${code}. Share it with the delivery worker at handover, only once your food arrives.`;
 };
 
 class NotificationService {
@@ -54,7 +54,7 @@ class NotificationService {
     let smsResult = { status: 'skipped' };
     try {
       const customer = await customerRepository.findById(customerId);
-      if (customer?.phone_number) smsResult = await sendSms(customer.phone_number, `FoodKitchen: ${body}`);
+      if (customer?.phone_number) smsResult = await sendSms(customer.phone_number, `KitchenLink: ${body}`);
       await notificationRepository.setSmsStatus(notification._id, {
         status: smsResult.status,
         error: smsResult.error,
@@ -263,7 +263,7 @@ class NotificationService {
       if (driver?.phone) {
         smsResult = await sendSms(
           driver.phone,
-          `FoodKitchen: ${body} Open the delivery worker app to accept.`
+          `KitchenLink: ${body} Open the delivery worker app to accept.`
         );
       }
       await notificationRepository.setSmsStatus(notification._id, {
@@ -296,7 +296,7 @@ class NotificationService {
     let smsResult = { status: 'skipped' };
     try {
       const driver = await driverRepository.findById(driverId);
-      if (driver?.phone) smsResult = await sendSms(driver.phone, `FoodKitchen: ${body}`);
+      if (driver?.phone) smsResult = await sendSms(driver.phone, `KitchenLink: ${body}`);
       await notificationRepository.setSmsStatus(notification._id, {
         status: smsResult.status,
         error: smsResult.error,
@@ -328,7 +328,7 @@ class NotificationService {
     let smsResult = { status: 'skipped' };
     try {
       const driver = await driverRepository.findById(driverId);
-      if (driver?.phone) smsResult = await sendSms(driver.phone, `FoodKitchen: ${body}`);
+      if (driver?.phone) smsResult = await sendSms(driver.phone, `KitchenLink: ${body}`);
       await notificationRepository.setSmsStatus(notification._id, {
         status: smsResult.status,
         error: smsResult.error,

@@ -61,7 +61,7 @@ class AdminOtpService {
       code,
       expiresAt: new Date(now + config.admin.otpTtlMinutes * 60 * 1000),
     });
-    await sendSms(phone, `FoodKitchen admin: your code to ${CONTEXT_LABELS[context]} is ${code}. Never share it.`);
+    await sendSms(phone, `KitchenLink admin: your code to ${CONTEXT_LABELS[context]} is ${code}. Never share it.`);
 
     const isDev = config.env !== 'production';
     if (isDev) console.log(`[admin otp] ${context} ${phone} -> ${code}`);
