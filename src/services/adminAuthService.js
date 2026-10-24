@@ -109,6 +109,8 @@ class AdminAuthService {
       admin: serializeAdmin(admin, { usesDefaultPassword: await this.usesDefaultPassword(admin) }),
       // Refunds/payouts of this amount or more ask for an SMS code.
       limits: { large_money_action_rwf: config.team.largeMoneyActionRwf },
+      // The admin panel signs itself out after this long without activity.
+      idle_timeout_minutes: config.admin.idleTimeoutMinutes,
     };
   }
 

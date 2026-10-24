@@ -1,7 +1,7 @@
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { verifyToken } = require('../utils/jwt');
-const { assertSessionActive } = require('../utils/sessions');
+const { assertSessionActive, assertNotIdle } = require('../utils/sessions');
 const adminRepository = require('../repositories/adminRepository');
 
 const requireAdminAuth = async (req, res, next) => {
@@ -43,6 +43,8 @@ const requireAdminAuth = async (req, res, next) => {
 
     // Signed out (this device, or everywhere) or password changed since.
     await assertSessionActive(payload, admin);
+    // Unused for too long (e.g. left open on a shared computer): signed out.
+    await assertNotIdle(payload, config.admin.idleTimeoutMinutes);
     req.tokenPayload = payload;
     req.admin = admin;
     next();

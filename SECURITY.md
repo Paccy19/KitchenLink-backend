@@ -50,6 +50,7 @@ Money, a gateway) is integrated in `orderService`.
 - Delivery confirmation codes: 5 wrong codes lock that delivery; support completes it from the admin panel.
 - Every public sign-in endpoint: 20 requests a minute per IP.
 - Sessions are revocable: sign-out ends that token on the server; "sign out everywhere" (`POST …/logout-all`) and password changes end all others. Admin sessions last 12 h (`ADMIN_JWT_EXPIRES_IN`), others 30 days.
+- Admin idle timeout: 30 minutes without use signs an admin session out (`ADMIN_IDLE_TIMEOUT_MINUTES`, 0 = off). The server enforces it (also for closed tabs and copied tokens), and the panel signs itself out and clears the screen after 30 minutes without mouse, keyboard or touch activity.
 - An admin still on the seeded password can do nothing but change it.
 - Suspended or rejected kitchens and drivers, and deactivated customers and admins, lose access on their next request.
 

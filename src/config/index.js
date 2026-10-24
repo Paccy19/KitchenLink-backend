@@ -497,6 +497,8 @@ const config = {
     jwtRole: 'admin',
     // Admin sessions are short: the most powerful accounts sign in again daily.
     jwtExpiresIn: process.env.ADMIN_JWT_EXPIRES_IN || '12h',
+    // Admin sessions unused this long are signed out (0 = off).
+    idleTimeoutMinutes: numberFromEnvOrZero(process.env.ADMIN_IDLE_TIMEOUT_MINUTES, 30),
     // Seeded super-admin credentials (override in production via env).
     seedName: process.env.ADMIN_SEED_NAME || 'Platform Admin',
     seedEmail: process.env.ADMIN_SEED_EMAIL || 'admin@foodkitchen.rw',

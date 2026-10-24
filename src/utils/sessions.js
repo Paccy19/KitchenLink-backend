@@ -1,5 +1,8 @@
 const ApiError = require('./ApiError');
-const { RevokedToken } = require('../models');
+const { RevokedToken, SessionActivity } = require('../models');
+
+// Activity is written at most this often per session (not on every request).
+const ACTIVITY_WRITE_EVERY_MS = 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -69,4 +72,29 @@ const sessionHandlers = (Model, reqKey) => ({
   },
 });
 
-module.exports = { assertSessionActive, revokeToken, revokeAllSessions, sessionHandlers };
+/**
+ * Idle timeout (admin sessions): a session unused for `idleMinutes` is
+ * signed out, even though its token hasn't expired: e.g. an admin who walked
+ * away from a shared computer, or a tab closed and reopened later.
+ */
+async function assertNotIdle(payload, idleMinutes) {
+  if (!payload?.jti || !idleMinutes) return;
+  const now = Date.now();
+  const activity = await SessionActivity.findOne({ jti: payload.jti }).lean();
+  if (activity && now - new Date(activity.last_seen_at).getTime() > idleMinutes * 60 * 1000) {
+    await revokeToken(payload);
+    throw ApiError.unauthorized(
+      `You were signed out after ${idleMinutes} minutes without activity. Please log in again.`,
+      'SESSION_IDLE'
+    );
+  }
+  if (!activity || now - new Date(activity.last_seen_at).getTime() > ACTIVITY_WRITE_EVERY_MS) {
+    await SessionActivity.updateOne(
+      { jti: payload.jti },
+      { $set: { last_seen_at: new Date(now), expires_at: new Date(payload.exp ? payload.exp * 1000 : now + 86400000) } },
+      { upsert: true }
+    );
+  }
+}
+
+module.exports = { assertSessionActive, assertNotIdle, revokeToken, revokeAllSessions, sessionHandlers };

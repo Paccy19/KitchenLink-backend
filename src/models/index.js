@@ -32,6 +32,7 @@ const DeliveryFeeSettings = require('./DeliveryFeeSettings');
 const DispatchSettings = require('./DispatchSettings');
 const OtpGuard = require('./OtpGuard');
 const RevokedToken = require('./RevokedToken');
+const SessionActivity = require('./SessionActivity');
 
 module.exports = {
   VendorOffer,
@@ -42,6 +43,7 @@ module.exports = {
   DispatchSettings,
   OtpGuard,
   RevokedToken,
+  SessionActivity,
   Vendor,
   Category,
   MenuItem,
