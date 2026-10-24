@@ -177,9 +177,15 @@ const config = {
     // Order timing. Immediate = ASAP; scheduled = a slot the customer picks;
     // preorder = ordered against a vendor's announced "Tomorrow's Special".
     // How the customer gets the food: brought by a delivery worker, or
-    // collected at the kitchen (no delivery fee).
-    fulfillmentModes: ['delivery', 'pickup'],
-    fulfillmentLabels: { delivery: 'Delivery', pickup: 'Pickup at the kitchen' },
+    // collected at the kitchen (no delivery fee). 'vendor_delivery' is never
+    // chosen by the customer: a nationwide kitchen's order beyond the platform
+    // delivery range becomes one, and the kitchen brings the food itself.
+    fulfillmentModes: ['delivery', 'pickup', 'vendor_delivery'],
+    customerFulfillmentModes: ['delivery', 'pickup'],
+    fulfillmentLabels: { delivery: 'Delivery', pickup: 'Pickup at the kitchen', vendor_delivery: 'Delivered by the kitchen' },
+    // Customer tracking for orders the kitchen brings itself.
+    vendorDeliveryTimeline: ['placed', 'confirmed', 'preparing', 'ready', 'delivered'],
+    vendorDeliveryStatusLabels: { ready: 'On the way from the kitchen', delivered: 'Delivered by the kitchen' },
     // Customer tracking for pickup orders ('delivered' = collected).
     pickupTimeline: ['placed', 'confirmed', 'preparing', 'ready', 'delivered'],
     pickupStatusLabels: { ready: 'Ready for you to collect', delivered: 'Collected' },
@@ -329,6 +335,10 @@ const config = {
     pickupReassignMinutes: numberFromEnvOrZero(process.env.DELIVERY_PICKUP_REASSIGN_MINUTES, 30),
     // How often open offers are re-broadcast and pickups checked for lateness.
     dispatchTickSeconds: numberFromEnv(process.env.DELIVERY_DISPATCH_TICK_SECONDS, 60),
+    // Farthest drop-off (road km from the kitchen) platform delivery workers
+    // take. Beyond it only nationwide kitchens deliver, bringing the food
+    // themselves. Admins change it in Settings → Delivery & pickup rules.
+    platformMaxKm: numberFromEnv(process.env.DELIVERY_PLATFORM_MAX_KM, 30),
     // Max concurrent deliveries a driver can hold.
     maxActiveDeliveries: numberFromEnv(process.env.DELIVERY_MAX_ACTIVE, 3),
     // Multiplier applied to straight-line distance to approximate road km.

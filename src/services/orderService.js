@@ -29,6 +29,7 @@ const refundService = require('./refundService');
 const { serializeRefund } = refundService;
 const refundRepository = require('../repositories/refundRepository');
 const { isVendorLive } = require('../utils/vendorPresence');
+const { usesHandoverCode, isKitchenDelivered } = require('../utils/fulfillment');
 
 const { orders } = config;
 
@@ -122,7 +123,7 @@ const PICKUP_CODE_HIDDEN = ['delivered', 'completed', 'cancelled'];
  * customer (it is never selected by default).
  */
 const serializePickup = (order, vendor) => {
-  if (order.fulfillment !== 'pickup') return null;
+  if (!usesHandoverCode(order)) return null;
   const [lng, lat] = vendor?.location?.coordinates ?? [null, null];
   const awaiting = order.status === 'ready';
   return {
@@ -134,6 +135,9 @@ const serializePickup = (order, vendor) => {
     code: PICKUP_CODE_HIDDEN.includes(order.status) ? null : order.pickup_code || null,
     ready_for_collection: awaiting,
     collected_at: order.collected_at ?? null,
+    // The kitchen brings it (nationwide kitchen, far away): the customer gives
+    // this code to the kitchen at handover instead of collecting.
+    kitchen_delivers: isKitchenDelivered(order),
   };
 };
 
@@ -143,9 +147,11 @@ const fulfillmentFields = (order, vendor) => ({
   pickup: serializePickup(order, vendor),
 });
 
-/** Pickup orders are "collected", not "delivered", and are never assigned a rider. */
+/** Pickup orders are "collected", not "delivered"; neither they nor kitchen-delivered orders get a rider. */
 const customerStatusLabel = (order, status = order.status) =>
-  (order.fulfillment === 'pickup' && orders.pickupStatusLabels[status]) || orders.statusLabels[status];
+  (order.fulfillment === 'pickup' && orders.pickupStatusLabels[status]) ||
+  (isKitchenDelivered(order) && orders.vendorDeliveryStatusLabels[status]) ||
+  orders.statusLabels[status];
 
 const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
   id: String(order._id),
@@ -208,7 +214,12 @@ const serializeTracking = (order, vendor, payment, delivery) => {
     (order.status_history || []).map((entry) => [entry.status, entry.at])
   );
 
-  const steps = order.fulfillment === 'pickup' ? orders.pickupTimeline : orders.timeline;
+  const steps =
+    order.fulfillment === 'pickup'
+      ? orders.pickupTimeline
+      : isKitchenDelivered(order)
+        ? orders.vendorDeliveryTimeline
+        : orders.timeline;
   const timeline = steps.map((status) => ({
     status,
     label: customerStatusLabel(order, status),
@@ -446,9 +457,31 @@ class OrderService {
     });
     // Delivery is priced by road distance from the kitchen to the drop-off and
     // charged on top of the food; the rider receives it in full. Pickup is free.
+    // Beyond the platform delivery range a nationwide kitchen brings the food
+    // itself for its own travel fee ('vendor_delivery'); other kitchens can't.
     const quote = isPickup
-      ? { delivery_fee_rwf: 0, distance_km: null, distance_source: null, duration_minutes: 0 }
-      : await deliveryPricingService.quote(vendor, deliveryLocation);
+      ? { fulfillment: 'pickup', delivery_fee_rwf: 0, distance_km: null, distance_source: null, duration_minutes: 0 }
+      : deliveryPricingService.assertDeliverable(await deliveryPricingService.quote(vendor, deliveryLocation));
+    const kitchenBrings = quote.fulfillment === 'vendor_delivery';
+    if (kitchenBrings && orderType === 'immediate') {
+      throw ApiError.conflict(
+        `This address is ${Math.round(quote.distance_km)} km from ${vendor.name || 'the kitchen'}, so the kitchen brings the food itself. Schedule the order so they have time to travel.`,
+        'SCHEDULE_FAR_ORDER'
+      );
+    }
+    // The kitchen needs time to cook and then travel there.
+    if (kitchenBrings && scheduledFor) {
+      const needMinutes = (vendor.estimated_prep_time ?? 30) + Math.ceil(quote.duration_minutes ?? quote.distance_km * 2);
+      if (scheduledFor.getTime() < Date.now() + needMinutes * 60 * 1000) {
+        const hours = Math.ceil(needMinutes / 60);
+        throw ApiError.conflict(
+          `${vendor.name || 'The kitchen'} needs about ${hours} hour${hours === 1 ? '' : 's'} to prepare and travel ${Math.round(quote.distance_km)} km. Pick a later time.`,
+          'FAR_ORDER_TOO_SOON'
+        );
+      }
+    }
+    // Pickup and kitchen-delivered orders are completed with the customer's code.
+    const usesCode = isPickup || kitchenBrings;
     const fee = quote.delivery_fee_rwf;
     const total = subtotal + fee;
     const etaMinutes = (vendor.estimated_prep_time ?? 30) + (isPickup ? 0 : quote.duration_minutes ?? 15);
@@ -464,10 +497,10 @@ class OrderService {
       delivery_distance_km: quote.distance_km,
       delivery_distance_source: quote.distance_source,
       total_rwf: total,
-      fulfillment,
+      fulfillment: quote.fulfillment,
       // Pickup orders get their code at once (like a delivery code), so the
       // customer can see it from the start; the kitchen accepts it once ready.
-      ...(isPickup
+      ...(usesCode
         ? { pickup_code: String(crypto.randomInt(100000, 1000000)), pickup_code_sent_at: now, pickup_code_attempts: 0 }
         : {}),
       delivery_location: deliveryLocation,
@@ -482,7 +515,7 @@ class OrderService {
         {
           status: 'placed',
           at: now,
-          note: `Order placed (${orders.orderTypeLabels[orderType] || 'Immediate Order'}${isPickup ? ', customer pickup' : ''})`,
+          note: `Order placed (${orders.orderTypeLabels[orderType] || 'Immediate Order'}${isPickup ? ', customer pickup' : kitchenBrings ? ', delivered by the kitchen' : ''})`,
         },
       ],
       eta_minutes: orderType === 'immediate' ? etaMinutes : null,
@@ -506,7 +539,7 @@ class OrderService {
     if (paymentStatus === 'paid') {
       orderNotifications.newOrder({ ...order, ...updatedOrder });
       this.#offerToDrivers({ ...order, ...updatedOrder });
-      if (isPickup && order.pickup_code) {
+      if (usesCode && order.pickup_code) {
         notificationService
           .notifyPickupCode(customerId, {
             orderNumber: order.order_number,
@@ -515,6 +548,7 @@ class OrderService {
             vendorName: vendor.name,
             address: [vendor.address, vendor.neighborhood].filter(Boolean).join(', '),
             ready: false,
+            kitchenBrings,
           })
           .catch((error) => console.error('[pickup] could not send pickup code:', error.message));
       }
@@ -640,7 +674,7 @@ class OrderService {
 
   /** The customer's own pickup code, shown from placement until the food is collected. */
   async #withPickupCode(order) {
-    if (order.fulfillment !== 'pickup' || PICKUP_CODE_HIDDEN.includes(order.status)) return order;
+    if (!usesHandoverCode(order) || PICKUP_CODE_HIDDEN.includes(order.status)) return order;
     return { ...order, pickup_code: await orderRepository.findPickupCode(order._id) };
   }
 
@@ -683,6 +717,17 @@ class OrderService {
     return { order, vendor };
   }
 
+  /** Switching to delivery uses platform delivery workers, so the address must be within their range. */
+  #platformQuote(quote) {
+    if (quote.fulfillment !== 'delivery') {
+      throw ApiError.conflict(
+        `This address is about ${Math.round(quote.distance_km)} km from the kitchen, beyond the ${quote.platform_max_km} km delivery workers cover. Collect the order, or contact the kitchen.`,
+        'OUT_OF_DELIVERY_RANGE'
+      );
+    }
+    return quote;
+  }
+
   /**
    * The delivery fee for switching a pickup order to delivery to this
    * address (shown before the customer pays). Body: { delivery_location }.
@@ -690,7 +735,7 @@ class OrderService {
   async quoteSwitchToDelivery(customerId, orderId, body = {}) {
     const { order, vendor } = await this.#switchable(customerId, orderId);
     const deliveryLocation = parseDeliveryLocation(body.delivery_location);
-    const quote = await deliveryPricingService.quote(vendor, deliveryLocation);
+    const quote = this.#platformQuote(await deliveryPricingService.quote(vendor, deliveryLocation));
     return {
       order_id: String(order._id),
       delivery_fee_rwf: quote.delivery_fee_rwf,
@@ -712,7 +757,7 @@ class OrderService {
   async switchToDelivery(customerId, orderId, body = {}) {
     const { order, vendor } = await this.#switchable(customerId, orderId);
     const deliveryLocation = parseDeliveryLocation(body.delivery_location);
-    const quote = await deliveryPricingService.quote(vendor, deliveryLocation);
+    const quote = this.#platformQuote(await deliveryPricingService.quote(vendor, deliveryLocation));
     const fee = quote.delivery_fee_rwf;
     const now = new Date();
     const alreadyPaid = order.payment_status === 'paid';

@@ -16,6 +16,7 @@ const settlementService = require('./settlementService');
 const orderNotifications = require('./orderNotifications');
 const notificationService = require('./notificationService');
 const dispatchSettingsService = require('./dispatchSettingsService');
+const { usesHandoverCode, isKitchenDelivered } = require('../utils/fulfillment');
 
 const { vendor: vendorConfig } = config;
 
@@ -112,8 +113,10 @@ class VendorOrderService {
 
     // Scheduled/pre-order orders may only be marked ready close to the
     // scheduled slot so drivers are never dispatched far ahead of delivery.
+    // (Orders the kitchen delivers itself have no drivers, and it may need to
+    // set off hours early, so they skip this.)
     const isFutureScheduled =
-      order.order_type !== 'immediate' && order.order_type && order.scheduled_for;
+      order.order_type !== 'immediate' && order.order_type && order.scheduled_for && !isKitchenDelivered(order);
     if (nextStatus === 'ready' && isFutureScheduled) {
       const readyEarliest = new Date(
         new Date(order.scheduled_for).getTime() -
@@ -139,8 +142,9 @@ class VendorOrderService {
       update.cancelled_at = now;
       update.cancel_reason = note;
     }
-    // Pickup orders: the customer gets a code to show the kitchen.
-    const isPickup = order.fulfillment === 'pickup';
+    // Pickup and kitchen-delivered orders: the customer has a code to give the kitchen.
+    const isPickup = usesHandoverCode(order);
+    const kitchenBrings = isKitchenDelivered(order);
     if (nextStatus === 'ready' && isPickup) {
       // The code was given at placement; older orders without one get it now.
       const existing = await orderRepository.findPickupCode(order._id);
@@ -174,6 +178,7 @@ class VendorOrderService {
           orderId: order._id,
           vendorName: vendor.name,
           address: [vendor.address, vendor.neighborhood].filter(Boolean).join(', '),
+          kitchenBrings,
         })
         .catch((error) => console.error('[pickup] could not send pickup code:', error.message));
     } else if (nextStatus === 'ready') {
@@ -189,9 +194,10 @@ class VendorOrderService {
   }
 
   /**
-   * Pickup orders only: the customer collected the food. The vendor enters
-   * the customer's pickup code, which completes the order and credits the
-   * vendor. Delivery orders are only ever completed by the delivery worker.
+   * Pickup orders (the customer collected the food) and orders the kitchen
+   * delivered itself (nationwide kitchens, far away): the vendor enters the
+   * customer's code, which completes the order and credits the vendor.
+   * Delivery orders are only ever completed by the delivery worker.
    */
   async confirmPickup(vendor, orderId, body = {}) {
     const id = parseObjectId(orderId, 'order_id');
@@ -199,17 +205,21 @@ class VendorOrderService {
     if (!order) {
       throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
     }
-    if (order.fulfillment !== 'pickup') {
+    const kitchenBrings = isKitchenDelivered(order);
+    if (!usesHandoverCode(order)) {
       throw ApiError.forbidden(
-        'Only orders the customer collects themselves can be completed by the kitchen. A delivery worker completes delivery orders.',
+        'Only orders the customer collects, or that you deliver yourself, can be completed by the kitchen. A delivery worker completes delivery orders.',
         'NOT_A_PICKUP_ORDER'
       );
     }
     if (order.status === 'delivered') {
-      throw ApiError.conflict('This order was already collected.', 'ALREADY_COLLECTED');
+      throw ApiError.conflict(`This order was already ${kitchenBrings ? 'delivered' : 'collected'}.`, 'ALREADY_COLLECTED');
     }
     if (order.status !== 'ready') {
-      throw ApiError.conflict('Mark the order ready before the customer collects it.', 'ORDER_NOT_READY');
+      throw ApiError.conflict(
+        kitchenBrings ? 'Mark the order ready (on the way) before you hand it over.' : 'Mark the order ready before the customer collects it.',
+        'ORDER_NOT_READY'
+      );
     }
     const maxAttempts = dispatchSettingsService.current().pickup_code_max_attempts;
     if ((order.pickup_code_attempts || 0) >= maxAttempts) {
@@ -226,7 +236,10 @@ class VendorOrderService {
     }
 
     const now = new Date();
-    const collected = await orderRepository.collectPickup(order._id, code, { at: now });
+    const collected = await orderRepository.collectPickup(order._id, code, {
+      at: now,
+      ...(kitchenBrings ? { note: 'Delivered by the kitchen (customer code confirmed)' } : {}),
+    });
     if (!collected) {
       const after = await orderRepository.recordPickupAttempt(order._id);
       const left = Math.max(0, maxAttempts - (after?.pickup_code_attempts || 0));

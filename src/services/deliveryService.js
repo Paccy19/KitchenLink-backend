@@ -25,6 +25,7 @@ const deliveryPricingService = require('./deliveryPricingService');
 const orderNotifications = require('./orderNotifications');
 const deliverySettingsService = require('./deliverySettingsService');
 const dispatchSettingsService = require('./dispatchSettingsService');
+const { usesHandoverCode } = require('../utils/fulfillment');
 
 // Admin-set dispatch rules in force right now (Settings → Delivery & pickup rules).
 const dispatchRules = () => dispatchSettingsService.current();
@@ -188,7 +189,7 @@ class DeliveryService {
    * ready instead, since they may be due hours or days later.
    */
   async handleOrderPlaced(order) {
-    if (!order || order.fulfillment === 'pickup') return null; // the customer collects it
+    if (!order || usesHandoverCode(order)) return null; // collected, or the kitchen brings it
     if (order.order_type && order.order_type !== 'immediate') return null;
     const delivery = await this.ensureDeliveryForOrder(order, { ready: false });
     return this.dispatch({ deliveryId: delivery._id });
@@ -196,8 +197,8 @@ class DeliveryService {
 
   /** Called by the vendor order flow when an order becomes "ready". */
   async handleOrderReady(order) {
-    // Pickup orders never get a delivery worker.
-    if (order.fulfillment === 'pickup') return { delivery: null, notified: [] };
+    // Pickup and kitchen-delivered orders never get a delivery worker.
+    if (usesHandoverCode(order)) return { delivery: null, notified: [] };
     const existing = await deliveryRepository.findByOrderId(order._id);
     if (!existing) {
       const delivery = await this.ensureDeliveryForOrder(order, { ready: true });

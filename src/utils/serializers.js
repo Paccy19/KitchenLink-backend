@@ -4,7 +4,8 @@ const { isKitchenReady } = require('./deliveryReady');
 const deliverySettings = require('../services/deliverySettingsService');
 const dispatchSettingsService = require('../services/dispatchSettingsService');
 const access = require('../config/adminAccess');
-const { vendorTypeLabel, orderingRulesFor } = require('../config/vendorTypes');
+const { vendorTypeLabel, orderingRulesFor, nationwideFor } = require('../config/vendorTypes');
+const { usesHandoverCode, isKitchenDelivered } = require('./fulfillment');
 
 const round1 = (value) =>
   typeof value === 'number' ? Math.round(value * 10) / 10 : null;
@@ -39,6 +40,8 @@ function serializeVendorCard(vendor, { distanceKm } = {}) {
     vendor_type_label: vendorTypeLabel(vendor.vendor_type),
     // Caterers, chefs and meal-prep kitchens take advance orders only.
     advance_only: !orderingRulesFor(vendor).order_now,
+    // Takes orders anywhere in Rwanda (events), bringing far orders itself.
+    nationwide: nationwideFor(vendor).enabled,
     rating: vendor.rating,
     estimated_prep_time: vendor.estimated_prep_time,
     distance_km: typeof distanceKm === 'number' ? round1(distanceKm) : null,
@@ -163,6 +166,7 @@ function serializeVendorAccount(vendor) {
     vendor_type_label: vendorTypeLabel(vendor.vendor_type),
     vendor_type_request: serializeVendorTypeRequest(vendor),
     ordering: orderingRulesFor(vendor),
+    nationwide: nationwideFor(vendor),
     owner_name: vendor.owner_name || null,
     description: vendor.description || '',
     email: vendor.email || null,
@@ -255,7 +259,8 @@ const vendorStatusLabel = (status) =>
 function serializeVendorOrder(order, { customer } = {}) {
   const status = toVendorStatus(order.status);
 
-  const isPickup = order.fulfillment === 'pickup';
+  // Pickup orders, and orders the kitchen delivers itself, end with the customer's code.
+  const isPickup = usesHandoverCode(order);
   const pickupAttemptsLeft = Math.max(
     0,
     dispatchSettingsService.current().pickup_code_max_attempts - (order.pickup_code_attempts || 0)
@@ -269,8 +274,10 @@ function serializeVendorOrder(order, { customer } = {}) {
     allowed_next_statuses: config.vendor.orderTransitions[status] || [],
     fulfillment: order.fulfillment || 'delivery',
     fulfillment_label: config.orders.fulfillmentLabels[order.fulfillment || 'delivery'],
-    // Only for orders the customer collects: the vendor completes them with
-    // the customer's pickup code.
+    // Too far for platform workers: the kitchen brings it and keeps the travel fee.
+    kitchen_delivers: isKitchenDelivered(order),
+    // Only for orders the customer collects (or the kitchen brings): the
+    // vendor completes them with the customer's code.
     can_confirm_pickup: isPickup && order.status === 'ready' && pickupAttemptsLeft > 0,
     pickup_attempts_left: isPickup ? pickupAttemptsLeft : null,
     collected_at: order.collected_at ?? null,
@@ -625,6 +632,7 @@ function serializeAdminVendor(vendor) {
     vendor_type_label: vendorTypeLabel(vendor.vendor_type),
     vendor_type_request: serializeVendorTypeRequest(vendor),
     ordering: orderingRulesFor(vendor),
+    nationwide: nationwideFor(vendor),
     phone: vendor.phone || null,
     email: vendor.email || null,
     neighborhood: vendor.neighborhood || null,
@@ -726,13 +734,14 @@ function serializeAdminOrder(order) {
     status: order.status,
     status_label:
       (order.fulfillment === 'pickup' && config.orders.pickupStatusLabels[order.status]) ||
+      (isKitchenDelivered(order) && config.orders.vendorDeliveryStatusLabels[order.status]) ||
       config.orders.statusLabels[order.status] ||
       order.status,
     fulfillment: order.fulfillment || 'delivery',
     fulfillment_label: config.orders.fulfillmentLabels[order.fulfillment || 'delivery'],
-    // Pickup orders: where the collection stands (the code itself is never sent).
+    // Pickup and kitchen-delivered orders: where the handover stands (the code itself is never sent).
     pickup:
-      order.fulfillment === 'pickup'
+      usesHandoverCode(order)
         ? {
             code_sent_at: order.pickup_code_sent_at ?? null,
             wrong_attempts: order.pickup_code_attempts || 0,

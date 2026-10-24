@@ -13,7 +13,8 @@ const { resolveImageUrl } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
 const notificationService = require('./notificationService');
 const vendorOrderingService = require('./vendorOrderingService');
-const { parseVendorType, vendorTypeLabel } = require('../config/vendorTypes');
+const { parseVendorType, vendorTypeLabel, nationwideFor, TRAVEL_FEE_RANGES } = require('../config/vendorTypes');
+const dispatchSettingsService = require('./dispatchSettingsService');
 
 class VendorProfileService {
   async update(vendor, body = {}, files = {}) {
@@ -120,6 +121,47 @@ class VendorProfileService {
     const settings = vendorOrderingService.parseSettings(vendor, body);
     const updated = await vendorRepository.update(vendor._id, { ordering_settings: settings });
     return { ordering: await vendorOrderingService.summary(updated) };
+  }
+
+  /**
+   * Nationwide events: whether the kitchen takes orders anywhere in Rwanda
+   * (Caterers by type, others when an admin switches it on), the platform
+   * delivery range beyond which it brings orders itself, and its travel fee.
+   */
+  getNationwide(vendor) {
+    return {
+      nationwide: {
+        ...nationwideFor(vendor),
+        platform_delivery_max_km: dispatchSettingsService.current().platform_delivery_max_km,
+        ranges: TRAVEL_FEE_RANGES,
+      },
+    };
+  }
+
+  /** The kitchen sets its travel fee for orders it brings itself (null = default). */
+  async updateNationwide(vendor, body = {}) {
+    const parse = (raw, field, [min, max]) => {
+      if (raw === null || raw === '') return null;
+      const value = Number(raw);
+      if (!Number.isInteger(value) || value < min || value > max) {
+        throw ApiError.badRequest(`${field} must be a whole number of RWF between ${min} and ${max}.`, {
+          [field]: `expected ${min}–${max}`,
+        });
+      }
+      return value;
+    };
+    const update = {};
+    if (body.travel_base_fee_rwf !== undefined) {
+      update['nationwide.travel_base_fee_rwf'] = parse(body.travel_base_fee_rwf, 'travel_base_fee_rwf', TRAVEL_FEE_RANGES.base_fee_rwf);
+    }
+    if (body.travel_per_km_rwf !== undefined) {
+      update['nationwide.travel_per_km_rwf'] = parse(body.travel_per_km_rwf, 'travel_per_km_rwf', TRAVEL_FEE_RANGES.per_km_rwf);
+    }
+    if (Object.keys(update).length === 0) {
+      throw ApiError.badRequest('Nothing to update.', { body: 'expected travel_base_fee_rwf and/or travel_per_km_rwf' });
+    }
+    const updated = await vendorRepository.update(vendor._id, update);
+    return this.getNationwide(updated);
   }
 
   /**

@@ -10,6 +10,7 @@ const LIMITS = {
   rebroadcast_every_seconds: [15, 3600, false],
   max_active_deliveries: [1, 20, false],
   pickup_code_max_attempts: [1, 20, false],
+  platform_delivery_max_km: [1, 500, true],
 };
 const FIELDS = Object.keys(LIMITS);
 
@@ -20,6 +21,7 @@ const defaults = () => ({
   rebroadcast_every_seconds: config.delivery.dispatchTickSeconds,
   max_active_deliveries: config.delivery.maxActiveDeliveries,
   pickup_code_max_attempts: config.orders.pickupCodeMaxAttempts,
+  platform_delivery_max_km: config.delivery.platformMaxKm,
   updated_at: null,
   updated_by: null,
 });

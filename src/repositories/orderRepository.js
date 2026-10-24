@@ -42,12 +42,13 @@ class OrderRepository {
    * Completes a pickup order when the code matches (atomically, so it can't
    * be collected twice). Returns null if the code was wrong or it's not ready.
    */
-  async collectPickup(orderId, code, { at }) {
+  async collectPickup(orderId, code, { at, note = 'Collected by the customer (pickup code confirmed)' }) {
     return Order.findOneAndUpdate(
-      { _id: orderId, fulfillment: 'pickup', status: 'ready', pickup_code: code },
+      // Pickup orders, and orders a nationwide kitchen delivered itself.
+      { _id: orderId, fulfillment: { $in: ['pickup', 'vendor_delivery'] }, status: 'ready', pickup_code: code },
       {
         $set: { status: 'delivered', delivered_at: at, completed_at: at, collected_at: at },
-        $push: { status_history: { status: 'delivered', at, note: 'Collected by the customer (pickup code confirmed)' } },
+        $push: { status_history: { status: 'delivered', at, note } },
       },
       { new: true }
     ).lean();

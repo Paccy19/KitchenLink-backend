@@ -3,6 +3,7 @@ const vendorRepository = require('../repositories/vendorRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
 const transactionRepository = require('../repositories/transactionRepository');
 const commissionService = require('./commissionService');
+const { isKitchenDelivered } = require('../utils/fulfillment');
 
 const roundRwf = (value) => Math.max(0, Math.round(Number(value) || 0));
 
@@ -20,6 +21,8 @@ const roundRwf = (value) => Math.max(0, Math.round(Number(value) || 0));
  *                        food late keeps a smaller share: the penalty comes
  *                        out of that order's fee and is the platform's
  *                        (`recordDriverPenalty`) — never the rider's wallet.
+ *     Orders a nationwide kitchen delivered itself have no rider: the
+ *     kitchen gets the whole travel fee with its food money in step 2.
  *  4. Withdrawal paid -> owed money actually leaves (adminPayoutService).
  *  Cancelled before completion -> the held amount is refunded (`refundOrder`).
  *
@@ -31,6 +34,8 @@ class SettlementService {
   async #computeSplit(order, percentOverride) {
     const subtotal = roundRwf(order.subtotal_rwf);
     const deliveryFee = roundRwf(order.delivery_fee_rwf);
+    // The kitchen delivered it itself: the travel fee is the kitchen's (no commission on it).
+    const kitchenTravelFee = isKitchenDelivered(order) ? deliveryFee : 0;
     // The order's stored percent is only a snapshot once settlement has begun;
     // before that it is the schema default (0) and must not be trusted.
     const snapshotPercent =
@@ -47,11 +52,11 @@ class SettlementService {
     const vendorPayout =
       order.vendor_payout_rwf != null && order.settlement_status !== 'unpaid'
         ? roundRwf(order.vendor_payout_rwf)
-        : subtotal - commissionRwf;
+        : subtotal - commissionRwf + kitchenTravelFee;
     const riderPayout =
       order.rider_payout_rwf != null && order.settlement_status !== 'unpaid'
         ? roundRwf(order.rider_payout_rwf)
-        : deliveryFee;
+        : deliveryFee - kitchenTravelFee;
 
     return {
       subtotal,
@@ -60,6 +65,7 @@ class SettlementService {
       commissionRwf,
       vendorPayout: Math.max(0, vendorPayout),
       riderPayout: Math.max(0, riderPayout),
+      kitchenTravelFee,
       total: roundRwf(order.total_rwf) || subtotal + deliveryFee,
     };
   }
@@ -152,10 +158,13 @@ class SettlementService {
       vendor_payout_rwf: split.vendorPayout,
       rider_payout_rwf: split.riderPayout,
       settled_at: order.settled_at || new Date(),
+      // No rider to pay: the travel fee leaves the held money with the food.
+      ...(split.kitchenTravelFee ? { rider_payout_settled_at: order.rider_payout_settled_at || new Date() } : {}),
     });
     if (!claimed) return orderRepository.findById(order._id);
 
-    // Vendor earns its food revenue (subtotal) and is owed it net of commission.
+    // Vendor earns its food revenue (subtotal) and is owed it net of commission
+    // (plus its travel fee when it delivered the order itself).
     await vendorRepository.incrementSales(order.vendor_id, {
       totalRwf: split.subtotal,
       balanceRwf: split.vendorPayout,
@@ -191,6 +200,7 @@ class SettlementService {
         subtotal_rwf: split.subtotal,
         commission_rwf: split.commissionRwf,
         commission_percent: split.percent,
+        ...(split.kitchenTravelFee ? { travel_fee_rwf: split.kitchenTravelFee } : {}),
       },
     });
 

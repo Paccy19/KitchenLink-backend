@@ -2,6 +2,8 @@ const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const routeDistanceService = require('./routeDistanceService');
 const deliveryFeeSettingsService = require('./deliveryFeeSettingsService');
+const dispatchSettingsService = require('./dispatchSettingsService');
+const { nationwideFor, travelFeeFor } = require('../config/vendorTypes');
 
 const { MIN_FEE_RWF } = deliveryFeeSettingsService;
 
@@ -17,6 +19,11 @@ const deliveryConfig = config.delivery;
  *
  * No fee is ever below 500 RWF. The fee is charged on top of the food subtotal
  * and paid to the rider in full; commission only comes from the food subtotal.
+ *
+ * Platform delivery workers only go up to the admin's platform delivery range.
+ * Beyond it a nationwide kitchen (e.g. a Caterer serving an event in another
+ * province) brings the food itself and charges its own travel fee, which it
+ * receives in full; other kitchens can't deliver that far (pickup only).
  */
 class DeliveryPricingService {
   feeForDistance(distanceKm) {
@@ -29,6 +36,12 @@ class DeliveryPricingService {
 
   driverEarnings(feeRwf) {
     return Math.round(feeRwf * (deliveryConfig.driverSharePercent / 100));
+  }
+
+  /** Throws when nobody can deliver this far (see `quote`). */
+  assertDeliverable(quote) {
+    if (!quote.fulfillment) throw ApiError.conflict(quote.unavailable_reason, 'OUT_OF_DELIVERY_RANGE');
+    return quote;
   }
 
   /**
@@ -49,9 +62,41 @@ class DeliveryPricingService {
       { latitude: lat, longitude: lng },
       { latitude: dropoff.latitude, longitude: dropoff.longitude }
     );
+    const maxKm = dispatchSettingsService.current().platform_delivery_max_km;
+    const measured = {
+      distance_km: route.distance_km,
+      duration_minutes: route.duration_minutes,
+      distance_source: route.source,
+      platform_max_km: maxKm,
+    };
+
+    if (route.distance_km > maxKm) {
+      const nationwide = nationwideFor(vendor);
+      if (nationwide.enabled) {
+        return {
+          ...measured,
+          fulfillment: 'vendor_delivery',
+          delivery_fee_rwf: travelFeeFor(vendor, route.distance_km),
+          pricing: {
+            mode: 'vendor_travel',
+            base_fee_rwf: nationwide.travel_base_fee_rwf,
+            per_km_rwf: nationwide.travel_per_km_rwf,
+          },
+        };
+      }
+      return {
+        ...measured,
+        fulfillment: null,
+        delivery_fee_rwf: null,
+        unavailable_reason: `${vendor.name || 'This kitchen'} delivers up to ${maxKm} km away, and this address is about ${Math.round(route.distance_km)} km. Choose pickup, or a kitchen that serves events nationwide.`,
+      };
+    }
+
     const fee = this.feeForDistance(route.distance_km);
 
     return {
+      fulfillment: 'delivery',
+      platform_max_km: maxKm,
       distance_km: route.distance_km,
       duration_minutes: route.duration_minutes,
       distance_source: route.source,

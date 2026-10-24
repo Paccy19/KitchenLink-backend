@@ -153,7 +153,7 @@ function parseOrderType(raw) {
 /** 'delivery' (default) or 'pickup' (the customer collects at the kitchen). */
 function parseFulfillment(raw) {
   if (raw === undefined || raw === null || raw === '') return 'delivery';
-  const allowed = config.orders.fulfillmentModes;
+  const allowed = config.orders.customerFulfillmentModes;
   if (!allowed.includes(raw)) {
     throw ApiError.badRequest('fulfillment is invalid.', {
       fulfillment: `expected one of: ${allowed.join(', ')}`,

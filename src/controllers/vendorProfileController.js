@@ -25,4 +25,12 @@ const cancelTypeChange = asyncHandler(async (req, res) => {
   res.json(await vendorProfileService.cancelTypeChange(req.vendor));
 });
 
-module.exports = { update, setAvailability, requestTypeChange, cancelTypeChange, getOrdering, updateOrdering };
+const getNationwide = asyncHandler(async (req, res) => {
+  res.json(vendorProfileService.getNationwide(req.vendor));
+});
+
+const updateNationwide = asyncHandler(async (req, res) => {
+  res.json(await vendorProfileService.updateNationwide(req.vendor, req.body || {}));
+});
+
+module.exports = { update, setAvailability, requestTypeChange, cancelTypeChange, getOrdering, updateOrdering, getNationwide, updateNationwide };

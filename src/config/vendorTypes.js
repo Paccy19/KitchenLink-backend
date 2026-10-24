@@ -240,6 +240,35 @@ function orderingRulesFor(vendor) {
   };
 }
 
+/**
+ * Nationwide kitchens take orders anywhere in Rwanda. Beyond the platform
+ * delivery range (admin rule) they bring the food themselves and charge their
+ * own travel fee. Caterers are nationwide by type; an admin can switch it on
+ * or off for any kitchen (`nationwide.admin_setting`, null = type default).
+ */
+const NATIONWIDE_TYPES = ['caterer'];
+const TRAVEL_FEE_DEFAULTS = { base_fee_rwf: 5000, per_km_rwf: 300 };
+const TRAVEL_FEE_RANGES = { base_fee_rwf: [0, 500000], per_km_rwf: [0, 5000] };
+
+function nationwideFor(vendor) {
+  const own = vendor?.nationwide || {};
+  const byType = NATIONWIDE_TYPES.includes(toVendorTypeCode(vendor?.vendor_type));
+  const adminSetting = typeof own.admin_setting === 'boolean' ? own.admin_setting : null;
+  return {
+    enabled: adminSetting ?? byType,
+    source: adminSetting === null ? 'type' : 'admin',
+    by_type: byType,
+    travel_base_fee_rwf: own.travel_base_fee_rwf ?? TRAVEL_FEE_DEFAULTS.base_fee_rwf,
+    travel_per_km_rwf: own.travel_per_km_rwf ?? TRAVEL_FEE_DEFAULTS.per_km_rwf,
+  };
+}
+
+/** The kitchen's own travel fee for a trip of `distanceKm` (one way, by road). */
+function travelFeeFor(vendor, distanceKm) {
+  const { travel_base_fee_rwf: base, travel_per_km_rwf: perKm } = nationwideFor(vendor);
+  return Math.max(0, Math.round(base + perKm * (Number(distanceKm) || 0)));
+}
+
 /** Required vendor type on sign-up / admin edits: a code (or an old label). */
 function parseVendorType(raw) {
   const code = toVendorTypeCode(raw);
@@ -281,6 +310,9 @@ module.exports = {
   toVendorTypeCode,
   vendorTypeLabel,
   orderingRulesFor,
+  nationwideFor,
+  travelFeeFor,
+  TRAVEL_FEE_RANGES,
   parseVendorType,
   parseVendorTypeFilter,
 };

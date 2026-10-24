@@ -32,4 +32,8 @@ const setType = asyncHandler(async (req, res) => {
   res.json(await adminVendorService.setType(req.params.vendorId, req.body || {}, req.admin, req));
 });
 
-module.exports = { list, getById, setStatus, setType, counts, reviewDocuments };
+const setNationwide = asyncHandler(async (req, res) => {
+  res.json(await adminVendorService.setNationwide(req.params.vendorId, req.body || {}, req.admin, req));
+});
+
+module.exports = { list, getById, setStatus, setType, setNationwide, counts, reviewDocuments };

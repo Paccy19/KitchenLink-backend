@@ -1,4 +1,5 @@
 const notificationService = require('./notificationService');
+const { isKitchenDelivered } = require('../utils/fulfillment');
 
 /**
  * Order and account events turned into in-app notifications, each linking to
@@ -39,7 +40,11 @@ module.exports = {
       order.order_type && order.order_type !== 'immediate' && order.scheduled_for
         ? ` for ${new Date(order.scheduled_for).toLocaleString('en-GB', { timeZone: 'Africa/Kigali', dateStyle: 'medium', timeStyle: 'short' })}`
         : '';
-    const pickup = order.fulfillment === 'pickup' ? ' The customer will collect it from you.' : '';
+    const pickup = order.fulfillment === 'pickup'
+      ? ' The customer will collect it from you.'
+      : isKitchenDelivered(order)
+        ? ` It is ${Math.round(order.delivery_distance_km || 0)} km away, beyond the platform delivery range: you bring it yourself (travel fee ${money(order.delivery_fee_rwf)} is yours) and confirm with the customer's code.`
+        : '';
     return toVendor(order, 'New order', `${ref(order)} · ${money(order.subtotal_rwf ?? order.total_rwf)} of food${when}.${pickup} Accept it to start preparing.`, 'order_placed');
   },
 
@@ -106,11 +111,12 @@ module.exports = {
   /** The delivery worker (or, for pickup, the kitchen) confirmed the customer's code. */
   completed(order) {
     const pickup = order.fulfillment === 'pickup';
+    const byKitchen = isKitchenDelivered(order);
     return Promise.all([
       toVendor(
         order,
         'Order completed',
-        `${ref(order)} was ${pickup ? 'collected by the customer' : 'delivered'}. ${money(order.vendor_payout_rwf)} was added to your wallet.`
+        `${ref(order)} was ${pickup ? 'collected by the customer' : 'delivered'}. ${money(order.vendor_payout_rwf)}${byKitchen ? ' (food and travel fee)' : ''} was added to your wallet.`
       ),
       toCustomer(
         order,

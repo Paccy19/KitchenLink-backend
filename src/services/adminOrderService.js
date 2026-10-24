@@ -18,6 +18,7 @@ const settlementService = require('./settlementService');
 const deliveryService = require('./deliveryService');
 const adminOperationsService = require('./adminOperationsService');
 const orderNotifications = require('./orderNotifications');
+const { usesHandoverCode, isKitchenDelivered } = require('../utils/fulfillment');
 
 class AdminOrderService {
   async list(query = {}) {
@@ -156,9 +157,11 @@ class AdminOrderService {
       });
     }
 
-    if (order.fulfillment === 'pickup') {
+    if (usesHandoverCode(order)) {
       throw ApiError.conflict(
-        'The customer collects this order at the kitchen, so it has no delivery worker.',
+        isKitchenDelivered(order)
+          ? 'The kitchen delivers this order itself, so it has no delivery worker.'
+          : 'The customer collects this order at the kitchen, so it has no delivery worker.',
         'NOT_A_DELIVERY_ORDER'
       );
     }

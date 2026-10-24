@@ -10,7 +10,9 @@ const timestamps = require('./timestamps');
  * - location_max_age_minutes: only positions newer than this count,
  * - rebroadcast_every_seconds: how often open orders are offered again,
  * - max_active_deliveries: deliveries one worker can carry at once,
- * - pickup_code_max_attempts: wrong customer pickup codes before the order locks.
+ * - pickup_code_max_attempts: wrong customer pickup codes before the order locks,
+ * - platform_delivery_max_km: farthest drop-off platform workers deliver to;
+ *   beyond it only nationwide kitchens deliver (bringing the food themselves).
  */
 const dispatchSettingsSchema = new mongoose.Schema(
   {
@@ -21,6 +23,7 @@ const dispatchSettingsSchema = new mongoose.Schema(
     rebroadcast_every_seconds: { type: Number, min: 15, required: true },
     max_active_deliveries: { type: Number, min: 1, required: true },
     pickup_code_max_attempts: { type: Number, min: 1, required: true },
+    platform_delivery_max_km: { type: Number, min: 1, default: null },
     updated_by: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
   },
   { timestamps }

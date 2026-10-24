@@ -9,6 +9,7 @@ const deliveryTrackingService = require('./deliveryTrackingService');
 const deliverySettingsService = require('./deliverySettingsService');
 const dispatchSettingsService = require('./dispatchSettingsService');
 const deliveryFeeSettingsService = require('./deliveryFeeSettingsService');
+const { usesHandoverCode, isKitchenDelivered } = require('../utils/fulfillment');
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const STALE_LOCATION_MS = 2 * 60 * 1000;
@@ -236,8 +237,11 @@ class AdminOperationsService {
     parseObjectId(orderId, 'order_id');
     const order = await Order.findById(orderId).lean();
     if (!order) throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
-    if (order.fulfillment === 'pickup') {
-      throw ApiError.conflict('The customer collects this order at the kitchen.', 'NOT_A_DELIVERY_ORDER');
+    if (usesHandoverCode(order)) {
+      throw ApiError.conflict(
+        isKitchenDelivered(order) ? 'The kitchen delivers this order itself.' : 'The customer collects this order at the kitchen.',
+        'NOT_A_DELIVERY_ORDER'
+      );
     }
     const delivery = await deliveryRepository.findByOrderId(order._id);
     const vendor = await vendorRepository.findById(order.vendor_id);
@@ -425,6 +429,7 @@ class AdminOperationsService {
         driver_location_max_age_minutes: dispatch.location_max_age_minutes,
         rebroadcast_every_seconds: dispatch.rebroadcast_every_seconds,
         max_active_deliveries_per_driver: dispatch.max_active_deliveries,
+        platform_delivery_max_km: dispatch.platform_delivery_max_km,
         updated_at: dispatch.updated_at,
       },
       limits: dispatchSettingsService.LIMITS,

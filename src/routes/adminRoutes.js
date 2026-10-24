@@ -67,6 +67,11 @@ router.patch(
   adminVendorController.setType
 );
 router.patch(
+  '/vendors/:vendorId/nationwide',
+  requirePermission('vendors:write'),
+  adminVendorController.setNationwide
+);
+router.patch(
   '/vendors/:vendorId/status',
   requirePermission('vendors:write'),
   adminVendorController.setStatus

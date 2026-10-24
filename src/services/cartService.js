@@ -1,5 +1,5 @@
 const ApiError = require('../utils/ApiError');
-const { vendorTypeLabel, orderingRulesFor } = require('../config/vendorTypes');
+const { vendorTypeLabel, orderingRulesFor, nationwideFor } = require('../config/vendorTypes');
 const config = require('../config');
 const { parseQuantity } = require('../utils/validators');
 const cartRepository = require('../repositories/cartRepository');
@@ -66,6 +66,7 @@ class CartService {
             ordering: orderingRulesFor(vendor),
             banner_image_url: vendor.banner_image_url || null,
             delivery_available: Boolean(vendor.delivery_available),
+            nationwide: nationwideFor(vendor).enabled,
           }
         : null,
       items,
@@ -73,6 +74,11 @@ class CartService {
       subtotal_rwf: subtotal,
       delivery_fee_rwf: fee,
       delivery_distance_km: quote ? quote.distance_km : null,
+      // 'delivery' (platform worker), 'vendor_delivery' (the kitchen brings it,
+      // far away) or null with a reason when it's too far for this kitchen.
+      delivery_fulfillment: quote ? quote.fulfillment : null,
+      delivery_unavailable_reason: quote?.unavailable_reason || null,
+      platform_delivery_max_km: quote ? quote.platform_max_km : null,
       total_rwf: subtotal + (fee ?? 0),
     };
   }

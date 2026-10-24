@@ -7,6 +7,7 @@ const driverRepository = require('../repositories/driverRepository');
 const orderRepository = require('../repositories/orderRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const routeNavigationService = require('./routeNavigationService');
+const { usesHandoverCode, isKitchenDelivered } = require('../utils/fulfillment');
 
 // Recompute the road route when the rider strays this far from it, or after this long.
 const OFF_ROUTE_M = 60;
@@ -34,7 +35,7 @@ class DeliveryTrackingService {
     const id = parseObjectId(orderId, 'order_id');
     const order = await orderRepository.findByCustomerAndId(customerId, id);
     if (!order) throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
-    if (order.fulfillment === 'pickup') return { active: false, reason: 'pickup' };
+    if (usesHandoverCode(order)) return { active: false, reason: isKitchenDelivered(order) ? 'kitchen_delivery' : 'pickup' };
 
     const delivery = await deliveryRepository.findByOrderId(order._id);
     const phase = this.#phase(delivery);

@@ -29,6 +29,9 @@ router.patch(
 router.patch('/availability', requireVendorAuth, requireApprovedVendor, vendorProfileController.setAvailability);
 router.get('/ordering', requireVendorAuth, vendorProfileController.getOrdering);
 router.put('/ordering', requireVendorAuth, requireApprovedVendor, vendorProfileController.updateOrdering);
+// Nationwide events: status and the kitchen's own travel fee for far orders.
+router.get('/nationwide', requireVendorAuth, vendorProfileController.getNationwide);
+router.put('/nationwide', requireVendorAuth, requireApprovedVendor, vendorProfileController.updateNationwide);
 router.post('/profile/type-request', requireVendorAuth, vendorProfileController.requestTypeChange);
 router.delete('/profile/type-request', requireVendorAuth, vendorProfileController.cancelTypeChange);
 

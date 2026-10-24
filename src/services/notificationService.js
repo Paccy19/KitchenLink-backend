@@ -35,16 +35,28 @@ class NotificationService {
    * The pickup code: sent when the order is placed (`ready: false`) and again
    * when the kitchen marks the food ready to collect.
    */
-  async notifyPickupCode(customerId, { orderNumber, code, orderId = null, vendorName = '', address = '', ready = true }) {
+  /**
+   * The customer's handover code. Pickup: they give it to the kitchen when
+   * collecting. `kitchenBrings`: the kitchen delivers itself (nationwide
+   * kitchens far away) and asks for the code when it hands over the food.
+   */
+  async notifyPickupCode(customerId, { orderNumber, code, orderId = null, vendorName = '', address = '', ready = true, kitchenBrings = false }) {
     if (!customerId || !code) return null;
     const where = [vendorName, address].filter(Boolean).join(', ');
-    const body = ready
+    const kitchen = vendorName || 'the kitchen';
+    const body = kitchenBrings
+      ? ready
+        ? `${kitchen} is on the way with ${orderNumber || 'your order'}. Give them this code when you receive the food: ${code}.`
+        : `${kitchen} will bring ${orderNumber || 'your order'} to you. Give them this code when you receive the food: ${code}. Never share it before.`
+      : ready
       ? `${orderNumber || 'Your order'} is ready to collect${where ? ` at ${where}` : ''}. Give the kitchen this pickup code: ${code}.`
       : `Your pickup code for ${orderNumber || 'your order'} is ${code}. Give it to the kitchen${where ? ` (${where})` : ''} when you collect your food. We'll tell you when it's ready.`;
     const notification = await notificationRepository.create({
       customer_id: customerId,
       type: 'pickup_code',
-      title: ready ? 'Your order is ready for pickup' : 'Your pickup code',
+      title: kitchenBrings
+        ? ready ? 'The kitchen is on the way' : 'Your delivery code'
+        : ready ? 'Your order is ready for pickup' : 'Your pickup code',
       body,
       order_id: orderId || null,
       data: { pickup_code: code, order_number: orderNumber || null, link: orderId ? `/track/${orderId}` : '/track' },

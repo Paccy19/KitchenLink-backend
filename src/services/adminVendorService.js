@@ -18,6 +18,7 @@ const {
   parseVendorType,
   parseVendorTypeFilter,
   vendorTypeLabel,
+  nationwideFor,
 } = require('../config/vendorTypes');
 
 /** Every type with how many vendors have it (zero included), for grouping. */
@@ -239,6 +240,53 @@ class AdminVendorService {
         target_id: vendorId,
         target_label: vendor.name,
         metadata: { from: vendor.vendor_type, to: nextType, requested, reason: note },
+      },
+      req
+    );
+
+    return { vendor: serializeAdminVendor(updated) };
+  }
+
+  /**
+   * Nationwide (orders anywhere in Rwanda, delivering far orders itself):
+   * `enabled` true/false sets it for this kitchen; null goes back to its type's
+   * default (Caterers on, others off).
+   */
+  async setNationwide(vendorId, body = {}, admin, req) {
+    parseObjectId(vendorId, 'vendor_id');
+    const vendor = await vendorRepository.findById(vendorId);
+    if (!vendor) throw ApiError.notFound('Vendor not found.', 'VENDOR_NOT_FOUND');
+    const enabled = body.enabled;
+    if (enabled !== true && enabled !== false && enabled !== null) {
+      throw ApiError.badRequest('enabled must be true, false or null.', { enabled: 'expected true, false or null (type default)' });
+    }
+
+    const before = nationwideFor(vendor).enabled;
+    const updated = await vendorRepository.update(vendorId, { 'nationwide.admin_setting': enabled });
+    const after = nationwideFor(updated).enabled;
+
+    if (before !== after) {
+      notificationService
+        .notifyVendor(vendorId, {
+          type: 'account_update',
+          title: after ? 'You can now serve customers nationwide' : 'Nationwide orders switched off',
+          body: after
+            ? "Customers anywhere in Rwanda can now order from you. Orders beyond the delivery workers' range are yours to bring, for your own travel fee. Check it in Profile → Nationwide events."
+            : "Your kitchen now takes delivery orders only within the delivery workers' range.",
+          link: '/vendor-dashboard/profile',
+          data: { nationwide: after },
+        })
+        .catch(() => null);
+    }
+
+    await adminActionLogService.record(
+      admin,
+      {
+        action: 'vendor.nationwide_changed',
+        target_type: 'vendor',
+        target_id: vendorId,
+        target_label: vendor.name,
+        metadata: { from: before, to: after, setting: enabled === null ? 'type default' : enabled ? 'on' : 'off' },
       },
       req
     );

@@ -29,6 +29,15 @@ const vendorSchema = new mongoose.Schema(
       daily_order_limit: { type: Number, min: 1, default: null },
       min_order_rwf: { type: Number, min: 0, default: null },
     },
+    // Taking orders anywhere in Rwanda (see nationwideFor in
+    // config/vendorTypes.js). admin_setting: null = the type's default
+    // (Caterers on), true/false = set by an admin. Beyond the platform delivery
+    // range the kitchen brings the food and charges this travel fee.
+    nationwide: {
+      admin_setting: { type: Boolean, default: null },
+      travel_base_fee_rwf: { type: Number, min: 0, default: null },
+      travel_per_km_rwf: { type: Number, min: 0, default: null },
+    },
     owner_name: { type: String, trim: true },
     description: { type: String, default: '', trim: true },
     // Credentials (Vendor Dashboard login).
