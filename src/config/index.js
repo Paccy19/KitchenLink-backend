@@ -179,6 +179,13 @@ const config = {
       senderId: process.env.SMS_SENDER_ID || 'FoodKitchen',
     },
   },
+  // No real payment provider is connected yet: every method is simulated
+  // (orders are marked paid without collecting money). Simulated payments
+  // only run on an explicit development server; a live server refuses
+  // checkout until a provider is integrated (see orderService).
+  payments: {
+    simulated: true,
+  },
   orders: {
     agentKey: process.env.AGENT_API_KEY || 'dev-agent-key',
     statuses: [

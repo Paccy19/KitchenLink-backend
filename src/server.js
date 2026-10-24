@@ -14,6 +14,7 @@ const bankSettingsService = require('./services/bankSettingsService');
 const deliveryFeeSettingsService = require('./services/deliveryFeeSettingsService');
 const dispatchSettingsService = require('./services/dispatchSettingsService');
 const privateDocumentsService = require('./services/privateDocumentsService');
+const maskStoredCardNumbers = require('./scripts/maskCardNumbers');
 
 
 const bootstrapAdmin = async () => {
@@ -96,6 +97,16 @@ const start = async () => {
     console.warn(`[security] JWT_SECRET is ${secretProblem}. Fine for local development; ${fix} before going live.`);
   }
 
+  // Simulated payments collect no money: a live server takes no orders until
+  // a real payment provider is connected.
+  if (config.payments.simulated) {
+    console.warn(
+      config.explicitDev
+        ? '[payments] Payments are simulated (development): orders are marked paid without collecting money.'
+        : '[payments] No real payment provider is connected: checkout is disabled on this server.'
+    );
+  }
+
   // Databases without a password are open to anyone who can reach them.
   if (config.databaseProblems.length) {
     if (!config.explicitDev) {
@@ -114,6 +125,14 @@ const start = async () => {
     await connectPostgres();
 
     await bootstrapAdmin();
+
+    // Card numbers saved before only the last 4 digits were kept.
+    try {
+      const masked = await maskStoredCardNumbers();
+      if (masked > 0) console.log(`Masked ${masked} stored card number(s) (only the last 4 digits are kept)`);
+    } catch (error) {
+      console.error('Masking stored card numbers failed:', error.message);
+    }
 
     // Verification documents uploaded before they were private leave the
     // public uploads folder (old links stop working).

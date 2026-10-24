@@ -40,6 +40,21 @@ const PROVIDERS = {
   wallet: 'wallet',
 };
 
+/**
+ * Simulated payments mark orders paid without collecting money, so they only
+ * run on an explicit development server. On a live server checkout stops
+ * here until a real payment provider is connected.
+ */
+const assertPaymentsAvailable = () => {
+  if (config.payments.simulated && !config.explicitDev) {
+    throw new ApiError(
+      503,
+      'PAYMENTS_NOT_CONFIGURED',
+      "Online payment isn't available yet. Please try again later."
+    );
+  }
+};
+
 const methodLabel = (code) =>
   orders.paymentMethods.find((m) => m.code === code)?.label ?? code;
 
@@ -319,6 +334,7 @@ class OrderService {
   }
 
   async #initiatePayment(order, method, simulate) {
+    assertPaymentsAvailable();
     const provider = PROVIDERS[method];
 
     let payment = await paymentRepository.create({
@@ -361,6 +377,8 @@ class OrderService {
       : parseDeliveryLocation(body?.delivery_location);
     const paymentMethod = parsePaymentMethod(body?.payment_method);
     const paymentDetails = parsePaymentDetails(paymentMethod, body?.payment_details);
+    // Before anything is created: no order without a way to really pay.
+    assertPaymentsAvailable();
     const simulate = body?.payment_simulate;
     const orderType = parseOrderType(body?.order_type);
     let scheduledFor = null;
@@ -765,6 +783,7 @@ class OrderService {
     // Paid orders: charge the delivery fee first; nothing changes if it fails.
     let feePayment = null;
     if (alreadyPaid && fee > 0) {
+      assertPaymentsAvailable();
       const paymentMethod = parsePaymentMethod(body.payment_method);
       // Same payer checks as checkout (e.g. an MTN/Airtel number for Mobile Money).
       parsePaymentDetails(paymentMethod, body.payment_details);

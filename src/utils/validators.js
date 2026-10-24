@@ -99,19 +99,43 @@ function normalizeRwandanPhone(raw) {
   return digits;
 }
 
+/** Luhn checksum: catches mistyped and made-up card numbers. */
+function passesLuhn(digits) {
+  let sum = 0;
+  for (let i = 0; i < digits.length; i += 1) {
+    let digit = Number(digits[digits.length - 1 - i]);
+    if (i % 2 === 1) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return sum % 10 === 0;
+}
+
+/** True when an MM/YY expiry is this month or later. */
+function expiryNotPast(mmYy) {
+  const [month, year] = mmYy.split('/').map(Number);
+  const now = new Date();
+  const thisMonth = (now.getFullYear() % 100) * 12 + now.getMonth() + 1;
+  return year * 12 + month >= thisMonth;
+}
+
 /**
  * Validates the payer details captured at checkout. Phone-based methods accept
- * a Rwandan mobile number; cards require a number and MM/YY expiry. The CVV is
- * validated by the client and intentionally never persisted.
+ * a Rwandan mobile number; cards require a number that passes the Luhn check
+ * and an MM/YY expiry that hasn't passed. Only the card's last 4 digits are
+ * kept (never the full number, never the CVV): whether a card is really valid
+ * is only known when a payment provider charges it.
  */
 function parsePaymentDetails(method, raw) {
   const details = raw && typeof raw === 'object' ? raw : {};
 
   if (method === 'card') {
     const cardNumber = String(details.card_number ?? '').replace(/[\s-]/g, '');
-    if (!CARD_NUMBER_REGEX.test(cardNumber)) {
-      throw ApiError.badRequest('payment_details.card_number is invalid.', {
-        card_number: 'expected 13-19 digits',
+    if (!CARD_NUMBER_REGEX.test(cardNumber) || !passesLuhn(cardNumber)) {
+      throw ApiError.badRequest('This card number is not valid. Check it and try again.', {
+        card_number: 'expected a valid 13-19 digit card number',
       });
     }
     const cardExpiry = String(details.card_expiry ?? '').trim();
@@ -120,7 +144,11 @@ function parsePaymentDetails(method, raw) {
         card_expiry: 'expected MM/YY',
       });
     }
-    return { phone: '', card_number: cardNumber, card_expiry: cardExpiry };
+    if (!expiryNotPast(cardExpiry)) {
+      throw ApiError.badRequest('This card has expired.', { card_expiry: 'expiry date has passed' });
+    }
+    // Never store the full card number (card industry rules, PCI DSS).
+    return { phone: '', card_number: `•••• ${cardNumber.slice(-4)}`, card_expiry: cardExpiry };
   }
 
   const phone = normalizeRwandanPhone(details.phone);

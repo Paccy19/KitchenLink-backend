@@ -83,6 +83,7 @@ const orderSchema = new mongoose.Schema(
     // Payer details captured at checkout: phone for mobile wallets, card for cards.
     payment_details: {
       phone: { type: String, default: '' },
+      // Masked: only the last 4 digits ("•••• 1234"), never the full number.
       card_number: { type: String, default: '' },
       card_expiry: { type: String, default: '' },
     },
