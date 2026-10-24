@@ -26,9 +26,10 @@ const toCustomer = (customer) => ({
   id: String(customer._id),
   role: 'customer',
   name: customer.name,
-  identifier: customer.phone_number,
+  identifier: customer.erased_at ? '' : customer.phone_number,
   secondary: null,
-  status: customer.is_active === false ? 'suspended' : 'active',
+  status: customer.erased_at ? 'erased' : customer.is_active === false ? 'suspended' : 'active',
+  erased_at: customer.erased_at ?? null,
   is_active: customer.is_active !== false,
   avatar_url: customer.profile_image_url || null,
   last_login_at: customer.last_login_at ?? null,
@@ -188,6 +189,9 @@ class AdminUserService {
     const customer = await customerRepository.findById(userId);
     if (!customer) {
       throw ApiError.notFound('User not found.', 'USER_NOT_FOUND');
+    }
+    if (customer.erased_at) {
+      throw ApiError.conflict('This customer’s data was erased; the account can’t be reactivated.', 'ALREADY_ERASED');
     }
 
     const updated = await customerRepository.update(userId, {

@@ -79,6 +79,9 @@ Money, a gateway) is integrated in `orderService`.
 | Weekly (GitHub) | The *Security audit* workflow runs `npm audit`; Dependabot opens pull requests for updates. Review and merge them. |
 | Backups | Back up both databases **and** both `uploads/` and `private-uploads/`. The documents and proof photos exist only there. |
 
+**How long data is kept** is described in [DATA_RETENTION.md](DATA_RETENTION.md)
+(a draft: periods still to be confirmed, no automatic deletion yet).
+
 **Unlocking someone early.** Lockouts live in the `otpguards` collection,
 keyed `"<purpose>:<phone or email>"`: for example `customer:+250788123456` or
 `admin-login:owner@kitchenlink.rw`. Deleting that document lifts the lockout.

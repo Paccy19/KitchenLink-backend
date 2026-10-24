@@ -11,6 +11,10 @@ const customerSchema = new mongoose.Schema(
     is_verified: { type: Boolean, default: true },
     is_active: { type: Boolean, default: true },
     last_login_at: { type: Date },
+    // Personal data erased on request (customerErasureService): kept only as
+    // an anonymous record so orders and payments still add up.
+    erased_at: { type: Date, default: null },
+    erased_by: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
     // Sessions (see utils/sessions.js): tokens issued before this are refused,
     // except the one kept for the device that signed the others out.
     sessions_valid_after: { type: Date, default: null },

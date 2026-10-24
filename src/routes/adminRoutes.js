@@ -26,6 +26,7 @@ const deliverySettingsService = require('../services/deliverySettingsService');
 const dispatchSettingsService = require('../services/dispatchSettingsService');
 const deliveryService = require('../services/deliveryService');
 const privateDocumentsService = require('../services/privateDocumentsService');
+const customerErasureService = require('../services/customerErasureService');
 const fs = require('fs');
 const { Delivery } = require('../models');
 const { isPrivateRef, privateFilePath } = require('../utils/uploads');
@@ -59,6 +60,17 @@ router.patch(
   '/users/:userId/status',
   requirePermission('users:write'),
   adminUserController.setStatus
+);
+// Erase a customer's personal data on request (cannot be undone; body.confirm = "ERASE").
+router.post(
+  '/users/:userId/erase',
+  requirePermission('users:write'),
+  asyncHandler(async (req, res) => {
+    if (req.body?.confirm !== 'ERASE') {
+      throw ApiError.badRequest('Type ERASE to confirm. This cannot be undone.', { confirm: 'expected "ERASE"' });
+    }
+    res.json(await customerErasureService.erase(req.params.userId, req.admin, req));
+  })
 );
 
 /* -------------------------------- vendors -------------------------------- */
