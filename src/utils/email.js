@@ -147,4 +147,38 @@ async function sendEmail(message) {
 const escapeHtml = (value) =>
   String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-module.exports = { sendEmail, escapeHtml };
+const HTTP_PROVIDERS = ['resend', 'sendgrid', 'mailgun', 'brevo'];
+
+/**
+ * Checks the email setup without sending anything, so a wrong one shows at
+ * startup instead of when the owner first invites someone. SMTP: logs in to
+ * the server. HTTP APIs: checks the settings are complete (they offer no free
+ * "test" call). Returns { status: 'off' | 'ok' | 'problem', detail }.
+ */
+async function checkEmailSetup() {
+  const { provider, apiKey, host } = config.mail;
+  if (provider) {
+    if (!HTTP_PROVIDERS.includes(provider)) {
+      return { status: 'problem', detail: `EMAIL_PROVIDER "${provider}" is not one of: ${HTTP_PROVIDERS.join(', ')}` };
+    }
+    if (!apiKey) return { status: 'problem', detail: 'EMAIL_PROVIDER is set but EMAIL_API_KEY is empty' };
+    if (provider === 'mailgun' && !config.mail.apiUrl && !/@/.test(config.mail.from)) {
+      return { status: 'problem', detail: 'mailgun needs EMAIL_API_URL or a MAIL_FROM address on your Mailgun domain' };
+    }
+    return { status: 'ok', detail: `${provider} API` };
+  }
+  if (host) {
+    try {
+      await Promise.race([
+        getTransporter().verify(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('no answer within 10 s')), 10000)),
+      ]);
+      return { status: 'ok', detail: `SMTP ${host}` };
+    } catch (error) {
+      return { status: 'problem', detail: `SMTP ${host}: ${error.message}` };
+    }
+  }
+  return { status: 'off', detail: 'no email service' };
+}
+
+module.exports = { sendEmail, escapeHtml, checkEmailSetup };

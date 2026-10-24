@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const config = require('./config');
 const { startupReport } = require('./config/startupCheck');
+const { checkEmailSetup } = require('./utils/email');
 const app = require('./app');
 const { connectPostgres, closePostgres, maskUri } = require('./db/postgres');
 const adminAuthService = require('./services/adminAuthService');
@@ -102,6 +103,17 @@ const start = async () => {
   } else if (warnings.length) {
     console.warn(`[config] Optional features that are off:\n${warnings.map((w) => `  - ${w}`).join('\n')}`);
   }
+
+  // Email is optional (invitations fall back to a link the owner shares), but
+  // a setup that's present and wrong should show now, not at the first invite.
+  checkEmailSetup()
+    .then(({ status, detail }) => {
+      if (status === 'ok') console.log(`Email ready: ${detail}`);
+      if (status === 'problem') {
+        console.error(`[email] Email is set up but not working (${detail}). Team invitations won't be emailed; the owner gets the link to share instead.`);
+      }
+    })
+    .catch(() => null);
 
   try {
     await mongoose.connect(config.mongoUri);
