@@ -36,6 +36,9 @@ const storage = multer.diskStorage({
   },
 });
 
+// The text fields sent with files (multer allows unlimited fields by default).
+const TEXT_LIMITS = { fields: 50, fieldSize: 100 * 1024, parts: 70 };
+
 const reject = (cb, allowed) =>
   cb(
     ApiError.badRequest('Unsupported file type.', {
@@ -46,7 +49,7 @@ const reject = (cb, allowed) =>
 /** Menu item images (images only). */
 const imageUpload = multer({
   storage,
-  limits: { fileSize: config.vendor.uploads.maxFileSizeBytes, files: 1 },
+  limits: { fileSize: config.vendor.uploads.maxFileSizeBytes, files: 1, ...TEXT_LIMITS },
   fileFilter: (req, file, cb) => {
     if (!config.vendor.uploads.allowedMimeTypes.includes(file.mimetype)) {
       return reject(cb, config.vendor.uploads.allowedMimeTypes);
@@ -61,6 +64,7 @@ const documentUpload = multer({
   limits: {
     fileSize: config.vendor.uploads.maxDocumentSizeBytes,
     files: config.vendor.uploads.maxDocuments,
+    ...TEXT_LIMITS,
   },
   fileFilter: (req, file, cb) => {
     if (!config.vendor.uploads.documentMimeTypes.includes(file.mimetype)) {
@@ -79,6 +83,7 @@ const registrationUpload = multer({
   limits: {
     fileSize: config.vendor.uploads.maxDocumentSizeBytes,
     files: config.vendor.uploads.maxDocuments + 1,
+    ...TEXT_LIMITS,
   },
   fileFilter: (req, file, cb) => {
     if (file.fieldname === 'banner_image') {

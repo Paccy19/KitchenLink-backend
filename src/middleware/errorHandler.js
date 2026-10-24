@@ -38,7 +38,7 @@ const normalizeError = (err) => {
     return new ApiError(
       413,
       'PAYLOAD_TOO_LARGE',
-      'Request payload is too large. Images must be under 5 MB.'
+      'The request is too large. Try a smaller photo (photos over about 700 KB are refused).'
     );
   }
 
