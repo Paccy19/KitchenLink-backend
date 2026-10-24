@@ -16,6 +16,7 @@ const deliveryFeeSettingsService = require('./services/deliveryFeeSettingsServic
 const dispatchSettingsService = require('./services/dispatchSettingsService');
 const privateDocumentsService = require('./services/privateDocumentsService');
 const maskStoredCardNumbers = require('./scripts/maskCardNumbers');
+const normalizeVendorTypes = require('./scripts/normalizeVendorTypes');
 
 
 const bootstrapAdmin = async () => {
@@ -111,6 +112,15 @@ const start = async () => {
     await connectPostgres();
 
     await bootstrapAdmin();
+
+    // Vendor types not in the current list (old labels, removed types) become
+    // current codes (unknown -> other), so a changed list never leaves stale data.
+    try {
+      const converted = await normalizeVendorTypes(mongoose.connection.db);
+      if (converted > 0) console.log(`Converted ${converted} outdated vendor type(s)`);
+    } catch (error) {
+      console.error('Converting outdated vendor types failed:', error.message);
+    }
 
     // Card numbers saved before only the last 4 digits were kept.
     try {
