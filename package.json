@@ -9,6 +9,7 @@
     "dev": "nodemon src/server.js",
     "migrate:vendors": "node src/scripts/migrateVendorAccounts.js",
     "migrate:vendor-types": "node src/scripts/migrateVendorTypes.js",
+    "strip:metadata": "node src/scripts/stripUploadMetadata.js",
     "migrate:pg": "node src/scripts/migratePostgres.js",
     "seed:drivers": "node src/scripts/seedDrivers.js",
     "seed:admin": "node src/scripts/seedAdmin.js",
@@ -28,8 +29,9 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.11.1",
     "multer": "^2.4.0",
-    "nodemailer": "10.0.12",
-    "pg": "^8.16.0"
+    "nodemailer": "^10.2.1",
+    "pg": "^8.16.0",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

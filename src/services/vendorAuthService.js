@@ -67,7 +67,7 @@ class VendorAuthService {
     );
     const documents = this.#buildDocuments(files, body);
 
-    const bannerImageUrl = resolveImageUrl({
+    const bannerImageUrl = await resolveImageUrl({
       file: files.banner_image && files.banner_image[0],
       image_url: body.banner_image_url,
       image_base64: body.banner_image_base64,

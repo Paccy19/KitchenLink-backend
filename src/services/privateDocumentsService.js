@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const ApiError = require('../utils/ApiError');
-const { Vendor } = require('../models');
+const { Vendor, Delivery } = require('../models');
 const { isPrivateRef, privateFilePath, moveToPrivate } = require('../utils/uploads');
 
 /**
@@ -55,6 +55,17 @@ class PrivateDocumentsService {
         return { ...doc, url: ref };
       });
       if (changed) await Vendor.updateOne({ _id: vendor._id }, { $set: { verification_documents: documents } });
+    }
+
+    // Delivery proof photos (taken at the customer's door) are private too.
+    const deliveries = await Delivery.find({ proof_photo_url: { $nin: ['', null], $not: /^private:/ } })
+      .select('proof_photo_url')
+      .lean();
+    for (const delivery of deliveries) {
+      const ref = moveToPrivate(delivery.proof_photo_url);
+      if (!ref) continue;
+      await Delivery.updateOne({ _id: delivery._id }, { $set: { proof_photo_url: ref } });
+      moved += 1;
     }
     return moved;
   }

@@ -6,6 +6,7 @@ const ApiError = require('../utils/ApiError');
 const fs = require('fs');
 const { uploadsDir, ensureUploadsDir, ensurePrivateUploadsDir } = require('../utils/uploads');
 const { detectFileMime } = require('../utils/fileSignature');
+const { stripImageFileMetadata } = require('../utils/imageMetadata');
 
 // Extension is derived from the (allowlist-validated) MIME type rather than the
 // client-supplied filename, so uploads always land with a correct extension and
@@ -117,7 +118,15 @@ const verifyFileContents = (req, res, next) => {
       return true;
     }
   });
-  if (!bad) return next();
+  if (!bad) {
+    // Images are saved without hidden metadata (GPS location, camera, date).
+    return Promise.all(files.map((file) => stripImageFileMetadata(file.path, file.mimetype)))
+      .then(() => next())
+      .catch(() => {
+        files.forEach((file) => fs.unlink(file.path, () => {}));
+        next(ApiError.badRequest('This image could not be read. Try another one.', { image: 'unreadable image' }));
+      });
+  }
   files.forEach((file) => fs.unlink(file.path, () => {}));
   return next(
     ApiError.badRequest(`"${bad.originalname || bad.fieldname}" is not a real ${EXT_BY_MIME[bad.mimetype]?.slice(1).toUpperCase() || 'supported'} file.`, {

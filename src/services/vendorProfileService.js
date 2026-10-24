@@ -88,14 +88,14 @@ class VendorProfileService {
       }
     }
 
-    const bannerImageUrl = resolveImageUrl({
+    const bannerImageUrl = await resolveImageUrl({
       file: files?.banner_image?.[0],
       image_url: body.banner_image_url,
       image_base64: body.banner_image_base64,
     });
     if (bannerImageUrl !== undefined) payload.banner_image_url = bannerImageUrl;
 
-    const profileImageUrl = resolveImageUrl({
+    const profileImageUrl = await resolveImageUrl({
       file: files?.profile_image?.[0],
       image_url: body.profile_image_url,
       image_base64: body.profile_image_base64,

@@ -26,6 +26,9 @@ const deliverySettingsService = require('../services/deliverySettingsService');
 const dispatchSettingsService = require('../services/dispatchSettingsService');
 const deliveryService = require('../services/deliveryService');
 const privateDocumentsService = require('../services/privateDocumentsService');
+const fs = require('fs');
+const { Delivery } = require('../models');
+const { isPrivateRef, privateFilePath } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
 const ApiError = require('../utils/ApiError');
 
@@ -108,6 +111,21 @@ router.get(
   '/deliveries/live',
   requirePermission('deliveries:read'),
   adminDriverController.liveDeliveries
+);
+// The proof-of-delivery photo (private: taken at the customer's door).
+router.get(
+  '/deliveries/:deliveryId/proof-photo',
+  requirePermission('deliveries:read'),
+  asyncHandler(async (req, res) => {
+    const delivery = await Delivery.findById(req.params.deliveryId).select('proof_photo_url').lean().catch(() => null);
+    const url = delivery?.proof_photo_url;
+    if (!url) throw ApiError.notFound('This delivery has no proof photo.', 'PROOF_PHOTO_NOT_FOUND');
+    if (!isPrivateRef(url)) return res.redirect(url);
+    const filePath = privateFilePath(url);
+    if (!filePath || !fs.existsSync(filePath)) throw ApiError.notFound('The proof photo file is missing.', 'PROOF_PHOTO_NOT_FOUND');
+    res.set('Cache-Control', 'private, no-store');
+    return res.sendFile(filePath);
+  })
 );
 // One delivery's rider position, route and ETA (order details map).
 router.get(

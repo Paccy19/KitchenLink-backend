@@ -494,7 +494,9 @@ function serializeDelivery(delivery, options = {}) {
     promised_earnings_rwf: delivery.promised_earnings_rwf,
     payment_method: delivery.payment_method || null,
     otp_required: Boolean(delivery.otp_code),
-    proof_photo_url: delivery.proof_photo_url || null,
+    // Private proof photos have no public link (admins open them by id).
+    proof_photo_url: isPrivateRef(delivery.proof_photo_url) ? null : delivery.proof_photo_url || null,
+    has_proof_photo: Boolean(delivery.proof_photo_url),
     dispatched_at: delivery.dispatch?.last_broadcast_at ?? null,
     offer_expires_at: delivery.dispatch?.offer_expires_at ?? null,
     // Offered at placement: the kitchen may still be cooking.

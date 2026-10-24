@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const config = require('../config');
 const ApiError = require('./ApiError');
 const { detectMime } = require('./fileSignature');
+const { stripImageMetadata } = require('./imageMetadata');
 
 const uploadsDir = path.isAbsolute(config.vendor.uploads.dir)
   ? config.vendor.uploads.dir
@@ -93,14 +94,18 @@ const deleteLocalUpload = (url) => {
   }
 };
 
-const writeBuffer = (buffer, ext) => {
+const writeBuffer = (buffer, ext, { isPrivate = false } = {}) => {
   ensureUploadsDir();
   const filename = `upload-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
+  if (isPrivate) {
+    fs.writeFileSync(path.join(ensurePrivateUploadsDir(), filename), buffer);
+    return privateRef(filename);
+  }
   fs.writeFileSync(path.join(uploadsDir, filename), buffer);
   return buildPublicUrl(filename);
 };
 
-const saveDataUri = (dataUri) => {
+const saveDataUri = async (dataUri, { isPrivate = false } = {}) => {
   const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s.exec(String(dataUri).trim());
   if (!match) {
     throw ApiError.badRequest('image_base64 must be a valid image data URI.', {
@@ -123,23 +128,26 @@ const saveDataUri = (dataUri) => {
   if (detectMime(buffer) !== mime) {
     throw ApiError.badRequest('This file is not a real image.', { image: 'file content does not match its type' });
   }
-  return writeBuffer(buffer, EXT_BY_MIME[mime] || '');
+  // Saved without hidden metadata (GPS location, camera, date).
+  return writeBuffer(await stripImageMetadata(buffer, mime), EXT_BY_MIME[mime] || '', { isPrivate });
 };
 
 /**
- * Resolves an image reference from a request.
+ * Resolves an image reference from a request (a promise).
  * Priority: multipart upload -> base64 data URI -> plain URL.
- * Returns undefined when no image was supplied.
+ * Returns undefined when no image was supplied. Uploaded images are saved
+ * without metadata (multipart ones by the upload middleware). `isPrivate`
+ * keeps the photo out of the public folder (e.g. delivery proof photos).
  */
-const resolveImageUrl = ({ file, image_url, image_base64 } = {}) => {
-  if (file) return buildPublicUrl(file.filename);
+const resolveImageUrl = async ({ file, image_url, image_base64, isPrivate = false } = {}) => {
+  if (file) return isPrivate ? moveToPrivate(buildPublicUrl(file.filename)) : buildPublicUrl(file.filename);
 
   const candidate = image_base64 || image_url;
   if (candidate === undefined || candidate === null || candidate === '') {
     return undefined;
   }
   if (typeof candidate === 'string' && candidate.startsWith('data:')) {
-    return saveDataUri(candidate);
+    return saveDataUri(candidate, { isPrivate });
   }
   const url = String(candidate).trim();
   if (url.length > 2048) {

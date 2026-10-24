@@ -1066,12 +1066,14 @@ class DeliveryService {
       }
     }
 
+    // Taken at the customer's door: kept private (admins open it for disputes).
     const proofPhotoUrl =
-      resolveImageUrl({
+      (await resolveImageUrl({
         file: body?.file,
         image_url: body?.proof_photo_url,
         image_base64: body?.proof_photo_base64,
-      }) || undefined;
+        isPrivate: true,
+      })) || undefined;
 
     const now = new Date();
     // Late pickups are not charged: the worker always gets the full delivery fee.

@@ -134,7 +134,7 @@ const start = async () => {
     // public uploads folder (old links stop working).
     try {
       const moved = await privateDocumentsService.migratePublicDocuments();
-      if (moved > 0) console.log(`Moved ${moved} verification document(s) to private storage`);
+      if (moved > 0) console.log(`Moved ${moved} verification document(s) / delivery proof photo(s) to private storage`);
     } catch (error) {
       console.error('Moving verification documents to private storage failed:', error.message);
     }

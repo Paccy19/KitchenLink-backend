@@ -142,7 +142,7 @@ class VendorMenuService {
     // cannot leave an orphaned upload behind.
     const options = parseMenuOptions(body.options);
 
-    const imageUrl = resolveImageUrl({
+    const imageUrl = await resolveImageUrl({
       file,
       image_url: body.image_url,
       image_base64: body.image_base64,
@@ -188,7 +188,7 @@ class VendorMenuService {
     if (clearImage) {
       payload.image_url = '';
     } else {
-      newImageUrl = resolveImageUrl({
+      newImageUrl = await resolveImageUrl({
         file,
         image_url: body.image_url,
         image_base64: body.image_base64,

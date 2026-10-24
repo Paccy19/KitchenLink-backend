@@ -166,7 +166,7 @@ class AuthService {
       }
     }
 
-    const profileImageUrl = resolveImageUrl({
+    const profileImageUrl = await resolveImageUrl({
       file,
       image_url: body.profile_image_url,
       image_base64: body.profile_image_base64,
