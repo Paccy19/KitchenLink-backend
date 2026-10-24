@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const config = require('./config');
+const { startupReport } = require('./config/startupCheck');
 const app = require('./app');
 const { connectPostgres, closePostgres, maskUri } = require('./db/postgres');
 const adminAuthService = require('./services/adminAuthService');
@@ -84,36 +85,21 @@ const bootstrapAdmin = async () => {
 };
 
 const start = async () => {
-  // Signed sessions are only as safe as this secret. A weak one is only
-  // allowed when .env explicitly says this is a development or test server, so
-  // a live server that forgot NODE_ENV can't run with a public secret.
-  const secretProblem = config.auth.jwtSecretProblem;
-  if (secretProblem) {
-    const fix = `set JWT_SECRET to a random string of at least ${config.auth.jwtSecretMinLength} characters`;
-    if (!config.explicitDev) {
-      console.error(`Refusing to start: JWT_SECRET is ${secretProblem}; ${fix}.`);
-      process.exit(1);
-    }
-    console.warn(`[security] JWT_SECRET is ${secretProblem}. Fine for local development; ${fix} before going live.`);
+  // Every setting checked at once (config/startupCheck.js). A live server
+  // refuses to start until all errors are fixed; a server whose .env
+  // explicitly says development/test only lists them.
+  const { errors, warnings } = startupReport(config);
+  if (errors.length && !config.explicitDev) {
+    console.error(`Refusing to start. Fix these settings in .env:\n${errors.map((e) => `  - ${e}`).join('\n')}`);
+    process.exit(1);
   }
-
-  // Simulated payments collect no money: a live server takes no orders until
-  // a real payment provider is connected.
-  if (config.payments.simulated) {
-    console.warn(
-      config.explicitDev
-        ? '[payments] Payments are simulated (development): orders are marked paid without collecting money.'
-        : '[payments] No real payment provider is connected: checkout is disabled on this server.'
-    );
+  if (errors.length) {
+    console.warn(`[config] Fine for local development, required before going live:\n${errors.map((e) => `  - ${e}`).join('\n')}`);
   }
-
-  // Databases without a password are open to anyone who can reach them.
-  if (config.databaseProblems.length) {
-    if (!config.explicitDev) {
-      console.error(`Refusing to start: ${config.databaseProblems.join('; ')}.`);
-      process.exit(1);
-    }
-    console.warn(`[security] ${config.databaseProblems.join('; ')}. Fine for local development; use password-protected databases before going live.`);
+  if (config.explicitDev && config.payments.simulated) {
+    console.warn('[payments] Payments are simulated (development): orders are marked paid without collecting money.');
+  } else if (warnings.length) {
+    console.warn(`[config] Optional features that are off:\n${warnings.map((w) => `  - ${w}`).join('\n')}`);
   }
 
   try {

@@ -1,14 +1,13 @@
 const { Router } = require('express');
 const ApiError = require('../utils/ApiError');
-const config = require('../config');
+const isAgentKey = require('../utils/agentKey');
 const internalDeliveryController = require('../controllers/internalDeliveryController');
 
 const router = Router();
 
 /** Internal/system endpoints are guarded by the shared agent key. */
 router.use((req, res, next) => {
-  const key = req.headers['x-agent-key'];
-  if (key !== config.orders.agentKey) {
+  if (!isAgentKey(req.headers['x-agent-key'])) {
     next(
       ApiError.unauthorized(
         'Valid x-agent-key header is required.',

@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const ApiError = require('../utils/ApiError');
-const config = require('../config');
+const isAgentKey = require('../utils/agentKey');
 const asyncHandler = require('../utils/asyncHandler');
 const requireAuth = require('../middleware/requireAuth');
 const orderController = require('../controllers/orderController');
@@ -46,8 +46,7 @@ router.put(
 router.patch(
   '/agent/orders/:order_id/status',
   asyncHandler(async (req, res) => {
-    const key = req.headers['x-agent-key'];
-    if (key !== config.orders.agentKey) {
+    if (!isAgentKey(req.headers['x-agent-key'])) {
       throw ApiError.unauthorized(
         'Valid x-agent-key header is required.',
         'AGENT_UNAUTHORIZED'
