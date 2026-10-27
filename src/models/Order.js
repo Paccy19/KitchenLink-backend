@@ -34,6 +34,8 @@ const orderSchema = new mongoose.Schema(
         // Big-event orders (Big Event button): what the customer booked from the
     // kitchen's event offer, kept as it was when they ordered.
     event: {
+      package_id: { type: String, default: '' },
+      package_name: { type: String, default: '' },
       guests: { type: Number, min: 1, default: null },
       price_per_plate_rwf: { type: Number, min: 0, default: null },
       menu: [{ type: String }],

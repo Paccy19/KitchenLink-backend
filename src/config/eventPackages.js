@@ -1,14 +1,17 @@
+const crypto = require('crypto');
 const ApiError = require('../utils/ApiError');
 const { parseDistanceFeeRanges, rangeForDistance } = require('../utils/distanceFeeRanges');
 
 /**
- * Big events: each kitchen sets its own event offer in its settings — guest
- * ranges with a price per plate, what a plate holds, the service it gives and
- * its delivery fee by distance (ranges like the admin's delivery fees). A
- * customer enters the number of guests and chooses delivery or pick-up, and
- * sees every kitchen whose ranges cover that number, with the total cost:
+ * Big events: each kitchen sets up its own ways of hosting events in its
+ * settings — one or more packages (e.g. "Wedding buffet", "Corporate lunch"),
+ * each with its own guest ranges and price per plate, what a plate holds and
+ * the service — plus one delivery fee by distance for all of them (ranges
+ * like the admin's delivery fees). A customer enters the number of guests and
+ * chooses delivery or pick-up, and sees every package whose ranges cover that
+ * number, with the total cost:
  *
- *   total = guests × plate price (of the range that covers them)
+ *   total = guests × the package's plate price (of the range that covers them)
  *         + delivery fee for the distance (delivery only; pick-up pays none)
  */
 const SERVICE_STYLES = [
@@ -22,6 +25,7 @@ const LIMITS = {
   plate_rwf: [100, 1000000],
   delivery_fee_rwf: [0, 1000000],
   delivery_km: 500,
+  packages: 10,
   tiers: 10,
   menu_items: 30,
 };
@@ -36,6 +40,10 @@ const EVENT_ORDER = {
   deposit_percent: 50,
   balance_due_hours_before: 24,
 };
+
+// Kitchens that saved the single offer from before packages existed: it is
+// read as one package with this id and name.
+const LEGACY_PACKAGE = { id: 'main', name: 'Event package' };
 
 /** The deposit paid when ordering and the balance due a day before the event. */
 function depositPlan(totalRwf, eventAt) {
@@ -73,89 +81,145 @@ function oneOf(raw, field, list) {
   return raw;
 }
 
-/** Validates the kitchen's event offer from its settings form. */
-function parseEventPackage(body = {}) {
-  const enabled = body.enabled === true;
-  const rawTiers = Array.isArray(body.tiers) ? body.tiers : [];
+const PACKAGE_ID = /^[a-z0-9]{4,24}$/;
+const isPackageId = (value) => typeof value === 'string' && PACKAGE_ID.test(value);
+
+/** One package from the settings form; `label` names it in error messages. */
+function parsePackage(raw = {}, index) {
+  const label = typeof raw.name === 'string' && raw.name.trim() ? `"${raw.name.trim()}"` : `Package ${index + 1}`;
+  const name = text(raw.name, `packages[${index}].name`, 60);
+  if (name.length < 2) {
+    throw ApiError.badRequest(`Give package ${index + 1} a name (e.g. "Wedding buffet").`, { [`packages[${index}].name`]: 'required' });
+  }
+
+  const rawTiers = Array.isArray(raw.tiers) ? raw.tiers : [];
   if (rawTiers.length > LIMITS.tiers) {
-    throw ApiError.badRequest(`Add at most ${LIMITS.tiers} guest ranges.`, { tiers: `max ${LIMITS.tiers}` });
+    throw ApiError.badRequest(`${label}: add at most ${LIMITS.tiers} guest ranges.`, { tiers: `max ${LIMITS.tiers}` });
   }
   const tiers = rawTiers
-    .map((tier, index) => {
-      const min = wholeNumber(tier?.min_guests, `tiers[${index}].min_guests`, LIMITS.guests);
-      const max = wholeNumber(tier?.max_guests, `tiers[${index}].max_guests`, LIMITS.guests);
+    .map((tier, i) => {
+      const min = wholeNumber(tier?.min_guests, `${label}: guests from`, LIMITS.guests);
+      const max = wholeNumber(tier?.max_guests, `${label}: guests to`, LIMITS.guests);
       if (max < min) {
-        throw ApiError.badRequest('In each guest range the most guests must not be fewer than the fewest.', {
-          [`tiers[${index}]`]: 'max_guests must be ≥ min_guests',
+        throw ApiError.badRequest(`${label}: in each guest range the most guests must not be fewer than the fewest.`, {
+          [`tiers[${i}]`]: 'max_guests must be ≥ min_guests',
         });
       }
-      return { min_guests: min, max_guests: max, price_per_plate_rwf: wholeNumber(tier?.price_per_plate_rwf, `tiers[${index}].price_per_plate_rwf`, LIMITS.plate_rwf) };
+      return { min_guests: min, max_guests: max, price_per_plate_rwf: wholeNumber(tier?.price_per_plate_rwf, `${label}: price per plate`, LIMITS.plate_rwf) };
     })
     .sort((a, b) => a.min_guests - b.min_guests);
   for (let i = 1; i < tiers.length; i += 1) {
     if (tiers[i].min_guests <= tiers[i - 1].max_guests) {
-      throw ApiError.badRequest('Guest ranges must not overlap.', { tiers: `${tiers[i - 1].min_guests}–${tiers[i - 1].max_guests} overlaps the next range` });
+      throw ApiError.badRequest(`${label}: guest ranges must not overlap.`, { tiers: `${tiers[i - 1].min_guests}–${tiers[i - 1].max_guests} overlaps the next range` });
     }
   }
 
-  const rawMenu = Array.isArray(body.menu) ? body.menu : [];
-  const menu = rawMenu.map((item, index) => text(item, `menu[${index}]`, 120)).filter(Boolean);
+  const rawMenu = Array.isArray(raw.menu) ? raw.menu : [];
+  const menu = rawMenu.map((item, i) => text(item, `${label}: menu item ${i + 1}`, 120)).filter(Boolean);
   if (menu.length > LIMITS.menu_items) {
-    throw ApiError.badRequest(`List at most ${LIMITS.menu_items} menu items.`, { menu: `max ${LIMITS.menu_items}` });
+    throw ApiError.badRequest(`${label}: list at most ${LIMITS.menu_items} menu items.`, { menu: `max ${LIMITS.menu_items}` });
+  }
+
+  const enabled = raw.enabled !== false;
+  // Customers can only order a package that has a price and a menu; a
+  // package that is off may be saved unfinished.
+  if (enabled && tiers.length === 0) {
+    throw ApiError.badRequest(`${label}: add at least one guest range with a plate price, or turn the package off.`, { tiers: 'required' });
+  }
+  if (enabled && menu.length === 0) {
+    throw ApiError.badRequest(`${label}: list what is on the plate, or turn the package off.`, { menu: 'required' });
+  }
+
+  return {
+    id: isPackageId(raw.id) ? raw.id : crypto.randomBytes(5).toString('hex'),
+    name,
+    description: text(raw.description, `${label}: description`, 300),
+    enabled,
+    tiers,
+    menu,
+    portion: text(raw.portion, `${label}: quantity per person`, 300),
+    service_style: oneOf(raw.service_style ?? 'buffet', `${label}: service`, SERVICE_STYLES),
+    service_details: text(raw.service_details, `${label}: service details`, 500),
+  };
+}
+
+/** Validates the kitchen's big-event settings: its packages and its delivery fee. */
+function parseEventPackage(body = {}) {
+  const enabled = body.enabled === true;
+  const rawPackages = Array.isArray(body.packages) ? body.packages : [];
+  if (rawPackages.length > LIMITS.packages) {
+    throw ApiError.badRequest(`Add at most ${LIMITS.packages} event packages.`, { packages: `max ${LIMITS.packages}` });
+  }
+  const packages = rawPackages.map(parsePackage);
+  const ids = new Set();
+  for (const pkg of packages) {
+    // Two packages sent with the same id (e.g. a copy): the copy gets its own.
+    if (ids.has(pkg.id)) pkg.id = crypto.randomBytes(5).toString('hex');
+    ids.add(pkg.id);
   }
 
   // Every kitchen delivers when the customer asks; customers may also pick up.
   const [minFee, maxFee] = LIMITS.delivery_fee_rwf;
   const deliveryFeeRanges = parseDistanceFeeRanges(body.delivery_fee_ranges ?? [], { minFee, maxFee, maxKm: LIMITS.delivery_km });
-  const offer = {
-    enabled,
-    tiers,
-    menu,
-    portion: text(body.portion, 'portion', 300),
-    service_style: oneOf(body.service_style ?? 'buffet', 'service_style', SERVICE_STYLES),
-    service_details: text(body.service_details, 'service_details', 500),
-    delivery_fee_ranges: deliveryFeeRanges,
-    delivery_details: text(body.delivery_details, 'delivery_details', 500),
-  };
 
-  // Customers can only find an offer that has a price and a menu.
-  if (enabled && tiers.length === 0) {
-    throw ApiError.badRequest('Add at least one guest range with a plate price before turning big events on.', { tiers: 'required' });
+  if (enabled && !packages.some((pkg) => pkg.enabled)) {
+    throw ApiError.badRequest('Turn on at least one event package before turning big events on.', { packages: 'required' });
   }
   if (enabled && deliveryFeeRanges.length === 0) {
     throw ApiError.badRequest('Set your delivery fee by distance before turning big events on.', { delivery_fee_ranges: 'required' });
   }
-  if (enabled && menu.length === 0) {
-    throw ApiError.badRequest('List what is on the plate before turning big events on.', { menu: 'required' });
-  }
-  return offer;
+  return {
+    enabled,
+    packages,
+    delivery_fee_ranges: deliveryFeeRanges,
+    delivery_details: text(body.delivery_details, 'delivery_details', 500),
+  };
 }
 
-/** The kitchen's stored offer with defaults filled in. */
+const normalizePackage = (pkg) => ({
+  id: pkg.id,
+  name: pkg.name || LEGACY_PACKAGE.name,
+  description: pkg.description || '',
+  enabled: pkg.enabled !== false,
+  tiers: (pkg.tiers || []).map(({ min_guests, max_guests, price_per_plate_rwf }) => ({ min_guests, max_guests, price_per_plate_rwf })),
+  menu: pkg.menu || [],
+  portion: pkg.portion || '',
+  service_style: pkg.service_style || 'buffet',
+  service_style_label: labelOf(SERVICE_STYLES, pkg.service_style || 'buffet'),
+  service_details: pkg.service_details || '',
+});
+
+/** The kitchen's stored big-event settings with defaults filled in. */
 function eventPackageFor(vendor) {
   const own = vendor?.event_package || {};
+  const packages = own.packages?.length
+    ? own.packages
+    : own.tiers?.length || own.menu?.length
+      ? [{ ...own, ...LEGACY_PACKAGE, enabled: true }]
+      : [];
   return {
     enabled: Boolean(own.enabled),
-    tiers: (own.tiers || []).map(({ min_guests, max_guests, price_per_plate_rwf }) => ({ min_guests, max_guests, price_per_plate_rwf })),
-    menu: own.menu || [],
-    portion: own.portion || '',
-    service_style: own.service_style || 'buffet',
-    service_style_label: labelOf(SERVICE_STYLES, own.service_style || 'buffet'),
-    service_details: own.service_details || '',
+    packages: packages.map(normalizePackage),
     delivery_fee_ranges: (own.delivery_fee_ranges || []).map(({ from_km, to_km, fee_rwf }) => ({ from_km, to_km: to_km ?? null, fee_rwf })),
     delivery_details: own.delivery_details || '',
   };
 }
 
+/** Packages customers can order: big events on, the package on, priced and with a menu. */
+const orderablePackages = (offer) =>
+  offer.enabled ? offer.packages.filter((pkg) => pkg.enabled && pkg.tiers.length && pkg.menu.length) : [];
+
+const tierFor = (pkg, guests) => pkg.tiers.find((t) => guests >= t.min_guests && guests <= t.max_guests);
+
 /**
- * The cost for `guests` people, or null when no range covers that number:
- * `pickup_total_rwf` when the customer picks the food up, `total_rwf` when
- * the kitchen delivers. The delivery fee needs the distance from the kitchen
- * to the customer (`distanceKm`); without it `delivery_fee_rwf` is null and
- * `total_rwf` is the food only.
+ * A package's cost for `guests` people, or null when no range covers that
+ * number: `pickup_total_rwf` when the customer picks the food up, `total_rwf`
+ * when the kitchen delivers. The delivery fee needs the distance from the
+ * kitchen to the customer (`distanceKm`); without it `delivery_fee_rwf` is
+ * null and `total_rwf` is the food only.
  */
-function eventQuoteFor(offer, guests, distanceKm = null) {
-  const tier = offer.tiers.find((t) => guests >= t.min_guests && guests <= t.max_guests);
+function eventQuoteFor(offer, pkg, guests, distanceKm = null) {
+  const tier = tierFor(pkg, guests);
   if (!tier) return null;
   const food = guests * tier.price_per_plate_rwf;
   const deliveryRange = typeof distanceKm === 'number' ? rangeForDistance(offer.delivery_fee_ranges, distanceKm) : null;
@@ -173,41 +237,69 @@ function eventQuoteFor(offer, guests, distanceKm = null) {
   };
 }
 
-/** What customers see of a kitchen's offer in the Big Event list. */
+/**
+ * What customers see of a kitchen in the Big Event list: its orderable
+ * packages (with `guests`, only those covering that number, each with its
+ * quote, cheapest first), plus the shared delivery fee. Null when none.
+ */
 function serializeEventOffer(vendor, guests = null, distanceKm = null) {
   const offer = eventPackageFor(vendor);
-  if (!offer.enabled) return null;
-  const prices = offer.tiers.map((t) => t.price_per_plate_rwf);
+  const packages = orderablePackages(offer)
+    .map((pkg) => {
+      const prices = pkg.tiers.map((t) => t.price_per_plate_rwf);
+      return {
+        ...pkg,
+        min_guests: pkg.tiers[0].min_guests,
+        max_guests: pkg.tiers[pkg.tiers.length - 1].max_guests,
+        from_price_per_plate_rwf: Math.min(...prices),
+        quote: guests ? eventQuoteFor(offer, pkg, guests, distanceKm) : null,
+      };
+    })
+    .filter((pkg) => !guests || pkg.quote)
+    .sort((a, b) => (a.quote?.food_total_rwf ?? a.from_price_per_plate_rwf) - (b.quote?.food_total_rwf ?? b.from_price_per_plate_rwf));
+  if (!packages.length) return null;
   return {
-    ...offer,
-    min_guests: offer.tiers[0]?.min_guests ?? null,
-    max_guests: offer.tiers[offer.tiers.length - 1]?.max_guests ?? null,
-    from_price_per_plate_rwf: prices.length ? Math.min(...prices) : null,
-    quote: guests ? eventQuoteFor(offer, guests, distanceKm) : null,
+    packages,
+    delivery_fee_ranges: offer.delivery_fee_ranges,
+    delivery_details: offer.delivery_details,
+    min_guests: Math.min(...packages.map((pkg) => pkg.min_guests)),
+    max_guests: Math.max(...packages.map((pkg) => pkg.max_guests)),
+    from_price_per_plate_rwf: Math.min(...packages.map((pkg) => pkg.from_price_per_plate_rwf)),
   };
 }
 
 /**
- * A big-event order's price, worked out on the server from the kitchen's
- * offer: guests × the plate price of their range, plus (delivery only) the
- * kitchen's fee for the road distance. Without a distance yet, a delivery
- * price has `delivery_fee_rwf` null and the food as its total. Throws when
- * the offer is off or no guest range covers `guests`.
+ * A big-event order's price, worked out on the server from the package the
+ * customer chose: guests × the plate price of their range, plus (delivery
+ * only) the kitchen's fee for the road distance. Without a distance yet, a
+ * delivery price has `delivery_fee_rwf` null and the food as its total.
+ * `package` is the package priced. Throws when the package can't be ordered
+ * or no guest range covers `guests`.
  */
-function priceEventOrder(offer, guests, { pickup, distanceKm = null }) {
-  if (!offer.enabled) {
+function priceEventOrder(offer, guests, { packageId = null, pickup, distanceKm = null }) {
+  const orderable = orderablePackages(offer);
+  if (!orderable.length) {
     throw new ApiError(409, 'EVENTS_UNAVAILABLE', "This kitchen isn't taking big-event orders right now.");
   }
-  const tier = offer.tiers.find((t) => guests >= t.min_guests && guests <= t.max_guests);
+  // Without a choice, a kitchen with a single package means that one.
+  const pkg = packageId ? orderable.find((p) => p.id === packageId) : orderable.length === 1 ? orderable[0] : null;
+  if (!pkg) {
+    throw ApiError.badRequest(
+      packageId ? 'That event package is no longer available. Choose another one.' : 'Choose one of the kitchen’s event packages.',
+      { package_id: 'expected one of the kitchen’s packages' }
+    );
+  }
+  const tier = tierFor(pkg, guests);
   if (!tier) {
-    const min = offer.tiers[0]?.min_guests;
-    const max = offer.tiers[offer.tiers.length - 1]?.max_guests;
-    throw new ApiError(409, 'GUESTS_OUT_OF_RANGE', `This kitchen hosts events for ${min}–${max} guests, not ${guests}.`);
+    const min = pkg.tiers[0].min_guests;
+    const max = pkg.tiers[pkg.tiers.length - 1].max_guests;
+    throw new ApiError(409, 'GUESTS_OUT_OF_RANGE', `"${pkg.name}" is for ${min}–${max} guests, not ${guests}.`);
   }
   const food = guests * tier.price_per_plate_rwf;
   const range = pickup || distanceKm == null ? null : rangeForDistance(offer.delivery_fee_ranges, distanceKm);
   const deliveryFee = pickup ? 0 : range ? range.fee_rwf : null;
   return {
+    package: pkg,
     guests,
     price_per_plate_rwf: tier.price_per_plate_rwf,
     tier: { min_guests: tier.min_guests, max_guests: tier.max_guests },
@@ -224,16 +316,24 @@ function parseEventOrder(body = {}) {
   if (!['delivery', 'pickup'].includes(body.fulfillment)) {
     throw ApiError.badRequest('Choose delivery or pick-up.', { fulfillment: 'expected delivery or pickup' });
   }
-  return { guests, pickup: body.fulfillment === 'pickup' };
+  const packageId = isPackageId(body.package_id) ? body.package_id : null;
+  return { guests, pickup: body.fulfillment === 'pickup', packageId };
 }
 
-/** Mongo filter: kitchens with big events on, covering `guests` when given. */
+/**
+ * Mongo filter: kitchens with big events on and an orderable package
+ * (covering `guests` when given). Kitchens still on the old single offer
+ * (no packages saved yet) match on its top-level guest ranges.
+ */
 function eventsMongoFilter(guests = null) {
-  const filter = { 'event_package.enabled': true };
-  if (guests) {
-    filter['event_package.tiers'] = { $elemMatch: { min_guests: { $lte: guests }, max_guests: { $gte: guests } } };
-  }
-  return filter;
+  const covers = guests ? { $elemMatch: { min_guests: { $lte: guests }, max_guests: { $gte: guests } } } : { $exists: true, $ne: [] };
+  return {
+    'event_package.enabled': true,
+    $or: [
+      { 'event_package.packages': { $elemMatch: { enabled: true, 'menu.0': { $exists: true }, tiers: covers } } },
+      { 'event_package.packages.0': { $exists: false }, 'event_package.menu.0': { $exists: true }, 'event_package.tiers': covers },
+    ],
+  };
 }
 
 /** Optional `?guests=` on the customer lists (null when absent). */

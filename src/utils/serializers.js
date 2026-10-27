@@ -300,6 +300,7 @@ function serializeOrderEvent(order) {
   const event = order.event;
   if (!event?.guests) return null;
   return {
+    package_name: event.package_name || '',
     guests: event.guests,
     price_per_plate_rwf: event.price_per_plate_rwf,
     menu: event.menu || [],

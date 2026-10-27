@@ -32,7 +32,14 @@ const { isVendorLive } = require('../utils/vendorPresence');
 const { usesHandoverCode, isKitchenDelivered } = require('../utils/fulfillment');
 const { serializeOrderEvent } = require('../utils/serializers');
 const routeDistanceService = require('./routeDistanceService');
-const { eventPackageFor, priceEventOrder, parseEventOrder, depositPlan, EVENT_ORDER } = require('../config/eventPackages');
+const {
+  eventPackageFor,
+  serializeEventOffer,
+  priceEventOrder,
+  parseEventOrder,
+  depositPlan,
+  EVENT_ORDER,
+} = require('../config/eventPackages');
 
 const { orders } = config;
 
@@ -679,13 +686,17 @@ class OrderService {
    * is priced by the road distance with the kitchen's own fee ranges.
    */
   async #priceEvent(body = {}, { requireLocation = true } = {}) {
-    const { guests, pickup } = parseEventOrder(body);
+    const { guests, pickup, packageId: chosen } = parseEventOrder(body);
     if (!mongoose.isValidObjectId(body.vendor_id)) {
       throw ApiError.badRequest('vendor_id must be a valid id.', { vendor_id: 'expected a valid id' });
     }
     const vendor = await vendorRepository.findActiveById(body.vendor_id);
     if (!vendor) throw ApiError.notFound('Kitchen not found.', 'VENDOR_NOT_FOUND');
     const offer = eventPackageFor(vendor);
+    // The kitchen's packages for these guests (cheapest first), or all of them.
+    const packages = (serializeEventOffer(vendor, guests) ?? serializeEventOffer(vendor))?.packages ?? [];
+    // No choice yet: the cheapest package for these guests.
+    const packageId = chosen || packages[0]?.id || null;
 
     let deliveryLocation;
     let route = null;
@@ -710,8 +721,8 @@ class OrderService {
         { latitude: deliveryLocation.latitude, longitude: deliveryLocation.longitude }
       );
     }
-    const price = priceEventOrder(offer, guests, { pickup, distanceKm: route?.distance_km ?? null });
-    return { vendor, offer, guests, pickup, deliveryLocation, route, price };
+    const price = priceEventOrder(offer, guests, { packageId, pickup, distanceKm: route?.distance_km ?? null });
+    return { vendor, offer, packages, guests, pickup, deliveryLocation, route, price };
   }
 
   /**
@@ -720,7 +731,8 @@ class OrderService {
    * food price only (`delivery_fee_rwf` null).
    */
   async eventQuote(body = {}) {
-    const { vendor, offer, pickup, route, price } = await this.#priceEvent(body, { requireLocation: false });
+    const { vendor, offer, packages, pickup, route, price } = await this.#priceEvent(body, { requireLocation: false });
+    const { package: pkg, ...amounts } = price;
     return {
       vendor: {
         id: String(vendor._id),
@@ -729,17 +741,24 @@ class OrderService {
         address: vendor.address || null,
         avatar_url: vendor.profile_image_url || null,
       },
+      // The package priced, the kitchen's other packages to switch to, and
+      // the shared delivery fee.
       offer: {
-        tiers: offer.tiers,
-        menu: offer.menu,
-        portion: offer.portion,
-        service_style_label: offer.service_style_label,
-        service_details: offer.service_details,
+        package: pkg,
+        packages: packages.map(({ id, name, description, min_guests, max_guests, from_price_per_plate_rwf }) => ({
+          id,
+          name,
+          description,
+          min_guests,
+          max_guests,
+          from_price_per_plate_rwf,
+        })),
         delivery_details: offer.delivery_details,
         delivery_fee_ranges: offer.delivery_fee_ranges,
       },
       quote: {
-        ...price,
+        ...amounts,
+        package_id: pkg.id,
         fulfillment: pickup ? 'pickup' : 'vendor_delivery',
         distance_km: route ? Math.round(route.distance_km * 10) / 10 : null,
         distance_source: route?.source ?? null,
@@ -775,11 +794,12 @@ class OrderService {
     }
 
     const { vendor, offer, guests, pickup, deliveryLocation, route, price } = await this.#priceEvent(body);
+    const pkg = price.package;
     const note = typeof body.note === 'string' ? body.note.trim().slice(0, 300) : '';
     if (note) deliveryLocation.note = [deliveryLocation.note, note].filter(Boolean).join(' | ');
 
     const fulfillment = pickup ? 'pickup' : 'vendor_delivery';
-    const menuSummary = offer.menu.join(', ');
+    const menuSummary = pkg.menu.join(', ');
     // Half now, the rest a day before the event.
     const plan = depositPlan(price.total_rwf, eventAt);
     const now = new Date();
@@ -790,19 +810,21 @@ class OrderService {
       items: [
         {
           menu_item_id: null,
-          name: `Big event plate${menuSummary ? ` (${menuSummary})` : ''}`.slice(0, 200),
+          name: `${pkg.name}${menuSummary ? ` (${menuSummary})` : ''}`.slice(0, 200),
           price_rwf: price.price_per_plate_rwf,
           quantity: guests,
           subtotal_rwf: price.food_total_rwf,
         },
       ],
       event: {
+        package_id: pkg.id,
+        package_name: pkg.name,
         guests,
         price_per_plate_rwf: price.price_per_plate_rwf,
-        menu: offer.menu,
-        portion: offer.portion,
-        service_style_label: offer.service_style_label,
-        service_details: offer.service_details,
+        menu: pkg.menu,
+        portion: pkg.portion,
+        service_style_label: pkg.service_style_label,
+        service_details: pkg.service_details,
         delivery_details: pickup ? '' : offer.delivery_details,
       },
       subtotal_rwf: price.food_total_rwf,
@@ -826,7 +848,7 @@ class OrderService {
         {
           status: 'placed',
           at: now,
-          note: `Big event order for ${guests} guests (${pickup ? 'customer pickup' : 'delivered by the kitchen'})`,
+          note: `Big event order: ${pkg.name} for ${guests} guests (${pickup ? 'customer pickup' : 'delivered by the kitchen'})`,
         },
       ],
       eta_minutes: null,

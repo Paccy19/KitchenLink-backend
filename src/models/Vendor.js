@@ -43,19 +43,32 @@ const vendorSchema = new mongoose.Schema(
     // (fee by distance range).
     event_package: {
       enabled: { type: Boolean, default: false },
-      tiers: [
+      // The kitchen's ways of hosting events ("Wedding buffet", "Corporate
+      // lunch" …), each with its own guest ranges, plate and service.
+      // Kitchens saved before packages existed keep their single offer in the
+      // old top-level fields (read as one package, see eventPackageFor).
+      packages: [
         {
           _id: false,
-          min_guests: { type: Number, min: 1, required: true },
-          max_guests: { type: Number, min: 1, required: true },
-          price_per_plate_rwf: { type: Number, min: 0, required: true },
+          id: { type: String, required: true },
+          name: { type: String, required: true, trim: true },
+          description: { type: String, default: '', trim: true },
+          enabled: { type: Boolean, default: true },
+          tiers: [
+            {
+              _id: false,
+              min_guests: { type: Number, min: 1, required: true },
+              max_guests: { type: Number, min: 1, required: true },
+              price_per_plate_rwf: { type: Number, min: 0, required: true },
+            },
+          ],
+          menu: [{ type: String, trim: true }],
+          portion: { type: String, default: '', trim: true },
+          service_style: { type: String, enum: ['buffet', 'served', 'drop_off'], default: 'buffet' },
+          service_details: { type: String, default: '', trim: true },
         },
       ],
-      menu: [{ type: String, trim: true }],
-      portion: { type: String, default: '', trim: true },
-      service_style: { type: String, enum: ['buffet', 'served', 'drop_off'], default: 'buffet' },
-      service_details: { type: String, default: '', trim: true },
-      // Delivery fee by distance from the kitchen, like the admin's ranges.
+      // One delivery fee by distance for all packages, like the admin's ranges.
       delivery_fee_ranges: [
         {
           _id: false,
