@@ -7,7 +7,6 @@ const paymentRepository = require('../repositories/paymentRepository');
 const transactionRepository = require('../repositories/transactionRepository');
 const notificationService = require('./notificationService');
 const adminActionLogService = require('./adminActionLogService');
-const adminAuthService = require('./adminAuthService');
 const { activeProvider } = require('./payoutProviders');
 
 const MOBILE_MONEY_PHONE = /^0(78|79|73|72)\d{7}$/;
@@ -264,7 +263,7 @@ class RefundService {
    *               another number. Still owed.
    *  - pending:   retry a failed refund
    */
-  async adminUpdate(refundId, { status, reference, reason, action_code } = {}, admin, req) {
+  async adminUpdate(refundId, { status, reference, reason } = {}, admin, req) {
     parseObjectId(refundId, 'refund_id');
     const next = parseEnum(status, REFUND_STATUSES, 'status');
     if (!next) {
@@ -287,7 +286,8 @@ class RefundService {
           reference: 'required (e.g. the MoMo transaction id)',
         });
       }
-      await adminAuthService.confirmLargeMoney(admin, refund.amount_rwf, action_code);
+      // No SMS code: this records a transfer the admin already made by hand
+      // (the reference is the proof), it doesn't move money itself.
       updated = await this.#complete(refund, { reference: cleanReference, admin });
     } else if (next === 'failed') {
       if (refund.status !== 'pending') {
