@@ -22,15 +22,27 @@ const orderSchema = new mongoose.Schema(
     },
     items: [
       {
+        // Null on big-event orders: their one line is the kitchen's event plate.
         menu_item_id: {
           type: mongoose.Schema.Types.ObjectId,
           ref: 'MenuItem',
-          required: true,
+          default: null,
         },
         name: { type: String, required: true },
         price_rwf: { type: Number, required: true },
         quantity: { type: Number, required: true, min: 1 },
-        subtotal_rwf: { type: Number, required: true },
+        // Big-event orders (Big Event button): what the customer booked from the
+    // kitchen's event offer, kept as it was when they ordered.
+    event: {
+      guests: { type: Number, min: 1, default: null },
+      price_per_plate_rwf: { type: Number, min: 0, default: null },
+      menu: [{ type: String }],
+      portion: { type: String, default: '' },
+      service_style_label: { type: String, default: '' },
+      service_details: { type: String, default: '' },
+      delivery_details: { type: String, default: '' },
+    },
+    subtotal_rwf: { type: Number, required: true },
         image_url: { type: String, default: '' },
         options: [
           {

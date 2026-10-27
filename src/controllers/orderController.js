@@ -9,6 +9,14 @@ const checkout = asyncHandler(async (req, res) => {
   res.json(await orderService.checkout(req.customer._id, req.body));
 });
 
+const eventQuote = asyncHandler(async (req, res) => {
+  res.json(await orderService.eventQuote(req.body));
+});
+
+const eventCheckout = asyncHandler(async (req, res) => {
+  res.json(await orderService.eventCheckout(req.customer._id, req.body));
+});
+
 const listOrders = asyncHandler(async (req, res) => {
   res.json(await orderService.list(req.customer._id, req.query));
 });
@@ -43,6 +51,8 @@ module.exports = {
   switchToDelivery,
   paymentMethods,
   checkout,
+  eventQuote,
+  eventCheckout,
   listOrders,
   getOrder,
   trackOrder,

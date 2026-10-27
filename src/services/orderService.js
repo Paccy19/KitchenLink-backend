@@ -30,6 +30,9 @@ const { serializeRefund } = refundService;
 const refundRepository = require('../repositories/refundRepository');
 const { isVendorLive } = require('../utils/vendorPresence');
 const { usesHandoverCode, isKitchenDelivered } = require('../utils/fulfillment');
+const { serializeOrderEvent } = require('../utils/serializers');
+const routeDistanceService = require('./routeDistanceService');
+const { eventPackageFor, priceEventOrder, parseEventOrder, EVENT_ORDER } = require('../config/eventPackages');
 
 const { orders } = config;
 
@@ -177,6 +180,7 @@ const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
     orders.orderTypeLabels[order.order_type || 'immediate'] || 'Immediate Order',
   scheduled_for: order.scheduled_for ?? null,
   special_text: order.special_text || '',
+  event: serializeOrderEvent(order),
   status: order.status,
   status_label: customerStatusLabel(order),
   payment_method: order.payment_method,
@@ -196,7 +200,7 @@ const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
       }
     : null,
   items: order.items.map((item) => ({
-    menu_item_id: String(item.menu_item_id),
+    menu_item_id: item.menu_item_id ? String(item.menu_item_id) : null,
     name: item.name,
     price_rwf: item.price_rwf,
     quantity: item.quantity,
@@ -543,6 +547,27 @@ class OrderService {
           : scheduledFor,
     });
 
+    const { updatedOrder, payment } = await this.#payAndAnnounce(order, {
+      customerId,
+      vendor,
+      paymentMethod,
+      simulate,
+      usesCode,
+      kitchenBrings,
+    });
+
+    await cartRepository.clear(customerId);
+
+    return serializeDetail({ ...order, ...updatedOrder }, vendor, payment);
+  }
+
+  /**
+   * After an order is created: charge it, then tell the kitchen (paid orders
+   * only), offer it to delivery workers, send a pickup / handover code, and
+   * let the admins know. Shared by the basket checkout and big-event orders.
+   */
+  async #payAndAnnounce(order, { customerId, vendor, paymentMethod, simulate, usesCode, kitchenBrings }) {
+    const total = order.total_rwf;
     const { paymentStatus, payment } = await this.#initiatePayment(
       order,
       paymentMethod,
@@ -572,8 +597,6 @@ class OrderService {
       }
     }
 
-    await cartRepository.clear(customerId);
-
     notificationService
       .notifyAdmin({
         type: 'order_placed',
@@ -587,8 +610,8 @@ class OrderService {
           vendor_name: vendor.name || null,
           total_rwf: total,
           payment_status: paymentStatus,
-          order_type: orderType,
-          scheduled_for: scheduledFor ? scheduledFor.toISOString() : null,
+          order_type: order.order_type,
+          scheduled_for: order.scheduled_for ? new Date(order.scheduled_for).toISOString() : null,
         },
       })
       .catch(() => null);
@@ -610,6 +633,170 @@ class OrderService {
         .catch(() => null);
     }
 
+    return { updatedOrder, payment };
+  }
+
+  /**
+   * Big events: the kitchen, its offer and the price for the customer's
+   * choices (guests, delivery or pick-up, and where the event is). Delivery
+   * is priced by the road distance with the kitchen's own fee ranges.
+   */
+  async #priceEvent(body = {}, { requireLocation = true } = {}) {
+    const { guests, pickup } = parseEventOrder(body);
+    if (!mongoose.isValidObjectId(body.vendor_id)) {
+      throw ApiError.badRequest('vendor_id must be a valid id.', { vendor_id: 'expected a valid id' });
+    }
+    const vendor = await vendorRepository.findActiveById(body.vendor_id);
+    if (!vendor) throw ApiError.notFound('Kitchen not found.', 'VENDOR_NOT_FOUND');
+    const offer = eventPackageFor(vendor);
+
+    let deliveryLocation;
+    let route = null;
+    if (pickup) {
+      const note = body.delivery_location?.note;
+      deliveryLocation = { note: typeof note === 'string' ? note.trim().slice(0, 300) : '' };
+    } else if (!requireLocation && body.delivery_location?.latitude == null) {
+      // Quote before the customer has pinned the event: food price only.
+      deliveryLocation = null;
+    } else {
+      // A quote only needs the pin; the order also needs the written address.
+      const location = body.delivery_location || {};
+      deliveryLocation = parseDeliveryLocation(
+        requireLocation ? location : { ...location, address: location.address || 'Event venue' }
+      );
+      const [lng, lat] = vendor.location?.coordinates ?? [];
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        throw ApiError.conflict('This kitchen has no location set, so delivery cannot be priced.', 'VENDOR_LOCATION_MISSING');
+      }
+      route = await routeDistanceService.measure(
+        { latitude: lat, longitude: lng },
+        { latitude: deliveryLocation.latitude, longitude: deliveryLocation.longitude }
+      );
+    }
+    const price = priceEventOrder(offer, guests, { pickup, distanceKm: route?.distance_km ?? null });
+    return { vendor, offer, guests, pickup, deliveryLocation, route, price };
+  }
+
+  /**
+   * Big events: the kitchen's offer and the exact price before paying (no
+   * order is created). Without the event's location a delivery quote has the
+   * food price only (`delivery_fee_rwf` null).
+   */
+  async eventQuote(body = {}) {
+    const { vendor, offer, pickup, route, price } = await this.#priceEvent(body, { requireLocation: false });
+    return {
+      vendor: {
+        id: String(vendor._id),
+        name: vendor.name,
+        neighborhood: vendor.neighborhood || null,
+        address: vendor.address || null,
+        avatar_url: vendor.profile_image_url || null,
+      },
+      offer: {
+        tiers: offer.tiers,
+        menu: offer.menu,
+        portion: offer.portion,
+        service_style_label: offer.service_style_label,
+        service_details: offer.service_details,
+        delivery_details: offer.delivery_details,
+        delivery_fee_ranges: offer.delivery_fee_ranges,
+      },
+      quote: {
+        ...price,
+        fulfillment: pickup ? 'pickup' : 'vendor_delivery',
+        distance_km: route ? Math.round(route.distance_km * 10) / 10 : null,
+        distance_source: route?.source ?? null,
+        min_lead_hours: EVENT_ORDER.min_lead_hours,
+      },
+    };
+  }
+
+  /**
+   * Big events: the customer orders the kitchen's event plate for their
+   * guests, for a date and time at least a day away. The kitchen brings it
+   * (and keeps its delivery fee) or the customer picks it up; either way the
+   * kitchen finishes the order with the customer's code, like other orders it
+   * hands over itself. Payment, the kitchen's orders and payouts work as for
+   * any order.
+   */
+  async eventCheckout(customerId, body = {}) {
+    const paymentMethod = parsePaymentMethod(body.payment_method);
+    const paymentDetails = parsePaymentDetails(paymentMethod, body.payment_details);
+    assertPaymentsAvailable();
+
+    const eventAt = parseScheduledFor(body.event_at, { minLeadMinutes: 0, maxDaysAhead: EVENT_ORDER.max_days_ahead });
+    if (eventAt.getTime() < Date.now() + EVENT_ORDER.min_lead_hours * 60 * 60 * 1000) {
+      throw ApiError.badRequest(
+        `Big events must be booked at least ${EVENT_ORDER.min_lead_hours} hours ahead so the kitchen can prepare. Pick a later date.`,
+        { event_at: `expected at least ${EVENT_ORDER.min_lead_hours} hours from now` }
+      );
+    }
+
+    const { vendor, offer, guests, pickup, deliveryLocation, route, price } = await this.#priceEvent(body);
+    const note = typeof body.note === 'string' ? body.note.trim().slice(0, 300) : '';
+    if (note) deliveryLocation.note = [deliveryLocation.note, note].filter(Boolean).join(' | ');
+
+    const fulfillment = pickup ? 'pickup' : 'vendor_delivery';
+    const menuSummary = offer.menu.join(', ');
+    const now = new Date();
+    const order = await orderRepository.create({
+      order_number: generateOrderNumber(),
+      customer_id: customerId,
+      vendor_id: vendor._id,
+      items: [
+        {
+          menu_item_id: null,
+          name: `Big event plate${menuSummary ? ` (${menuSummary})` : ''}`.slice(0, 200),
+          price_rwf: price.price_per_plate_rwf,
+          quantity: guests,
+          subtotal_rwf: price.food_total_rwf,
+        },
+      ],
+      event: {
+        guests,
+        price_per_plate_rwf: price.price_per_plate_rwf,
+        menu: offer.menu,
+        portion: offer.portion,
+        service_style_label: offer.service_style_label,
+        service_details: offer.service_details,
+        delivery_details: pickup ? '' : offer.delivery_details,
+      },
+      subtotal_rwf: price.food_total_rwf,
+      delivery_fee_rwf: price.delivery_fee_rwf,
+      delivery_distance_km: route?.distance_km ?? null,
+      delivery_distance_source: route?.source ?? null,
+      total_rwf: price.total_rwf,
+      fulfillment,
+      // Completed with the customer's code at handover (collection or delivery).
+      pickup_code: String(crypto.randomInt(100000, 1000000)),
+      pickup_code_sent_at: now,
+      pickup_code_attempts: 0,
+      delivery_location: deliveryLocation,
+      payment_method: paymentMethod,
+      payment_details: paymentDetails,
+      payment_status: 'pending',
+      order_type: 'scheduled',
+      scheduled_for: eventAt,
+      status: 'placed',
+      status_history: [
+        {
+          status: 'placed',
+          at: now,
+          note: `Big event order for ${guests} guests (${pickup ? 'customer pickup' : 'delivered by the kitchen'})`,
+        },
+      ],
+      eta_minutes: null,
+      estimated_delivery_at: eventAt,
+    });
+
+    const { updatedOrder, payment } = await this.#payAndAnnounce(order, {
+      customerId,
+      vendor,
+      paymentMethod,
+      simulate: body.payment_simulate,
+      usesCode: true,
+      kitchenBrings: !pickup,
+    });
     return serializeDetail({ ...order, ...updatedOrder }, vendor, payment);
   }
 

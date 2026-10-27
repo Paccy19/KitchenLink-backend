@@ -293,6 +293,21 @@ function vendorOrderActions(order, status) {
   return { allowed, readyAvailableAt };
 }
 
+/** A big-event order's booking (guests, plate, service), or null for other orders. */
+function serializeOrderEvent(order) {
+  const event = order.event;
+  if (!event?.guests) return null;
+  return {
+    guests: event.guests,
+    price_per_plate_rwf: event.price_per_plate_rwf,
+    menu: event.menu || [],
+    portion: event.portion || '',
+    service_style_label: event.service_style_label || '',
+    service_details: event.service_details || '',
+    delivery_details: event.delivery_details || '',
+  };
+}
+
 function serializeVendorOrder(order, { customer } = {}) {
   const status = toVendorStatus(order.status);
   const actions = vendorOrderActions(order, status);
@@ -314,6 +329,7 @@ function serializeVendorOrder(order, { customer } = {}) {
     ready_available_at: actions.readyAvailableAt,
     fulfillment: order.fulfillment || 'delivery',
     fulfillment_label: config.orders.fulfillmentLabels[order.fulfillment || 'delivery'],
+    event: serializeOrderEvent(order),
     // Too far for platform workers: the kitchen brings it and keeps the travel fee.
     kitchen_delivers: isKitchenDelivered(order),
     // Only for orders the customer collects (or the kitchen brings): the
@@ -334,7 +350,7 @@ function serializeVendorOrder(order, { customer } = {}) {
         }
       : null,
     items: (order.items || []).map((item) => ({
-      menu_item_id: String(item.menu_item_id),
+      menu_item_id: item.menu_item_id ? String(item.menu_item_id) : null,
       name: item.name,
       price_rwf: item.price_rwf,
       quantity: item.quantity,
@@ -1046,6 +1062,7 @@ function serializeAdminAction(log) {
 }
 
 module.exports = {
+  serializeOrderEvent,
   serializeCategory,
   serializeVendorCard,
   serializeVendorSpecial,

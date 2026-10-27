@@ -26,6 +26,10 @@ const LIMITS = {
   menu_items: 30,
 };
 
+// Ordering a big event: the kitchen needs time to shop and cook for many
+// guests, so the event must be at least a day away (and within a year).
+const EVENT_ORDER = { min_lead_hours: 24, max_days_ahead: 365 };
+
 const codes = (list) => list.map((entry) => entry.code);
 const labelOf = (list, code) => list.find((entry) => entry.code === code)?.label ?? '';
 
@@ -166,6 +170,46 @@ function serializeEventOffer(vendor, guests = null, distanceKm = null) {
   };
 }
 
+/**
+ * A big-event order's price, worked out on the server from the kitchen's
+ * offer: guests × the plate price of their range, plus (delivery only) the
+ * kitchen's fee for the road distance. Without a distance yet, a delivery
+ * price has `delivery_fee_rwf` null and the food as its total. Throws when
+ * the offer is off or no guest range covers `guests`.
+ */
+function priceEventOrder(offer, guests, { pickup, distanceKm = null }) {
+  if (!offer.enabled) {
+    throw new ApiError(409, 'EVENTS_UNAVAILABLE', "This kitchen isn't taking big-event orders right now.");
+  }
+  const tier = offer.tiers.find((t) => guests >= t.min_guests && guests <= t.max_guests);
+  if (!tier) {
+    const min = offer.tiers[0]?.min_guests;
+    const max = offer.tiers[offer.tiers.length - 1]?.max_guests;
+    throw new ApiError(409, 'GUESTS_OUT_OF_RANGE', `This kitchen hosts events for ${min}–${max} guests, not ${guests}.`);
+  }
+  const food = guests * tier.price_per_plate_rwf;
+  const range = pickup || distanceKm == null ? null : rangeForDistance(offer.delivery_fee_ranges, distanceKm);
+  const deliveryFee = pickup ? 0 : range ? range.fee_rwf : null;
+  return {
+    guests,
+    price_per_plate_rwf: tier.price_per_plate_rwf,
+    tier: { min_guests: tier.min_guests, max_guests: tier.max_guests },
+    food_total_rwf: food,
+    delivery_fee_rwf: deliveryFee,
+    delivery_range: range,
+    total_rwf: food + (deliveryFee ?? 0),
+  };
+}
+
+/** The customer's choices for a big-event order (the price is the server's). */
+function parseEventOrder(body = {}) {
+  const guests = wholeNumber(body.guests, 'guests', LIMITS.guests);
+  if (!['delivery', 'pickup'].includes(body.fulfillment)) {
+    throw ApiError.badRequest('Choose delivery or pick-up.', { fulfillment: 'expected delivery or pickup' });
+  }
+  return { guests, pickup: body.fulfillment === 'pickup' };
+}
+
 /** Mongo filter: kitchens with big events on, covering `guests` when given. */
 function eventsMongoFilter(guests = null) {
   const filter = { 'event_package.enabled': true };
@@ -182,6 +226,9 @@ function parseGuestsFilter(query = {}) {
 }
 
 module.exports = {
+  EVENT_ORDER,
+  priceEventOrder,
+  parseEventOrder,
   SERVICE_STYLES,
   LIMITS,
   parseEventPackage,

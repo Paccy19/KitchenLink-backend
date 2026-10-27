@@ -11,6 +11,9 @@ const router = Router();
 
 router.get('/payment-methods', orderController.paymentMethods);
 router.post('/checkout', requireAuth, orderController.checkout);
+// Big events: the price for a kitchen's event offer, then the order itself.
+router.post('/event-quote', orderController.eventQuote);
+router.post('/event-checkout', requireAuth, orderController.eventCheckout);
 router.get('/', requireAuth, orderController.listOrders);
 router.get(
   '/refunds',
