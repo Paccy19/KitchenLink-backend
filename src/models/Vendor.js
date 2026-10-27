@@ -38,6 +38,35 @@ const vendorSchema = new mongoose.Schema(
       travel_base_fee_rwf: { type: Number, min: 0, default: null },
       travel_per_km_rwf: { type: Number, min: 0, default: null },
     },
+    // Big events, set by the kitchen (see config/eventPackages.js): guest
+    // ranges with a price per plate, the plate, the service and the delivery
+    // (fee by distance range).
+    event_package: {
+      enabled: { type: Boolean, default: false },
+      tiers: [
+        {
+          _id: false,
+          min_guests: { type: Number, min: 1, required: true },
+          max_guests: { type: Number, min: 1, required: true },
+          price_per_plate_rwf: { type: Number, min: 0, required: true },
+        },
+      ],
+      menu: [{ type: String, trim: true }],
+      portion: { type: String, default: '', trim: true },
+      service_style: { type: String, enum: ['buffet', 'served', 'drop_off'], default: 'buffet' },
+      service_details: { type: String, default: '', trim: true },
+      // Delivery fee by distance from the kitchen, like the admin's ranges.
+      delivery_fee_ranges: [
+        {
+          _id: false,
+          from_km: { type: Number, min: 0, required: true },
+          to_km: { type: Number, min: 0, default: null },
+          fee_rwf: { type: Number, min: 0, required: true },
+        },
+      ],
+      delivery_details: { type: String, default: '', trim: true },
+      updated_at: { type: Date, default: null },
+    },
     owner_name: { type: String, trim: true },
     description: { type: String, default: '', trim: true },
     // Credentials (Vendor Dashboard login).
@@ -154,6 +183,7 @@ vendorSchema.index({ is_active: 1, is_featured: -1, rating: -1 });
 vendorSchema.index({ name: 'text', neighborhood: 'text' });
 vendorSchema.index({ 'special.is_active': 1, 'special.delivery_at': 1 });
 vendorSchema.index({ vendor_type: 1, is_active: 1 });
+vendorSchema.index({ 'event_package.enabled': 1, is_active: 1 });
 
 vendorSchema.virtual('latitude').get(function () {
   return this.location?.coordinates?.[1];

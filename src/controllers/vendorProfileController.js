@@ -33,4 +33,23 @@ const updateNationwide = asyncHandler(async (req, res) => {
   res.json(await vendorProfileService.updateNationwide(req.vendor, req.body || {}));
 });
 
-module.exports = { update, setAvailability, requestTypeChange, cancelTypeChange, getOrdering, updateOrdering, getNationwide, updateNationwide };
+const getEventPackage = asyncHandler(async (req, res) => {
+  res.json(vendorProfileService.getEventPackage(req.vendor));
+});
+
+const updateEventPackage = asyncHandler(async (req, res) => {
+  res.json(await vendorProfileService.updateEventPackage(req.vendor, req.body || {}));
+});
+
+module.exports = {
+  update,
+  setAvailability,
+  requestTypeChange,
+  cancelTypeChange,
+  getOrdering,
+  updateOrdering,
+  getNationwide,
+  updateNationwide,
+  getEventPackage,
+  updateEventPackage,
+};

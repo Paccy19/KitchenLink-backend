@@ -41,6 +41,9 @@ router.get('/documents/:index', requireVendorAuth, (req, res, next) => {
 // Nationwide events: status and the kitchen's own travel fee for far orders.
 router.get('/nationwide', requireVendorAuth, vendorProfileController.getNationwide);
 router.put('/nationwide', requireVendorAuth, requireApprovedVendor, vendorProfileController.updateNationwide);
+// Big events: guest ranges with a plate price, the plate, service and delivery.
+router.get('/event-package', requireVendorAuth, vendorProfileController.getEventPackage);
+router.put('/event-package', requireVendorAuth, requireApprovedVendor, vendorProfileController.updateEventPackage);
 router.post('/profile/type-request', requireVendorAuth, vendorProfileController.requestTypeChange);
 router.delete('/profile/type-request', requireVendorAuth, vendorProfileController.cancelTypeChange);
 

@@ -1,5 +1,6 @@
 const { Vendor } = require('../models');
 const { liveVendorFilter, liveVendorExpr } = require('../utils/vendorPresence');
+const { eventsMongoFilter } = require('../config/eventPackages');
 
 const escapeRegex = (value) =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -77,9 +78,11 @@ class VendorRepository {
    * coordinates each one gets distance_km and they come nearest first;
    * otherwise best rated first. `limit` is a safety cap, not a page size.
    */
-  async findOpenForMap({ coords, categoryVendorIds = null, vendorTypes = null, limit }) {
+  async findOpenForMap({ coords, categoryVendorIds = null, vendorTypes = null, eventsOnly = false, guests = null, limit }) {
     const baseQuery = withVendorTypes({ is_active: true, deleted_at: null, ...liveVendorFilter() }, vendorTypes);
     if (categoryVendorIds) baseQuery._id = { $in: categoryVendorIds };
+    // Big Event: kitchens with an event offer covering `guests`.
+    if (eventsOnly) Object.assign(baseQuery, eventsMongoFilter(guests));
 
     const pipeline = coords
       ? [
@@ -121,12 +124,16 @@ class VendorRepository {
     nearRadiusKm,
     categoryVendorIds = null,
     vendorTypes = null,
+    eventsOnly = false,
+    guests = null,
     sort = 'distance',
     limit,
     offset = 0,
   }) {
     const baseQuery = withVendorTypes({ is_active: true, deleted_at: null }, vendorTypes);
     if (categoryVendorIds) baseQuery._id = { $in: categoryVendorIds };
+    // Big Event: kitchens with an event offer covering `guests`.
+    if (eventsOnly) Object.assign(baseQuery, eventsMongoFilter(guests));
 
     const pipeline = coords
       ? [

@@ -5,6 +5,7 @@ const vendorRepository = require('../repositories/vendorRepository');
 const categoryRepository = require('../repositories/categoryRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
 const parsePagination = require('../utils/pagination');
+const { serializeEventOffer } = require('../config/eventPackages');
 const {
   serializeCategory,
   serializeVendorCard,
@@ -81,7 +82,7 @@ class HomeService {
   }
 
   /** All kitchens in the system; nearby ones first when coordinates are given. */
-  async getAllVendors({ coords, categoryId, vendorTypes = null, sort, query }) {
+  async getAllVendors({ coords, categoryId, vendorTypes = null, eventsOnly = false, guests = null, sort, query }) {
     const { limit, page, offset } = parsePagination(query, {
       defaultLimit: config.limits.nearbyDefault,
       maxLimit: config.limits.nearbyMax,
@@ -94,6 +95,8 @@ class HomeService {
       sort,
       category_id: categoryId || null,
       vendor_types: vendorTypes,
+      events_only: eventsOnly,
+      guests,
       near_radius_km: nearRadiusKm,
       location_used: Boolean(coords),
     };
@@ -112,6 +115,8 @@ class HomeService {
       nearRadiusKm,
       categoryVendorIds,
       vendorTypes,
+      eventsOnly,
+      guests,
       sort,
       limit,
       offset,
@@ -121,6 +126,7 @@ class HomeService {
       vendors: vendors.map((v) => ({
         ...serializeNearbyVendor(v, { distanceKm: v.distance_km }),
         is_nearby: Boolean(v.is_nearby),
+        ...(eventsOnly ? { event: serializeEventOffer(v, guests, v.distance_km) } : {}),
       })),
       meta: { ...meta, total, nearby_total: nearbyTotal },
     };
@@ -130,8 +136,8 @@ class HomeService {
    * Customer map: every kitchen whose store is open, anywhere, so customers
    * can explore by panning the map. Distances only when coordinates are given.
    */
-  async getMapVendors({ coords, categoryId, vendorTypes = null }) {
-    const meta = { category_id: categoryId || null, vendor_types: vendorTypes, location_used: Boolean(coords) };
+  async getMapVendors({ coords, categoryId, vendorTypes = null, eventsOnly = false, guests = null }) {
+    const meta = { category_id: categoryId || null, vendor_types: vendorTypes, events_only: eventsOnly, guests, location_used: Boolean(coords) };
 
     let categoryVendorIds = null;
     if (categoryId) {
@@ -146,11 +152,16 @@ class HomeService {
       coords,
       categoryVendorIds,
       vendorTypes,
+      eventsOnly,
+      guests,
       limit: config.limits.mapVendorsMax,
     });
 
     return {
-      vendors: vendors.map((v) => serializeNearbyVendor(v, { distanceKm: v.distance_km })),
+      vendors: vendors.map((v) => ({
+        ...serializeNearbyVendor(v, { distanceKm: v.distance_km }),
+        ...(eventsOnly ? { event: serializeEventOffer(v, guests, v.distance_km) } : {}),
+      })),
       meta: { ...meta, total, limit: config.limits.mapVendorsMax },
     };
   }

@@ -3,6 +3,7 @@ const { parseOptionalCoords, parseRequiredCoords, parseRadius } = require('../ut
 const homeService = require('../services/homeService');
 const searchService = require('../services/searchService');
 const { parseVendorTypeFilter } = require('../config/vendorTypes');
+const { parseGuestsFilter } = require('../config/eventPackages');
 
 const feed = asyncHandler(async (req, res) => {
   const coords = parseOptionalCoords(req.query);
@@ -37,6 +38,8 @@ const mapVendors = asyncHandler(async (req, res) => {
       coords,
       categoryId: req.query.category_id,
       vendorTypes: parseVendorTypeFilter(req.query),
+      eventsOnly: ['1', 'true'].includes(String(req.query.events)),
+      guests: parseGuestsFilter(req.query),
     })
   );
 });
@@ -49,6 +52,9 @@ const allVendors = asyncHandler(async (req, res) => {
       coords,
       categoryId: req.query.category_id,
       vendorTypes: parseVendorTypeFilter(req.query),
+      // ?events=1&guests=120 — kitchens whose event offer covers 120 guests (Big Event button).
+      eventsOnly: ['1', 'true'].includes(String(req.query.events)),
+      guests: parseGuestsFilter(req.query),
       sort,
       query: req.query,
     })

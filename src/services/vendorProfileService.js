@@ -16,6 +16,7 @@ const notificationService = require('./notificationService');
 const vendorOrderingService = require('./vendorOrderingService');
 const { parseVendorType, vendorTypeLabel, nationwideFor, TRAVEL_FEE_RANGES } = require('../config/vendorTypes');
 const dispatchSettingsService = require('./dispatchSettingsService');
+const { SERVICE_STYLES, LIMITS: EVENT_LIMITS, parseEventPackage, eventPackageFor } = require('../config/eventPackages');
 
 class VendorProfileService {
   async update(vendor, body = {}, files = {}) {
@@ -163,6 +164,23 @@ class VendorProfileService {
     }
     const updated = await vendorRepository.update(vendor._id, update);
     return this.getNationwide(updated);
+  }
+
+  /** Big events: the kitchen's own offer, with the choices the form offers. */
+  getEventPackage(vendor) {
+    return {
+      event_package: eventPackageFor(vendor),
+      options: { service_styles: SERVICE_STYLES, limits: EVENT_LIMITS },
+    };
+  }
+
+  /** The kitchen saves its whole event offer (ranges, plate, service, delivery). */
+  async updateEventPackage(vendor, body = {}) {
+    const offer = parseEventPackage(body);
+    const updated = await vendorRepository.update(vendor._id, {
+      event_package: { ...offer, updated_at: new Date() },
+    });
+    return this.getEventPackage(updated);
   }
 
   /**
