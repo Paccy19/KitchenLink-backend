@@ -32,7 +32,7 @@ const { isVendorLive } = require('../utils/vendorPresence');
 const { usesHandoverCode, isKitchenDelivered } = require('../utils/fulfillment');
 const { serializeOrderEvent } = require('../utils/serializers');
 const routeDistanceService = require('./routeDistanceService');
-const { eventPackageFor, priceEventOrder, parseEventOrder, EVENT_ORDER } = require('../config/eventPackages');
+const { eventPackageFor, priceEventOrder, parseEventOrder, depositPlan, EVENT_ORDER } = require('../config/eventPackages');
 
 const { orders } = config;
 
@@ -171,6 +171,28 @@ const customerStatusLabel = (order, status = order.status) =>
   (isKitchenDelivered(order) && orders.vendorDeliveryStatusLabels[status]) ||
   orders.statusLabels[status];
 
+/**
+ * Two-part orders (big events): the deposit paid when ordering and the
+ * balance due a day before the event. Null for orders paid in one go.
+ */
+const serializeDeposit = (order) => {
+  const deposit = order.deposit;
+  if (deposit?.balance_rwf == null) return null;
+  const balancePaid = Boolean(deposit.balance_paid_at);
+  return {
+    deposit_rwf: deposit.deposit_rwf,
+    balance_rwf: deposit.balance_rwf,
+    balance_due_at: deposit.balance_due_at,
+    balance_paid_at: deposit.balance_paid_at ?? null,
+    amount_paid_rwf: order.amount_paid_rwf ?? 0,
+    amount_due_rwf: balancePaid ? 0 : deposit.balance_rwf,
+    // The customer can pay the balance once the deposit is in, until handover.
+    can_pay_balance:
+      !balancePaid && order.payment_status === 'paid' && !['cancelled', 'delivered'].includes(order.status),
+    overdue: !balancePaid && Boolean(deposit.balance_due_at) && new Date(deposit.balance_due_at) < new Date(),
+  };
+};
+
 const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
   id: String(order._id),
   order_number: order.order_number,
@@ -181,6 +203,7 @@ const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
   scheduled_for: order.scheduled_for ?? null,
   special_text: order.special_text || '',
   event: serializeOrderEvent(order),
+  deposit: serializeDeposit(order),
   status: order.status,
   status_label: customerStatusLabel(order),
   payment_method: order.payment_method,
@@ -337,14 +360,20 @@ class OrderService {
     return { order, vendor, payment, delivery };
   }
 
-  async #initiatePayment(order, method, simulate) {
+  /**
+   * Charges the customer. `part`: 'full' (the whole order), 'deposit' (the
+   * first half of a two-part order) or 'balance' (its second half).
+   */
+  async #initiatePayment(order, method, simulate, { part = 'full' } = {}) {
     assertPaymentsAvailable();
     const provider = PROVIDERS[method];
+    const amount =
+      part === 'deposit' ? order.deposit.deposit_rwf : part === 'balance' ? order.deposit.balance_rwf : order.total_rwf;
 
     let payment = await paymentRepository.create({
       order_id: order._id,
       customer_id: order.customer_id,
-      amount_rwf: order.total_rwf,
+      amount_rwf: amount,
       method,
       provider,
       status: 'processing',
@@ -364,11 +393,15 @@ class OrderService {
       paid_at: new Date(),
     });
 
-    // The customer paid the order + delivery fee together. Hold the full amount
-    // on the platform account and snapshot the commission/payout split.
-    await settlementService.onPaymentSuccess(order);
+    // Hold the money on the platform account. The first payment also
+    // snapshots the commission/payout split for the whole order.
+    if (part === 'balance') {
+      await settlementService.onBalancePaid(order, amount, { reference: payment.reference });
+    } else {
+      await settlementService.onPaymentSuccess(order, { amountRwf: part === 'deposit' ? amount : null });
+    }
 
-    return { paymentStatus: 'paid', payment };
+    return { paymentStatus: 'paid', payment, amount };
   }
 
   async checkout(customerId, body) {
@@ -568,14 +601,18 @@ class OrderService {
    */
   async #payAndAnnounce(order, { customerId, vendor, paymentMethod, simulate, usesCode, kitchenBrings }) {
     const total = order.total_rwf;
-    const { paymentStatus, payment } = await this.#initiatePayment(
+    // Two-part orders (big events) take the deposit now, the balance later.
+    const twoPart = order.deposit?.deposit_rwf != null;
+    const { paymentStatus, payment, amount } = await this.#initiatePayment(
       order,
       paymentMethod,
-      simulate
+      simulate,
+      { part: twoPart ? 'deposit' : 'full' }
     );
 
     const updatedOrder = await orderRepository.update(order._id, {
       payment_status: paymentStatus,
+      ...(twoPart && paymentStatus === 'paid' ? { amount_paid_rwf: amount } : {}),
     });
     // The kitchen only hears about orders that are paid for; nearby delivery
     // workers are offered the order at the same moment.
@@ -707,6 +744,11 @@ class OrderService {
         distance_km: route ? Math.round(route.distance_km * 10) / 10 : null,
         distance_source: route?.source ?? null,
         min_lead_hours: EVENT_ORDER.min_lead_hours,
+        // Paid in two parts: this much now, the rest a day before the event.
+        deposit_percent: EVENT_ORDER.deposit_percent,
+        balance_due_hours_before: EVENT_ORDER.balance_due_hours_before,
+        deposit_rwf: depositPlan(price.total_rwf, Date.now()).deposit_rwf,
+        balance_rwf: depositPlan(price.total_rwf, Date.now()).balance_rwf,
       },
     };
   }
@@ -727,7 +769,7 @@ class OrderService {
     const eventAt = parseScheduledFor(body.event_at, { minLeadMinutes: 0, maxDaysAhead: EVENT_ORDER.max_days_ahead });
     if (eventAt.getTime() < Date.now() + EVENT_ORDER.min_lead_hours * 60 * 60 * 1000) {
       throw ApiError.badRequest(
-        `Big events must be booked at least ${EVENT_ORDER.min_lead_hours} hours ahead so the kitchen can prepare. Pick a later date.`,
+        `Big events must be booked at least ${EVENT_ORDER.min_lead_hours / 24} days ahead, so the kitchen can prepare and you have time to pay the balance. Pick a later date.`,
         { event_at: `expected at least ${EVENT_ORDER.min_lead_hours} hours from now` }
       );
     }
@@ -738,6 +780,8 @@ class OrderService {
 
     const fulfillment = pickup ? 'pickup' : 'vendor_delivery';
     const menuSummary = offer.menu.join(', ');
+    // Half now, the rest a day before the event.
+    const plan = depositPlan(price.total_rwf, eventAt);
     const now = new Date();
     const order = await orderRepository.create({
       order_number: generateOrderNumber(),
@@ -766,10 +810,10 @@ class OrderService {
       delivery_distance_km: route?.distance_km ?? null,
       delivery_distance_source: route?.source ?? null,
       total_rwf: price.total_rwf,
+      deposit: { ...plan, balance_paid_at: null, reminders_sent: [] },
       fulfillment,
-      // Completed with the customer's code at handover (collection or delivery).
-      pickup_code: String(crypto.randomInt(100000, 1000000)),
-      pickup_code_sent_at: now,
+      // Completed with the customer's code at handover (collection or
+      // delivery). The code is only created once the balance is paid.
       pickup_code_attempts: 0,
       delivery_location: deliveryLocation,
       payment_method: paymentMethod,
@@ -794,7 +838,8 @@ class OrderService {
       vendor,
       paymentMethod,
       simulate: body.payment_simulate,
-      usesCode: true,
+      // No code with the deposit: it comes with the balance (payBalance).
+      usesCode: false,
       kitchenBrings: !pickup,
     });
     return serializeDetail({ ...order, ...updatedOrder }, vendor, payment);
@@ -1098,15 +1143,18 @@ class OrderService {
       : order.payment_method;
     const simulate = body?.payment_simulate;
 
-    const { paymentStatus, payment } = await this.#initiatePayment(
+    const twoPart = order.deposit?.deposit_rwf != null;
+    const { paymentStatus, payment, amount } = await this.#initiatePayment(
       order,
       method,
-      simulate
+      simulate,
+      { part: twoPart ? 'deposit' : 'full' }
     );
 
     const updated = await orderRepository.update(order._id, {
       payment_method: method,
       payment_status: paymentStatus,
+      ...(twoPart && paymentStatus === 'paid' ? { amount_paid_rwf: amount } : {}),
     });
     if (paymentStatus === 'paid') {
       orderNotifications.newOrder(updated);
@@ -1115,6 +1163,78 @@ class OrderService {
 
     const { vendor } = await this.#loadWithVendor(updated);
     return serializeDetail(updated, vendor, payment);
+  }
+
+  /**
+   * Big events: the customer pays the balance (the second half) of a
+   * two-part order, any time before the event and at the latest by
+   * `deposit.balance_due_at`. Only then do they get the code to give the
+   * kitchen at handover, and the kitchen can hand the food over.
+   */
+  async payBalance(customerId, orderId, body = {}) {
+    const order = await this.#loadOrder(customerId, orderId);
+    if (order.deposit?.balance_rwf == null) {
+      throw ApiError.conflict('This order was paid in full when it was placed.', 'NO_BALANCE');
+    }
+    if (order.status === 'cancelled') {
+      throw ApiError.conflict('Cancelled orders cannot be paid.', 'ORDER_NOT_PAYABLE');
+    }
+    if (order.payment_status !== 'paid') {
+      throw ApiError.conflict('Pay the deposit first.', 'DEPOSIT_UNPAID');
+    }
+    if (order.deposit.balance_paid_at) {
+      throw ApiError.conflict('The balance is already paid.', 'ALREADY_PAID');
+    }
+
+    const method = body.payment_method ? parsePaymentMethod(body.payment_method) : order.payment_method;
+    // A new number / card for this payment; otherwise the one used for the deposit.
+    const paymentDetails = body.payment_details ? parsePaymentDetails(method, body.payment_details) : null;
+    const { paymentStatus, payment, amount } = await this.#initiatePayment(order, method, body.payment_simulate, {
+      part: 'balance',
+    });
+    if (paymentStatus !== 'paid') {
+      throw new ApiError(402, 'PAYMENT_FAILED', payment.failure_reason || 'The payment did not go through. Please try again.');
+    }
+
+    const now = new Date();
+    await orderRepository.pushHistory(order._id, {
+      status: order.status,
+      at: now,
+      note: `Balance of ${amount.toLocaleString('en-US')} RWF paid`,
+    });
+    // Fully paid: now the customer gets the handover code.
+    const code = String(crypto.randomInt(100000, 1000000));
+    const updated = await orderRepository.update(order._id, {
+      'deposit.balance_paid_at': now,
+      amount_paid_rwf: (order.amount_paid_rwf ?? order.deposit.deposit_rwf) + amount,
+      pickup_code: code,
+      pickup_code_sent_at: now,
+      pickup_code_attempts: 0,
+      ...(paymentDetails ? { payment_details: paymentDetails } : {}),
+    });
+    const vendor = await vendorRepository.findById(order.vendor_id);
+    notificationService
+      .notifyPickupCode(customerId, {
+        orderNumber: order.order_number,
+        code,
+        orderId: order._id,
+        vendorName: vendor?.name || '',
+        address: [vendor?.address, vendor?.neighborhood].filter(Boolean).join(', '),
+        ready: false,
+        kitchenBrings: isKitchenDelivered(order),
+      })
+      .catch((error) => console.error('[pickup] could not send event handover code:', error.message));
+    notificationService
+      .notifyVendor(order.vendor_id, {
+        type: 'order_update',
+        title: 'Event order fully paid',
+        body: `The customer paid the balance of ${order.order_number}. You can hand the food over with their code.`,
+        orderId: order._id,
+        link: `/vendor-dashboard/orders?order=${order._id}`,
+      })
+      .catch(() => null);
+
+    return serializeDetail(await this.#withPickupCode(updated), vendor, payment);
   }
 
   /**

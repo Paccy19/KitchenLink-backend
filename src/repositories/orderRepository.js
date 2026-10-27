@@ -202,6 +202,29 @@ class OrderRepository {
     return Order.findOneAndUpdate({ _id: orderId }, { $set: update }, { returnDocument: 'after' }).lean();
   }
 
+  /**
+   * Big events still owing their balance, due before `dueBefore`: the deposit
+   * is paid and the order is neither cancelled nor handed over.
+   */
+  async findUnpaidBalances(dueBefore) {
+    return Order.find({
+      'deposit.balance_rwf': { $ne: null },
+      'deposit.balance_paid_at': null,
+      'deposit.balance_due_at': { $lte: dueBefore },
+      payment_status: 'paid',
+      status: { $nin: ['cancelled', 'delivered'] },
+    }).lean();
+  }
+
+  /** Records a balance reminder once; false when it was already sent. */
+  async markBalanceReminder(orderId, key) {
+    const result = await Order.updateOne(
+      { _id: orderId, 'deposit.reminders_sent': { $ne: key } },
+      { $addToSet: { 'deposit.reminders_sent': key } }
+    );
+    return result.modifiedCount > 0;
+  }
+
   async pushHistory(orderId, entry) {
     await Order.updateOne(
       { _id: orderId },

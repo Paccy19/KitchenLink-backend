@@ -10,6 +10,7 @@ const driverRepository = require('./repositories/driverRepository');
 const platformLedgerService = require('./services/platformLedgerService');
 const platformSweepService = require('./services/platformSweepService');
 const vendorOfferService = require('./services/vendorOfferService');
+const eventBalanceService = require('./services/eventBalanceService');
 const deliveryService = require('./services/deliveryService');
 const deliverySettingsService = require('./services/deliverySettingsService');
 const bankSettingsService = require('./services/bankSettingsService');
@@ -153,6 +154,8 @@ const start = async () => {
 
     platformSweepService.start();
     vendorOfferService.start();
+    // Big events: reminders to pay the balance (due a day before the event).
+    eventBalanceService.start();
     // Admin-set delivery timing rules (warning, late charge, reassign).
     await deliverySettingsService.load();
     await bankSettingsService.load();

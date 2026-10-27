@@ -90,7 +90,8 @@ class RefundService {
       order_number: order.order_number || '',
       customer_id: order.customer_id,
       vendor_id: order.vendor_id || null,
-      amount_rwf: Math.round(Number(order.total_rwf) || 0),
+      // Two-part orders give back what was paid so far (maybe only the deposit).
+      amount_rwf: Math.round(Number(order.amount_paid_rwf ?? order.total_rwf) || 0),
       payment_method: order.payment_method || '',
       destination: isCard
         ? { type: 'card', card_last4: String(details.card_number || '').slice(-4) }

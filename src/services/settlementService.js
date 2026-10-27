@@ -71,10 +71,11 @@ class SettlementService {
   }
 
   /**
-   * Customer payment succeeded: snapshot the split and hold the full amount.
+   * Customer payment succeeded: snapshot the split and hold the amount paid
+   * (`amountRwf`: the deposit of a two-part order; the full total otherwise).
    * If the order was already completed while unpaid, settle it right away.
    */
-  async onPaymentSuccess(order) {
+  async onPaymentSuccess(order, { amountRwf = null } = {}) {
     if (!order) return null;
     if (order.settlement_status === 'held' || order.settlement_status === 'settled') {
       return order;
@@ -94,11 +95,14 @@ class SettlementService {
       type: 'order_payment',
       direction: 'credit',
       status: 'held',
-      amount_rwf: split.total,
+      amount_rwf: amountRwf ?? split.total,
       order_id: order._id,
       customer_id: order.customer_id,
       reference: order.order_number || '',
-      description: `Customer payment held for ${order.order_number}`,
+      description:
+        amountRwf != null
+          ? `Customer deposit held for ${order.order_number}`
+          : `Customer payment held for ${order.order_number}`,
       metadata: {
         subtotal_rwf: split.subtotal,
         delivery_fee_rwf: split.deliveryFee,
@@ -112,6 +116,27 @@ class SettlementService {
       return this.releaseOrder(order._id);
     }
     return fresh;
+  }
+
+  /**
+   * A two-part order's balance was paid: hold it with the deposit. The split
+   * snapshot taken at the deposit already covers the whole order.
+   */
+  async onBalancePaid(order, amountRwf, { reference = '' } = {}) {
+    const amount = roundRwf(amountRwf);
+    if (!order || amount <= 0) return order;
+    await transactionRepository.create({
+      type: 'order_payment',
+      direction: 'credit',
+      status: 'held',
+      amount_rwf: amount,
+      order_id: order._id,
+      customer_id: order.customer_id,
+      reference: reference || order.order_number || '',
+      description: `Customer balance held for ${order.order_number}`,
+      metadata: { balance_payment: true },
+    });
+    return orderRepository.findById(order._id);
   }
 
   /**

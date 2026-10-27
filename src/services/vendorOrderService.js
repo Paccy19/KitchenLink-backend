@@ -16,7 +16,7 @@ const settlementService = require('./settlementService');
 const orderNotifications = require('./orderNotifications');
 const notificationService = require('./notificationService');
 const dispatchSettingsService = require('./dispatchSettingsService');
-const { usesHandoverCode, isKitchenDelivered } = require('../utils/fulfillment');
+const { usesHandoverCode, isKitchenDelivered, balanceUnpaid } = require('../utils/fulfillment');
 
 const { vendor: vendorConfig } = config;
 
@@ -106,6 +106,13 @@ class VendorOrderService {
       throw ApiError.conflict(
         `Cannot move order from "${currentStatus}" to "${nextStatus}".`,
         'INVALID_STATUS_TRANSITION'
+      );
+    }
+    // Big events: the food only goes out once the customer has paid it all.
+    if (nextStatus === 'ready' && balanceUnpaid(order)) {
+      throw ApiError.conflict(
+        "The customer hasn't paid the balance of this event order yet. You can mark it ready once it's paid.",
+        'BALANCE_UNPAID'
       );
     }
 
@@ -219,6 +226,12 @@ class VendorOrderService {
       throw ApiError.conflict(
         kitchenBrings ? 'Mark the order ready (on the way) before you hand it over.' : 'Mark the order ready before the customer collects it.',
         'ORDER_NOT_READY'
+      );
+    }
+    if (balanceUnpaid(order)) {
+      throw ApiError.conflict(
+        "The customer hasn't paid the balance of this event order yet. Don't hand the food over until it's paid.",
+        'BALANCE_UNPAID'
       );
     }
     const maxAttempts = dispatchSettingsService.current().pickup_code_max_attempts;

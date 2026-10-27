@@ -13,4 +13,7 @@ const fulfillmentOf = (order) => order?.fulfillment || 'delivery';
 const usesHandoverCode = (order) => HANDOVER_CODE_FULFILLMENTS.includes(fulfillmentOf(order));
 const isKitchenDelivered = (order) => fulfillmentOf(order) === 'vendor_delivery';
 
-module.exports = { HANDOVER_CODE_FULFILLMENTS, fulfillmentOf, usesHandoverCode, isKitchenDelivered };
+/** A two-part order (big event) whose second half isn't paid yet. */
+const balanceUnpaid = (order) => order?.deposit?.balance_rwf != null && !order.deposit.balance_paid_at;
+
+module.exports = { HANDOVER_CODE_FULFILLMENTS, fulfillmentOf, usesHandoverCode, isKitchenDelivered, balanceUnpaid };

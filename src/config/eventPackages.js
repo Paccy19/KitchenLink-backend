@@ -26,9 +26,26 @@ const LIMITS = {
   menu_items: 30,
 };
 
-// Ordering a big event: the kitchen needs time to shop and cook for many
-// guests, so the event must be at least a day away (and within a year).
-const EVENT_ORDER = { min_lead_hours: 24, max_days_ahead: 365 };
+// Ordering a big event, like a pre-order: it can be booked weeks or months
+// ahead. The customer pays half (deposit_percent) when ordering and the rest
+// by balance_due_hours_before the event. The event must be far enough away to
+// leave a day to pay the balance (min_lead_hours), and within a year.
+const EVENT_ORDER = {
+  min_lead_hours: 48,
+  max_days_ahead: 365,
+  deposit_percent: 50,
+  balance_due_hours_before: 24,
+};
+
+/** The deposit paid when ordering and the balance due a day before the event. */
+function depositPlan(totalRwf, eventAt) {
+  const deposit = Math.round((totalRwf * EVENT_ORDER.deposit_percent) / 100);
+  return {
+    deposit_rwf: deposit,
+    balance_rwf: totalRwf - deposit,
+    balance_due_at: new Date(new Date(eventAt).getTime() - EVENT_ORDER.balance_due_hours_before * 60 * 60 * 1000),
+  };
+}
 
 const codes = (list) => list.map((entry) => entry.code);
 const labelOf = (list, code) => list.find((entry) => entry.code === code)?.label ?? '';
@@ -227,6 +244,7 @@ function parseGuestsFilter(query = {}) {
 
 module.exports = {
   EVENT_ORDER,
+  depositPlan,
   priceEventOrder,
   parseEventOrder,
   SERVICE_STYLES,

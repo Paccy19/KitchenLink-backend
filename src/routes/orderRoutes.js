@@ -34,6 +34,8 @@ router.get(
 );
 router.post('/:order_id/cancel', requireAuth, orderController.cancelOrder);
 router.post('/:order_id/pay', requireAuth, orderController.payOrder);
+// Big events: pay the second half (due a day before the event).
+router.post('/:order_id/pay-balance', requireAuth, orderController.payBalance);
 router.post('/:order_id/switch-to-delivery/quote', requireAuth, orderController.quoteSwitchToDelivery);
 router.post('/:order_id/switch-to-delivery', requireAuth, orderController.switchToDelivery);
 // Where the refund of a cancelled paid order is sent (mobile money number).

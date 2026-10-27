@@ -5,7 +5,7 @@ const deliverySettings = require('../services/deliverySettingsService');
 const dispatchSettingsService = require('../services/dispatchSettingsService');
 const access = require('../config/adminAccess');
 const { vendorTypeLabel, orderingRulesFor, nationwideFor } = require('../config/vendorTypes');
-const { usesHandoverCode, isKitchenDelivered } = require('./fulfillment');
+const { usesHandoverCode, isKitchenDelivered, balanceUnpaid } = require('./fulfillment');
 const { isPrivateRef } = require('./uploads');
 
 /**
@@ -279,6 +279,8 @@ const vendorStatusLabel = (status) =>
 function vendorOrderActions(order, status) {
   let allowed = config.vendor.orderTransitions[status] || [];
   if (order.payment_status !== 'paid') allowed = allowed.filter((next) => next === 'cancelled');
+  // Big events: no handover until the balance is paid.
+  if (balanceUnpaid(order)) allowed = allowed.filter((next) => next !== 'ready');
   if (['picked_up', 'out_for_delivery', 'delivered'].includes(order.status)) {
     allowed = allowed.filter((next) => next !== 'cancelled');
   }
@@ -330,11 +332,22 @@ function serializeVendorOrder(order, { customer } = {}) {
     fulfillment: order.fulfillment || 'delivery',
     fulfillment_label: config.orders.fulfillmentLabels[order.fulfillment || 'delivery'],
     event: serializeOrderEvent(order),
+    // Big events paid in two parts: the deposit and whether the balance is in.
+    deposit:
+      order.deposit?.balance_rwf != null
+        ? {
+            deposit_rwf: order.deposit.deposit_rwf,
+            balance_rwf: order.deposit.balance_rwf,
+            balance_due_at: order.deposit.balance_due_at,
+            balance_paid_at: order.deposit.balance_paid_at ?? null,
+            balance_unpaid: balanceUnpaid(order),
+          }
+        : null,
     // Too far for platform workers: the kitchen brings it and keeps the travel fee.
     kitchen_delivers: isKitchenDelivered(order),
     // Only for orders the customer collects (or the kitchen brings): the
     // vendor completes them with the customer's code.
-    can_confirm_pickup: isPickup && order.status === 'ready' && pickupAttemptsLeft > 0,
+    can_confirm_pickup: isPickup && order.status === 'ready' && pickupAttemptsLeft > 0 && !balanceUnpaid(order),
     pickup_attempts_left: isPickup ? pickupAttemptsLeft : null,
     collected_at: order.collected_at ?? null,
     created_at: order.created_at,

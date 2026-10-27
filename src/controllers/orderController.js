@@ -17,6 +17,10 @@ const eventCheckout = asyncHandler(async (req, res) => {
   res.json(await orderService.eventCheckout(req.customer._id, req.body));
 });
 
+const payBalance = asyncHandler(async (req, res) => {
+  res.json(await orderService.payBalance(req.customer._id, req.params.order_id, req.body || {}));
+});
+
 const listOrders = asyncHandler(async (req, res) => {
   res.json(await orderService.list(req.customer._id, req.query));
 });
@@ -53,6 +57,7 @@ module.exports = {
   checkout,
   eventQuote,
   eventCheckout,
+  payBalance,
   listOrders,
   getOrder,
   trackOrder,

@@ -42,6 +42,20 @@ const orderSchema = new mongoose.Schema(
       service_details: { type: String, default: '' },
       delivery_details: { type: String, default: '' },
     },
+    // Paid in two parts (big events): the deposit when ordering, the balance
+    // by balance_due_at (a day before the event). payment_status is 'paid'
+    // once the deposit is in; balance_paid_at says the rest is paid too.
+    deposit: {
+      deposit_rwf: { type: Number, min: 0, default: null },
+      balance_rwf: { type: Number, min: 0, default: null },
+      balance_due_at: { type: Date, default: null },
+      balance_paid_at: { type: Date, default: null },
+      // Balance reminders already sent ('due_soon', 'due_today', 'overdue').
+      reminders_sent: [{ type: String }],
+    },
+    // What the customer has actually paid (set on two-part orders; the others
+    // pay total_rwf at once). Refunds send back this much.
+    amount_paid_rwf: { type: Number, min: 0, default: null },
     subtotal_rwf: { type: Number, required: true },
         image_url: { type: String, default: '' },
         options: [
