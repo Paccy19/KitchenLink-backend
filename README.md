@@ -1,4 +1,11 @@
-# Online Food Kitchen — Backend
+# KitchenLink — Backend
+
+The reference backend for the KitchenLink website (**KitchenLink-frontend**).
+The website's `API_CONTRACT.md` lists every request it makes; this backend
+answers all of them. To connect the website to it, set the website's
+`VITE_API_PROXY` (development) or `VITE_API_BASE_URL` (live) to this server's
+address, and set this server's `FRONTEND_URL` / `ALLOWED_ORIGINS` to the
+website's address.
 
 Node/Express + MongoDB API for the Online Food Kitchen multi-vendor food
 marketplace. This service powers the public discovery API, OTP customer
@@ -16,7 +23,6 @@ All prices are in Rwandan francs (RWF) and "today" is computed on Rwanda time
 ## Setup
 
 ```bash
-cd backend
 npm install
 cp .env.example .env      # then edit as needed
 npm run dev               # nodemon, http://localhost:4000/api/v1
