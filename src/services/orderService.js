@@ -441,7 +441,7 @@ class OrderService {
       (entry) => entry.menu_item_id
     );
     if (entries.length === 0) {
-      throw ApiError.badRequest('Your cart is empty.', 'CART_EMPTY');
+      throw new ApiError(400, 'CART_EMPTY', 'Your cart is empty.');
     }
 
     const unavailable = entries
@@ -1303,9 +1303,10 @@ class OrderService {
     }
 
     if (!validTransition) {
-      throw ApiError.badRequest(
-        `Cannot move order from "${from}" to "${nextStatus}".`,
-        'INVALID_STATUS_TRANSITION'
+      throw new ApiError(
+        400,
+        'INVALID_STATUS_TRANSITION',
+        `Cannot move order from "${from}" to "${nextStatus}".`
       );
     }
 

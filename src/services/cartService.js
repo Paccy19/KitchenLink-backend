@@ -110,6 +110,14 @@ class CartService {
 
     await assertVendorListed(menuItem);
     await this.assertVendorCompatible(customerId, menuItem.vendor_id);
+    // Adding a dish already in the cart adds to its quantity: keep the total under the limit.
+    const existing = await cartRepository.findByCustomerAndItem(customerId, menuItemId);
+    if ((existing?.quantity ?? 0) + quantity > config.limits.cartMaxQuantity) {
+      throw ApiError.badRequest(
+        `quantity must not exceed ${config.limits.cartMaxQuantity}.`,
+        { quantity: `maximum is ${config.limits.cartMaxQuantity}` }
+      );
+    }
     await cartRepository.upsertQuantity(
       customerId,
       menuItemId,

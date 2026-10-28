@@ -31,7 +31,19 @@ const orderSchema = new mongoose.Schema(
         name: { type: String, required: true },
         price_rwf: { type: Number, required: true },
         quantity: { type: Number, required: true, min: 1 },
-        // Big-event orders (Big Event button): what the customer booked from the
+        subtotal_rwf: { type: Number, required: true },
+        image_url: { type: String, default: '' },
+        options: [
+          {
+            option_id: { type: mongoose.Schema.Types.ObjectId, ref: 'MenuItemOption' },
+            group_name: { type: String, default: 'Options' },
+            name: { type: String, required: true },
+            additional_price_rwf: { type: Number, min: 0, default: 0 },
+          },
+        ],
+      },
+    ],
+    // Big-event orders (Big Event button): what the customer booked from the
     // kitchen's event offer, kept as it was when they ordered.
     event: {
       package_id: { type: String, default: '' },
@@ -58,18 +70,6 @@ const orderSchema = new mongoose.Schema(
     // What the customer has actually paid (set on two-part orders; the others
     // pay total_rwf at once). Refunds send back this much.
     amount_paid_rwf: { type: Number, min: 0, default: null },
-    subtotal_rwf: { type: Number, required: true },
-        image_url: { type: String, default: '' },
-        options: [
-          {
-            option_id: { type: mongoose.Schema.Types.ObjectId, ref: 'MenuItemOption' },
-            group_name: { type: String, default: 'Options' },
-            name: { type: String, required: true },
-            additional_price_rwf: { type: Number, min: 0, default: 0 },
-          },
-        ],
-      },
-    ],
     subtotal_rwf: { type: Number, required: true },
     delivery_fee_rwf: { type: Number, required: true },
     // Road distance kitchen -> drop-off used to price delivery at checkout.

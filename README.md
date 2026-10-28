@@ -260,7 +260,23 @@ customer can cancel it (`409 DELIVERY_IN_PROGRESS`).
 
 ## Testing
 
-There is no automated suite yet. The fastest verification path:
+```bash
+npm test
+```
+
+Runs the automated tests in `test/` with Node's built-in test runner (no
+extra packages):
+
+- `test/unit/` — pricing, deposits, delivery fee ranges and input validation.
+- `test/api/` — the real API against MongoDB: sign-in, cart, checkout,
+  payments, cancellations and refunds, order status, big events.
+
+The API tests need MongoDB running locally. Each test file uses its own
+throwaway database (`kitchenlink_<pid>_test`, deleted afterwards), so your
+data is never touched; set `TEST_MONGODB_SERVER` to use another server.
+`TEST_VERBOSE=1` shows the server's request logs.
+
+To try the API by hand:
 
 1. Ensure MongoDB is running and start the backend:
 
