@@ -1082,6 +1082,7 @@ class DeliveryService {
 
     const updated = await deliveryRepository.update(id, {
       status: 'completed',
+      delivered_at: delivery.delivered_at || now,
       completed_at: now,
       otp_verified_at: now,
       paid_earnings_rwf: paidEarningsRwf,

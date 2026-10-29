@@ -242,7 +242,12 @@ class DeliveryRepository {
           $match: {
             driver_id: driverObjectId,
             status: { $in: ['delivered', 'completed'] },
-            delivered_at: { $gte: start, $lt: end },
+            // Deliveries finished with the customer's code only had
+            // completed_at until delivered_at was set there too.
+            $or: [
+              { delivered_at: { $gte: start, $lt: end } },
+              { delivered_at: null, completed_at: { $gte: start, $lt: end } },
+            ],
           },
         },
         {
