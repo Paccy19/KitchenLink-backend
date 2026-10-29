@@ -6,6 +6,8 @@ const { normalizePhone, parseName } = require('../utils/validators');
 const { parseEmail } = require('../utils/vendorValidators');
 const { resolveImageUrl } = require('../utils/uploads');
 const customerRepository = require('../repositories/customerRepository');
+const vendorRepository = require('../repositories/vendorRepository');
+const driverRepository = require('../repositories/driverRepository');
 const otpRepository = require('../repositories/otpRepository');
 const otpGuardService = require('./otpGuardService');
 const { sendCodeSms } = require('../utils/sms');
@@ -18,11 +20,72 @@ const serializeCustomer = (customer) => ({
   profile_image_url: customer.profile_image_url || null,
 });
 
+/**
+ * A name compared the way people write it: "  UWASE  aline" and "Aline Uwase"
+ * are the same (case, spacing, accents and word order don't matter).
+ */
+const nameKey = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join(' ');
+
+/**
+ * The kitchen owner and delivery worker registered with this phone, with the
+ * name each registered under (the owner's own name for a kitchen).
+ */
+async function linkedAccounts(phone) {
+  const [vendor, driver] = await Promise.all([
+    vendorRepository.findByPhone(phone),
+    driverRepository.findByPhone(phone),
+  ]);
+  return [
+    vendor && { role: 'kitchen', name: vendor.owner_name || vendor.name },
+    driver && { role: 'delivery worker', name: driver.name },
+  ].filter((account) => account && account.name);
+}
+
+/**
+ * A kitchen owner or delivery worker signing in as a customer must give the
+ * same name they registered with, so the customer account is known to be
+ * theirs. Returns the registered name to use (null for an ordinary phone).
+ * The error never reveals the registered name.
+ */
+async function assertLinkedName(phone, name) {
+  const accounts = await linkedAccounts(phone);
+  if (!accounts.length) return null;
+  const roles = accounts.map((account) => account.role).join(' and ');
+  const given = nameKey(name);
+  if (!given) {
+    throw new ApiError(
+      400,
+      'NAME_REQUIRED',
+      `This phone number is registered as a ${roles} on KitchenLink. Enter the full name you registered with.`,
+      { name: 'required for this phone number' }
+    );
+  }
+  if (accounts.some((account) => nameKey(account.name) !== given)) {
+    throw new ApiError(
+      400,
+      'NAME_DOES_NOT_MATCH',
+      `This phone number is registered as a ${roles} on KitchenLink. Enter the same full name you used when you registered as a ${roles}.`,
+      { name: 'does not match the registered name' }
+    );
+  }
+  return accounts[0].name;
+}
+
 class AuthService {
   async sendOtp({ phone_number, name }) {
     const phone = normalizePhone(phone_number);
     const existing = await customerRepository.findByPhone(phone);
-    const pendingName = existing ? null : parseName(name);
+    // Checked before any code is sent: a wrong name gets no SMS.
+    const registeredName = await assertLinkedName(phone, name);
+    const pendingName = existing ? null : registeredName || parseName(name);
 
     const now = Date.now();
     const lastSentAt = await otpRepository.lastSentAt(phone);
@@ -101,9 +164,13 @@ class AuthService {
     // codes, and uses the code up when it is right.
     await otpGuardService.check(otp, rawCode, phone, 'customer');
 
+    // Same rule as when the code was sent (the name may be resent here).
+    const registeredName = await assertLinkedName(phone, name ?? otp.name);
+
     let customer = await customerRepository.findByPhone(phone);
     if (!customer) {
-      const customerName = parseName(name) ?? (otp.name ? parseName(otp.name) : null);
+      // A kitchen owner or delivery worker gets their registered name.
+      const customerName = registeredName || parseName(name) || (otp.name ? parseName(otp.name) : null);
       if (!customerName) {
         throw ApiError.badRequest(
           'name is required to complete registration.',

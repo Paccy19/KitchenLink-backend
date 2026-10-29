@@ -1,6 +1,8 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { start, stop, api, signInCustomer } = require('../helpers/testServer');
+const { start, stop, api, signInCustomer, createKitchen } = require('../helpers/testServer');
+const { Driver } = require('../../src/models');
+const { normalizePhone } = require('../../src/utils/validators');
 
 before(start);
 after(stop);
@@ -60,6 +62,48 @@ test('signing out stops the token working', async () => {
   const { token } = await signInCustomer('Sam');
   assert.equal((await api('POST', '/auth/logout', { token })).status, 200);
   assert.equal((await api('GET', '/auth/me', { token })).status, 401);
+});
+
+test('a kitchen owner signing in as a customer must give the name they registered with', async () => {
+  const phone = '0788000101';
+  await createKitchen({ name: 'Inzu Kitchen', owner_name: 'Aline Uwase', phone: normalizePhone(phone) });
+
+  const wrong = await api('POST', '/auth/send-otp', { body: { phone_number: phone, name: 'Someone Else' } });
+  assert.equal(wrong.status, 400);
+  assert.equal(wrong.body.error.code, 'NAME_DOES_NOT_MATCH');
+  assert.equal(wrong.body.dev_otp, undefined, 'no code is sent for a wrong name');
+  assert.ok(!JSON.stringify(wrong.body).includes('Uwase'), 'the registered name is never revealed');
+
+  // Case, spacing and word order don't matter; the account gets the registered name.
+  const sent = await api('POST', '/auth/send-otp', { body: { phone_number: phone, name: '  uwase   ALINE ' } });
+  assert.equal(sent.status, 200);
+  const verified = await api('POST', '/auth/verify-otp', {
+    body: { phone_number: phone, code: sent.body.dev_otp, name: '  uwase   ALINE ' },
+  });
+  assert.equal(verified.status, 200);
+  assert.equal(verified.body.customer.name, 'Aline Uwase');
+});
+
+test('a delivery worker signing in as a customer must give the name they registered with', async () => {
+  const phone = '0788000102';
+  await Driver.create({ name: 'Eric Habimana', phone: normalizePhone(phone) });
+
+  const missing = await api('POST', '/auth/send-otp', { body: { phone_number: phone } });
+  assert.equal(missing.status, 400);
+  assert.equal(missing.body.error.code, 'NAME_REQUIRED');
+
+  const wrong = await api('POST', '/auth/send-otp', { body: { phone_number: phone, name: 'Eric' } });
+  assert.equal(wrong.status, 400);
+  assert.equal(wrong.body.error.code, 'NAME_DOES_NOT_MATCH');
+
+  const sent = await api('POST', '/auth/send-otp', { body: { phone_number: phone, name: 'Eric Habimana' } });
+  assert.equal(sent.status, 200);
+  // The name is checked again when the code is verified.
+  const tampered = await api('POST', '/auth/verify-otp', {
+    body: { phone_number: phone, code: sent.body.dev_otp, name: 'Not Eric' },
+  });
+  assert.equal(tampered.status, 400);
+  assert.equal(tampered.body.error.code, 'NAME_DOES_NOT_MATCH');
 });
 
 test('MongoDB operators in a body are refused', async () => {
