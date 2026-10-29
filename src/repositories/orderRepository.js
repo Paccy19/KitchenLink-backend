@@ -66,6 +66,11 @@ class OrderRepository {
     return Order.findOne({ _id: orderId, customer_id: customerId }).lean();
   }
 
+  /** True when the customer has placed at least one order with the kitchen. */
+  async customerHasOrderedFrom(customerId, vendorId) {
+    return Boolean(await Order.exists({ customer_id: customerId, vendor_id: vendorId }));
+  }
+
   async findByVendorAndId(vendorId, orderId) {
     return Order.findOne({ _id: orderId, vendor_id: vendorId }).lean();
   }

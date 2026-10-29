@@ -227,6 +227,8 @@ const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
         vendor_type_label: vendorTypeLabel(vendor.vendor_type),
         banner_image_url: vendor.banner_image_url || null,
         rating: vendor.rating,
+        // The customer ordered from this kitchen, so they can always call it.
+        phone: vendor.phone || null,
       }
     : null,
   items: order.items.map((item) => ({

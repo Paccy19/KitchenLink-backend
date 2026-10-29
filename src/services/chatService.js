@@ -6,6 +6,7 @@ const { vendorTypeLabel } = require('../config/vendorTypes');
 const { ChatConversation, Customer, Vendor } = require('../models');
 const chatRepository = require('../repositories/chatRepository');
 const vendorRepository = require('../repositories/vendorRepository');
+const orderRepository = require('../repositories/orderRepository');
 const notificationService = require('./notificationService');
 
 const { escapeRegex } = chatRepository;
@@ -72,6 +73,13 @@ const serializeMessage = (message, side = null) => ({
 // Shown on both sides of every chat.
 const PRIVACY_NOTE = 'Chats are kept so our support team can help if there is a problem. Never share passwords or payment codes.';
 
+/** Customers can only message kitchens they have placed an order with. */
+const assertHasOrdered = async (customerId, vendorId) => {
+  if (!(await orderRepository.customerHasOrderedFrom(customerId, vendorId))) {
+    throw ApiError.forbidden('Place an order with this kitchen first, then you can message it.', 'NO_ORDER_WITH_VENDOR');
+  }
+};
+
 class ChatService {
   /* --------------------------- customer + vendor --------------------------- */
 
@@ -92,12 +100,14 @@ class ChatService {
 
   /**
    * Customer: opens (or creates) their chat with a kitchen, from the kitchen
-   * page or an order. Only kitchens customers can see can be messaged.
+   * page or an order. Only kitchens customers can see, and have ordered
+   * from, can be messaged.
    */
   async openWithVendor(customer, vendorId) {
     parseObjectId(vendorId, 'vendor_id');
     const vendor = await vendorRepository.findActiveById(vendorId);
     if (!vendor) throw ApiError.notFound('This kitchen is not available.', 'VENDOR_NOT_FOUND');
+    await assertHasOrdered(customer._id, vendor._id);
     const conversation = await chatRepository.findOrCreate(customer._id, vendor._id);
     return this.get('customer', customer, String(conversation._id));
   }
@@ -128,6 +138,8 @@ class ChatService {
       // A kitchen that was suspended or removed can't be messaged any more.
       const vendor = await vendorRepository.findActiveById(conversation.vendor_id);
       if (!vendor) throw ApiError.conflict('This kitchen is not available any more.', 'VENDOR_NOT_AVAILABLE');
+      // Also covers chats opened before this rule existed.
+      await assertHasOrdered(account._id, conversation.vendor_id);
     }
 
     const { message, conversation: updated } = await chatRepository.addMessage(conversation, {
