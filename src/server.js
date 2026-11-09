@@ -19,6 +19,7 @@ const dispatchSettingsService = require('./services/dispatchSettingsService');
 const privateDocumentsService = require('./services/privateDocumentsService');
 const maskStoredCardNumbers = require('./scripts/maskCardNumbers');
 const normalizeVendorTypes = require('./scripts/normalizeVendorTypes');
+const ensureTypeCategories = require('./scripts/ensureTypeCategories');
 
 
 const bootstrapAdmin = async () => {
@@ -133,6 +134,16 @@ const start = async () => {
       if (converted > 0) console.log(`Converted ${converted} outdated vendor type(s)`);
     } catch (error) {
       console.error('Converting outdated vendor types failed:', error.message);
+    }
+
+    // Categories meant for a vendor type (Breads, Pastries, Cakes, Cookies for
+    // Bakery): created when missing, never deleted or changed once there.
+    try {
+      const { created, tagged } = await ensureTypeCategories();
+      if (created.length) console.log(`Added categories: ${created.join(", ")}`);
+      if (tagged.length) console.log(`Tagged categories with their vendor type: ${tagged.join(", ")}`);
+    } catch (error) {
+      console.error("Adding vendor-type categories failed:", error.message);
     }
 
     // Card numbers saved before only the last 4 digits were kept.
