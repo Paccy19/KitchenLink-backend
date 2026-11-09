@@ -319,7 +319,12 @@ class VendorMenuService {
   }
 
   #serializeCategory(category) {
-    return { id: String(category._id), name: category.name, icon_url: category.icon_url || null };
+    return {
+      id: String(category._id),
+      name: category.name,
+      icon_url: category.icon_url || null,
+      vendor_types: category.vendor_types || [],
+    };
   }
 
   async categories() {
@@ -329,6 +334,7 @@ class VendorMenuService {
         id: String(category._id),
         name: category.name,
         icon_url: category.icon_url || null,
+        vendor_types: category.vendor_types || [],
       })),
     };
   }

@@ -104,6 +104,8 @@ CREATE TABLE categories (
   description TEXT        NOT NULL DEFAULT '',
   sort_order  INTEGER     NOT NULL DEFAULT 0,
   is_active   BOOLEAN     NOT NULL DEFAULT TRUE,
+  -- Vendor type codes the category is meant for (empty = every type).
+  vendor_types TEXT[]     NOT NULL DEFAULT '{}',
   -- Kitchen that created the category from its menu (NULL = admin).
   created_by_vendor_id   CHAR(24),
   created_by_vendor_name TEXT NOT NULL DEFAULT '',

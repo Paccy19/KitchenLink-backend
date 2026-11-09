@@ -45,6 +45,7 @@ function serializeCategory(category) {
     id: String(category._id),
     name: category.name,
     icon_url: category.icon_url || null,
+    vendor_types: category.vendor_types || [],
   };
 }
 

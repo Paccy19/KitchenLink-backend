@@ -57,7 +57,7 @@ const SPECS = [
     table: 'categories', collection: 'categories', sample: 'name',
     fields: {
       name: 'text', icon_url: 'text', description: 'text',
-      sort_order: 'int', is_active: 'bool',
+      sort_order: 'int', is_active: 'bool', vendor_types: 'text[]',
       created_by_vendor_id: 'text', created_by_vendor_name: 'text',
     },
   },

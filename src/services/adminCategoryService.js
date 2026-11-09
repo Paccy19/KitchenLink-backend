@@ -8,7 +8,27 @@ const {
   parseBooleanQuery,
 } = require('../utils/adminValidators');
 const categoryRepository = require('../repositories/categoryRepository');
+const { VENDOR_TYPE_CODES, toVendorTypeCode } = require('../config/vendorTypes');
 const adminActionLogService = require('./adminActionLogService');
+
+/** Vendor type codes a category is meant for ([] = every type). */
+const parseVendorTypes = (raw) => {
+  if (raw === undefined || raw === null || raw === '') return [];
+  const list = Array.isArray(raw) ? raw : String(raw).split(',');
+  const codes = [];
+  for (const entry of list) {
+    const value = String(entry).trim();
+    if (!value) continue;
+    const code = toVendorTypeCode(value);
+    if (!code) {
+      throw ApiError.badRequest('vendor_types contains an invalid value.', {
+        vendor_types: `expected values from: ${VENDOR_TYPE_CODES.join(', ')}`,
+      });
+    }
+    if (!codes.includes(code)) codes.push(code);
+  }
+  return codes;
+};
 
 const serializeAdminCategory = (category) => ({
   id: String(category._id),
@@ -17,6 +37,7 @@ const serializeAdminCategory = (category) => ({
   description: category.description || '',
   sort_order: category.sort_order ?? 0,
   is_active: category.is_active !== false,
+  vendor_types: category.vendor_types || [],
   // Kitchen that created it (null when an admin did).
   created_by_vendor: category.created_by_vendor_id
     ? { id: String(category.created_by_vendor_id), name: category.created_by_vendor_name || 'A kitchen' }
@@ -48,6 +69,7 @@ class AdminCategoryService {
         body.is_active === undefined
           ? true
           : parseBooleanQuery(body.is_active, { field: 'is_active' }),
+      vendor_types: parseVendorTypes(body.vendor_types),
     });
 
     await adminActionLogService.record(
@@ -92,6 +114,10 @@ class AdminCategoryService {
     }
     if (body.is_active !== undefined) {
       payload.is_active = parseBooleanQuery(body.is_active, { field: 'is_active' });
+    }
+
+    if (body.vendor_types !== undefined) {
+      payload.vendor_types = parseVendorTypes(body.vendor_types);
     }
 
     if (Object.keys(payload).length === 0) {

@@ -5,7 +5,7 @@
  * Phase 1 seeds MongoDB through the application's own logic (identical to
  * npm run seed:admin + seed:categories + seed:drivers):
  *   - super-admin account and global commission config
- *   - the 10 official food categories, in order
+ *   - the 14 official food categories, in order
  *   - 4 demo delivery workers (OTP login)
  *
  * Phase 2 mirrors the four affected tables (admins, commissions, categories,
@@ -38,7 +38,20 @@ const FOOD_CATEGORIES = [
   'Dinner',
   'Drinks',
   'Desserts',
+  // Bakery-type categories (see CATEGORY_VENDOR_TYPES).
+  'Breads',
+  'Pastries',
+  'Cakes',
+  'Cookies',
 ];
+
+// Categories meant for specific vendor types; the rest suit every type.
+const CATEGORY_VENDOR_TYPES = {
+  Breads: ['bakery'],
+  Pastries: ['bakery'],
+  Cakes: ['bakery'],
+  Cookies: ['bakery'],
+};
 
 const DEMO_DRIVERS = [
   { name: 'Eric Uwimana', phone: '0788100001', vehicle_type: 'motorcycle', plate_number: 'RAD 101 A', latitude: -1.9441, longitude: 30.0619 },
@@ -80,6 +93,7 @@ const seedMongo = async () => {
     category.name = name;
     category.sort_order = index + 1;
     category.is_active = true;
+    category.vendor_types = CATEGORY_VENDOR_TYPES[name] || [];
     await category.save();
     keepIds.push(category._id);
     console.log(`${existing ? 'Kept   ' : 'Created'} ${name}`);

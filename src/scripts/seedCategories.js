@@ -21,7 +21,20 @@ const FOOD_CATEGORIES = [
   'Dinner',
   'Drinks',
   'Desserts',
+  // Bakery-type categories (see CATEGORY_VENDOR_TYPES).
+  'Breads',
+  'Pastries',
+  'Cakes',
+  'Cookies',
 ];
+
+// Categories meant for specific vendor types; the rest suit every type.
+const CATEGORY_VENDOR_TYPES = {
+  Breads: ['bakery'],
+  Pastries: ['bakery'],
+  Cakes: ['bakery'],
+  Cookies: ['bakery'],
+};
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -36,6 +49,7 @@ const run = async () => {
     category.name = name;
     category.sort_order = index + 1;
     category.is_active = true;
+    category.vendor_types = CATEGORY_VENDOR_TYPES[name] || [];
     await category.save();
     keepIds.push(category._id);
     console.log(`${existing ? 'Kept   ' : 'Created'} ${name}`);
