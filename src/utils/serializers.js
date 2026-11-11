@@ -4,7 +4,7 @@ const { isKitchenReady } = require('./deliveryReady');
 const deliverySettings = require('../services/deliverySettingsService');
 const dispatchSettingsService = require('../services/dispatchSettingsService');
 const access = require('../config/adminAccess');
-const { vendorTypeLabel, orderingRulesFor, nationwideFor } = require('../config/vendorTypes');
+const { vendorTypeLabel, orderingRulesFor, nationwideFor, isTypeLocked } = require('../config/vendorTypes');
 const { usesHandoverCode, isKitchenDelivered, balanceUnpaid } = require('./fulfillment');
 const { isPrivateRef } = require('./uploads');
 
@@ -704,6 +704,8 @@ function serializeAdminVendor(vendor) {
     vendor_type: vendor.vendor_type,
     vendor_type_label: vendorTypeLabel(vendor.vendor_type),
     vendor_type_request: serializeVendorTypeRequest(vendor),
+    // Approved kitchens: the type only changes through the vendor's request.
+    vendor_type_locked: isTypeLocked(vendor),
     ordering: orderingRulesFor(vendor),
     nationwide: nationwideFor(vendor),
     phone: vendor.phone || null,

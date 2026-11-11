@@ -304,7 +304,19 @@ function parseVendorTypeFilter(query = {}) {
   return [...new Set(codes)];
 }
 
+/**
+ * True once an admin has approved the kitchen (it stays true while it is
+ * suspended): from then on its type only changes when the vendor asks for it,
+ * and the admin can only approve or decline that request. While the
+ * application is pending or rejected, the admin may still set the type.
+ */
+function isTypeLocked(vendor) {
+  const status = vendor?.verification_status || 'approved';
+  return status === 'approved' || status === 'suspended';
+}
+
 module.exports = {
+  isTypeLocked,
   VENDOR_TYPES,
   VENDOR_TYPE_CODES,
   toVendorTypeCode,

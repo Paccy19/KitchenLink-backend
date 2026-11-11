@@ -18,6 +18,7 @@ const {
   parseVendorType,
   parseVendorTypeFilter,
   vendorTypeLabel,
+  isTypeLocked,
   nationwideFor,
 } = require('../config/vendorTypes');
 
@@ -194,8 +195,13 @@ class AdminVendorService {
   }
 
   /**
-   * An admin sets a vendor's type directly, or answers their change request
-   * (`decision`: 'approve' uses the requested type, 'reject' keeps the current one).
+   * An admin answers a vendor's type change request (`decision`: 'approve'
+   * uses the requested type, 'reject' keeps the current one), or sets the type
+   * directly while the application is still being reviewed.
+   *
+   * Once a kitchen has been approved (also while suspended), its type only
+   * changes when the vendor asks: a direct change is refused, and only their
+   * pending request can be approved or declined.
    */
   async setType(vendorId, body = {}, admin, req) {
     parseObjectId(vendorId, 'vendor_id');
@@ -206,6 +212,14 @@ class AdminVendorService {
     const decision = body.decision === 'approve' || body.decision === 'reject' ? body.decision : null;
     if (decision && !requested) {
       throw ApiError.conflict('This vendor has no pending type change request.', 'NO_TYPE_REQUEST');
+    }
+    if (!decision && isTypeLocked(vendor)) {
+      throw ApiError.conflict(
+        requested
+          ? `This kitchen is approved, so its type only changes through its request. Approve or decline the request to become ${vendorTypeLabel(requested)}.`
+          : 'This kitchen is approved, so its type can only change when the vendor asks for it from their profile.',
+        'VENDOR_TYPE_LOCKED'
+      );
     }
     const note = parseOptionalText(body.reason, { field: 'reason', max: 300 }) || '';
     const nextType =
