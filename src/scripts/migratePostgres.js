@@ -156,7 +156,7 @@ const SPECS = [
     fields: {
       order_id: 'oid', customer_id: 'oid', amount_rwf: 'num', method: 'text',
       provider: 'text', status: 'text', reference: 'text',
-      failure_reason: 'text', paid_at: 'date',
+      failure_reason: 'text', paid_at: 'date', part: 'text', provider_reference: 'text',
     },
   },
   {

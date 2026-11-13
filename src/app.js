@@ -39,7 +39,8 @@ app.use(
     exposedHeaders: ['X-Request-Id'],
   })
 );
-app.use(express.json({ limit: '1mb' }));
+// The raw bytes are kept for webhook signatures (Paypack).
+app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 // Central safety net: no MongoDB operator keys in any body or query string.
 app.use(rejectOperatorKeys);
 

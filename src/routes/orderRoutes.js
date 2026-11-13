@@ -34,6 +34,7 @@ router.get(
 );
 router.post('/:order_id/cancel', requireAuth, orderController.cancelOrder);
 router.post('/:order_id/pay', requireAuth, orderController.payOrder);
+router.post('/:order_id/payment/check', requireAuth, orderController.checkPayment);
 // Big events: pay the second half (due a day before the event).
 router.post('/:order_id/pay-balance', requireAuth, orderController.payBalance);
 router.post('/:order_id/switch-to-delivery/quote', requireAuth, orderController.quoteSwitchToDelivery);

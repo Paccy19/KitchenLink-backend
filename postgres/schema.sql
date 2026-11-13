@@ -417,6 +417,9 @@ CREATE TABLE payments (
   reference      TEXT        NOT NULL UNIQUE,
   failure_reason TEXT        NOT NULL DEFAULT '',
   paid_at        TIMESTAMPTZ,
+  part           TEXT        DEFAULT 'full'
+                 CHECK (part IN ('full','deposit','balance')),
+  provider_reference TEXT,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );

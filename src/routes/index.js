@@ -52,6 +52,7 @@ router.use('/vendor/support', vendorSupportRoutes);
 router.use('/vendor/chats', vendorChatRoutes);
 router.use('/vendor', vendorDashboardRoutes);
 router.use('/orders', orderRoutes);
+router.use('/payments', require('./paymentWebhookRoutes'));
 router.use('/notifications', notificationRoutes);
 router.use('/support', customerSupportRoutes);
 router.use('/chats', customerChatRoutes);

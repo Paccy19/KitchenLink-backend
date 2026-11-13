@@ -41,6 +41,11 @@ const payOrder = asyncHandler(async (req, res) => {
   res.json(await orderService.pay(req.customer._id, req.params.order_id, req.body));
 });
 
+// The app polls while the customer approves the mobile money prompt.
+const checkPayment = asyncHandler(async (req, res) => {
+  res.json(await orderService.checkPayment(req.customer._id, req.params.order_id));
+});
+
 // Pickup order -> delivery: price the new address, then pay and switch.
 const quoteSwitchToDelivery = asyncHandler(async (req, res) => {
   res.json(await orderService.quoteSwitchToDelivery(req.customer._id, req.params.order_id, req.body));
@@ -63,4 +68,5 @@ module.exports = {
   trackOrder,
   cancelOrder,
   payOrder,
+  checkPayment,
 };

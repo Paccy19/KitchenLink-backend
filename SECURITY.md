@@ -15,7 +15,7 @@ the strict behaviour, not the relaxed one.
 | --- | --- | --- |
 | Missing or unsafe settings (below) | Listed as warnings, server starts | **Server refuses to start** and lists them all |
 | Sign-in codes and delivery codes | Shown in the API response and console | Never shown; sent by SMS only |
-| Payments | Simulated: orders marked paid, no money moves | Checkout disabled until a real provider is connected |
+| Payments | Simulated unless Paypack keys are set: orders marked paid, no money moves | Mobile money through Paypack; without its keys, checkout is disabled |
 | Public example secrets (`dev-agent-key`, `Admin@12345`) | Accepted | Refused |
 
 ## Required on a live server
@@ -38,9 +38,15 @@ Optional (the server starts and prints a reminder): an email service
 `SUPPORT_PHONE` / `SUPPORT_EMAIL`. Behind a hosting proxy or load balancer,
 set `TRUST_PROXY=1` so per-IP limits see real visitors.
 
-Payments: every payment method is still simulated (`config.payments.simulated`).
-A live server takes no orders until a real provider (e.g. MTN MoMo, Airtel
-Money, a gateway) is integrated in `orderService`.
+Payments: mobile money (MTN MoMo and Airtel Money) goes through Paypack once
+`PAYPACK_CLIENT_ID` and `PAYPACK_CLIENT_SECRET` are set; a live server then also
+needs `PAYPACK_WEBHOOK_SECRET` (from the Paypack dashboard, webhook URL
+`<PUBLIC_BASE_URL>/api/v1/payments/paypack/webhook`). Only a validly signed
+report marks an order paid, and a repeated report changes nothing. While Paypack
+is connected, cards, eKash and the wallet are refused (no provider yet), and a
+paid pickup order can't be switched to delivery (its extra fee would need a second
+prompt). Without Paypack keys every method is simulated, which only a
+development server allows.
 
 ## Protections in place
 

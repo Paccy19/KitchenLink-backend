@@ -14,6 +14,7 @@ const {
 } = require('../utils/validators');
 const orderRepository = require('../repositories/orderRepository');
 const paymentRepository = require('../repositories/paymentRepository');
+const Payment = require('../models/Payment');
 const cartRepository = require('../repositories/cartRepository');
 const cartService = require('./cartService');
 const vendorRepository = require('../repositories/vendorRepository');
@@ -21,6 +22,7 @@ const deliveryRepository = require('../repositories/deliveryRepository');
 const notificationRepository = require('../repositories/notificationRepository');
 const notificationService = require('./notificationService');
 const settlementService = require('./settlementService');
+const paypackService = require('./paypackService');
 const deliveryPricingService = require('./deliveryPricingService');
 const deliveryService = require('./deliveryService');
 const { isKitchenReady } = require('../utils/deliveryReady');
@@ -55,13 +57,17 @@ const PROVIDERS = {
  * run on an explicit development server. On a live server checkout stops
  * here until a real payment provider is connected.
  */
-const assertPaymentsAvailable = () => {
+const assertPaymentsAvailable = (method) => {
   if (config.payments.simulated && !config.explicitDev) {
     throw new ApiError(
       503,
       'PAYMENTS_NOT_CONFIGURED',
       "Online payment isn't available yet. Please try again later."
     );
+  }
+  // Paypack collects mobile money only; the other methods have no provider yet.
+  if (!config.payments.simulated && method !== 'mobile_money') {
+    throw new ApiError(400, 'PAYMENT_METHOD_UNAVAILABLE', 'Pay with mobile money (MTN or Airtel) for now.');
   }
 };
 
@@ -337,7 +343,9 @@ const serializeTracking = (order, vendor, payment, delivery) => {
 
 class OrderService {
   paymentMethods() {
-    return { payment_methods: orders.paymentMethods };
+    // With Paypack connected, only mobile money can really be collected.
+    const methods = config.payments.simulated ? orders.paymentMethods : orders.paymentMethods.filter((m) => m.code === 'mobile_money');
+    return { payment_methods: methods };
   }
 
   /** Offers a newly paid immediate order to nearby delivery workers (background). */
@@ -374,10 +382,36 @@ class OrderService {
    * first half of a two-part order) or 'balance' (its second half).
    */
   async #initiatePayment(order, method, simulate, { part = 'full' } = {}) {
-    assertPaymentsAvailable();
+    assertPaymentsAvailable(method);
     const provider = PROVIDERS[method];
     const amount =
       part === 'deposit' ? order.deposit.deposit_rwf : part === 'balance' ? order.deposit.balance_rwf : order.total_rwf;
+
+    // A real provider: the customer approves a prompt on their phone and
+    // Paypack confirms later (webhook, or checkPayment), so it stays processing.
+    if (!config.payments.simulated) {
+      const phone = order.payment_details?.phone;
+      if (!phone) throw ApiError.badRequest('Enter the mobile money number to pay with.', { phone: 'required' });
+      const pending = await paymentRepository.create({
+        order_id: order._id,
+        customer_id: order.customer_id,
+        amount_rwf: amount,
+        method,
+        provider: 'paypack',
+        status: 'processing',
+        part,
+        reference: generateReference('paypack'),
+      });
+      try {
+        const sent = await paypackService.cashin({ amountRwf: amount, phone });
+        const payment = await paymentRepository.update(pending._id, { provider_reference: sent.reference });
+        return { paymentStatus: 'pending', payment, amount };
+      } catch (error) {
+        console.error('[payments] Paypack cashin failed:', error.message);
+        await paymentRepository.update(pending._id, { status: 'failed', failure_reason: 'The payment prompt could not be sent.' });
+        throw new ApiError(502, 'PAYMENT_PROVIDER_UNAVAILABLE', "We couldn't reach mobile money just now. Please try again in a moment.");
+      }
+    }
 
     let payment = await paymentRepository.create({
       order_id: order._id,
@@ -386,6 +420,7 @@ class OrderService {
       method,
       provider,
       status: 'processing',
+      part,
       reference: generateReference(provider),
     });
 
@@ -424,7 +459,7 @@ class OrderService {
     const paymentMethod = parsePaymentMethod(body?.payment_method);
     const paymentDetails = parsePaymentDetails(paymentMethod, body?.payment_details);
     // Before anything is created: no order without a way to really pay.
-    assertPaymentsAvailable();
+    assertPaymentsAvailable(paymentMethod);
     const simulate = body?.payment_simulate;
     const orderType = parseOrderType(body?.order_type);
     let scheduledFor = null;
@@ -589,14 +624,7 @@ class OrderService {
           : scheduledFor,
     });
 
-    const { updatedOrder, payment } = await this.#payAndAnnounce(order, {
-      customerId,
-      vendor,
-      paymentMethod,
-      simulate,
-      usesCode,
-      kitchenBrings,
-    });
+    const { updatedOrder, payment } = await this.#payAndAnnounce(order, { vendor, paymentMethod, simulate });
 
     await cartRepository.clear(customerId);
 
@@ -608,7 +636,77 @@ class OrderService {
    * only), offer it to delivery workers, send a pickup / handover code, and
    * let the admins know. Shared by the basket checkout and big-event orders.
    */
-  async #payAndAnnounce(order, { customerId, vendor, paymentMethod, simulate, usesCode, kitchenBrings }) {
+  /**
+   * An order just got paid (now, or when the provider confirmed): the kitchen
+   * hears about it, nearby delivery workers are offered it, and the customer
+   * gets their pickup / handover code.
+   */
+  #announcePaid(order, vendor) {
+    orderNotifications.newOrder(order);
+    this.#offerToDrivers(order);
+    if (!order.pickup_code) return;
+    notificationService
+      .notifyPickupCode(order.customer_id, {
+        orderNumber: order.order_number,
+        code: order.pickup_code,
+        orderId: order._id,
+        vendorName: vendor?.name || '',
+        address: [vendor?.address, vendor?.neighborhood].filter(Boolean).join(', '),
+        ready: false,
+        kitchenBrings: isKitchenDelivered(order),
+      })
+      .catch((error) => console.error('[pickup] could not send pickup code:', error.message));
+  }
+
+  /**
+   * Paypack reported on a payment (webhook or checkPayment). Safe to call
+   * repeatedly: only a payment still processing changes, once.
+   */
+  async settleProviderPayment(providerReference, status) {
+    if (status === 'processing') return null;
+    const payment = await Payment.findOneAndUpdate(
+      { provider_reference: providerReference, status: 'processing' },
+      status === 'successful'
+        ? { $set: { status: 'successful', paid_at: new Date() } }
+        : { $set: { status: 'failed', failure_reason: 'The payment was not approved on the phone.' } },
+      { returnDocument: 'after' }
+    );
+    if (!payment || payment.status !== 'successful') return payment;
+
+    const order = await orderRepository.findById(payment.order_id);
+    const vendor = await vendorRepository.findById(order.vendor_id);
+    if (payment.part === 'balance') {
+      await settlementService.onBalancePaid(order, payment.amount_rwf, { reference: payment.reference });
+      await this.#afterBalancePaid(order, payment.amount_rwf, vendor);
+      return payment;
+    }
+    await settlementService.onPaymentSuccess(order, { amountRwf: payment.part === 'deposit' ? payment.amount_rwf : null });
+    const updated = await orderRepository.update(order._id, {
+      payment_status: 'paid',
+      ...(payment.part === 'deposit' ? { amount_paid_rwf: payment.amount_rwf } : {}),
+    });
+    this.#announcePaid({ ...order, ...updated }, vendor);
+    return payment;
+  }
+
+  /**
+   * The customer's app asks how the payment is going; when Paypack's webhook
+   * is late, the status is asked from Paypack directly.
+   */
+  async checkPayment(customerId, orderId) {
+    const order = await this.#loadOrder(customerId, orderId);
+    const latest = await paymentRepository.findLatestByOrder(order._id);
+    if (latest?.status === 'processing' && latest.provider === 'paypack' && latest.provider_reference) {
+      try {
+        await this.settleProviderPayment(latest.provider_reference, await paypackService.transactionStatus(latest.provider_reference));
+      } catch (error) {
+        console.error('[payments] Paypack status check failed:', error.message);
+      }
+    }
+    return this.getDetail(customerId, orderId);
+  }
+
+  async #payAndAnnounce(order, { vendor, paymentMethod, simulate }) {
     const total = order.total_rwf;
     // Two-part orders (big events) take the deposit now, the balance later.
     const twoPart = order.deposit?.deposit_rwf != null;
@@ -625,23 +723,7 @@ class OrderService {
     });
     // The kitchen only hears about orders that are paid for; nearby delivery
     // workers are offered the order at the same moment.
-    if (paymentStatus === 'paid') {
-      orderNotifications.newOrder({ ...order, ...updatedOrder });
-      this.#offerToDrivers({ ...order, ...updatedOrder });
-      if (usesCode && order.pickup_code) {
-        notificationService
-          .notifyPickupCode(customerId, {
-            orderNumber: order.order_number,
-            code: order.pickup_code,
-            orderId: order._id,
-            vendorName: vendor.name,
-            address: [vendor.address, vendor.neighborhood].filter(Boolean).join(', '),
-            ready: false,
-            kitchenBrings,
-          })
-          .catch((error) => console.error('[pickup] could not send pickup code:', error.message));
-      }
-    }
+    if (paymentStatus === 'paid') this.#announcePaid({ ...order, ...updatedOrder }, vendor);
 
     notificationService
       .notifyAdmin({
@@ -785,7 +867,7 @@ class OrderService {
   async eventCheckout(customerId, body = {}) {
     const paymentMethod = parsePaymentMethod(body.payment_method);
     const paymentDetails = parsePaymentDetails(paymentMethod, body.payment_details);
-    assertPaymentsAvailable();
+    assertPaymentsAvailable(paymentMethod);
 
     const eventAt = parseScheduledFor(body.event_at, { minLeadMinutes: 0, maxDaysAhead: EVENT_ORDER.max_days_ahead });
     if (eventAt.getTime() < Date.now() + EVENT_ORDER.min_lead_hours * 60 * 60 * 1000) {
@@ -857,15 +939,8 @@ class OrderService {
       estimated_delivery_at: eventAt,
     });
 
-    const { updatedOrder, payment } = await this.#payAndAnnounce(order, {
-      customerId,
-      vendor,
-      paymentMethod,
-      simulate: body.payment_simulate,
-      // No code with the deposit: it comes with the balance (payBalance).
-      usesCode: false,
-      kitchenBrings: !pickup,
-    });
+    // No code with the deposit: it comes with the balance (payBalance).
+    const { updatedOrder, payment } = await this.#payAndAnnounce(order, { vendor, paymentMethod, simulate: body.payment_simulate });
     return serializeDetail({ ...order, ...updatedOrder }, vendor, payment);
   }
 
@@ -1039,6 +1114,14 @@ class OrderService {
     // Paid orders: charge the delivery fee first; nothing changes if it fails.
     let feePayment = null;
     if (alreadyPaid && fee > 0) {
+      // A real provider confirms later, so the extra fee can't be charged in
+      // this one step yet: refused rather than recorded as paid.
+      if (!config.payments.simulated) {
+        throw ApiError.conflict(
+          "A paid pickup order can't be switched to delivery yet. Collect it, or ask the kitchen to cancel it and order again with delivery.",
+          'SWITCH_NOT_AVAILABLE'
+        );
+      }
       assertPaymentsAvailable();
       const paymentMethod = parsePaymentMethod(body.payment_method);
       // Same payer checks as checkout (e.g. an MTN/Airtel number for Mobile Money).
@@ -1180,12 +1263,8 @@ class OrderService {
       payment_status: paymentStatus,
       ...(twoPart && paymentStatus === 'paid' ? { amount_paid_rwf: amount } : {}),
     });
-    if (paymentStatus === 'paid') {
-      orderNotifications.newOrder(updated);
-      this.#offerToDrivers(updated);
-    }
-
     const { vendor } = await this.#loadWithVendor(updated);
+    if (paymentStatus === 'paid') this.#announcePaid(updated, vendor);
     return serializeDetail(updated, vendor, payment);
   }
 
@@ -1212,14 +1291,24 @@ class OrderService {
 
     const method = body.payment_method ? parsePaymentMethod(body.payment_method) : order.payment_method;
     // A new number / card for this payment; otherwise the one used for the deposit.
-    const paymentDetails = body.payment_details ? parsePaymentDetails(method, body.payment_details) : null;
+    if (body.payment_details) {
+      Object.assign(order, await orderRepository.update(order._id, { payment_details: parsePaymentDetails(method, body.payment_details) }));
+    }
     const { paymentStatus, payment, amount } = await this.#initiatePayment(order, method, body.payment_simulate, {
       part: 'balance',
     });
+    const vendor = await vendorRepository.findById(order.vendor_id);
+    // Mobile money: confirmed once the customer approves it on their phone.
+    if (paymentStatus === 'pending') return serializeDetail(order, vendor, payment);
     if (paymentStatus !== 'paid') {
       throw new ApiError(402, 'PAYMENT_FAILED', payment.failure_reason || 'The payment did not go through. Please try again.');
     }
+    const updated = await this.#afterBalancePaid(order, amount, vendor);
+    return serializeDetail(await this.#withPickupCode(updated), vendor, payment);
+  }
 
+  /** Big events: the balance is paid, so the customer gets the handover code. */
+  async #afterBalancePaid(order, amount, vendor) {
     const now = new Date();
     await orderRepository.pushHistory(order._id, {
       status: order.status,
@@ -1234,11 +1323,9 @@ class OrderService {
       pickup_code: code,
       pickup_code_sent_at: now,
       pickup_code_attempts: 0,
-      ...(paymentDetails ? { payment_details: paymentDetails } : {}),
     });
-    const vendor = await vendorRepository.findById(order.vendor_id);
     notificationService
-      .notifyPickupCode(customerId, {
+      .notifyPickupCode(order.customer_id, {
         orderNumber: order.order_number,
         code,
         orderId: order._id,
@@ -1258,7 +1345,7 @@ class OrderService {
       })
       .catch(() => null);
 
-    return serializeDetail(await this.#withPickupCode(updated), vendor, payment);
+    return updated;
   }
 
   /**

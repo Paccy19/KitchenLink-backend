@@ -193,12 +193,21 @@ const config = {
       senderId: process.env.SMS_SENDER_ID || 'FoodKitchen',
     },
   },
-  // No real payment provider is connected yet: every method is simulated
-  // (orders are marked paid without collecting money). Simulated payments
-  // only run on an explicit development server; a live server refuses
-  // checkout until a provider is integrated (see orderService).
+  // Mobile money is collected through Paypack (MTN MoMo and Airtel Money)
+  // once its keys are set. Without them every method is simulated (orders
+  // are marked paid without collecting money), which only runs on an explicit
+  // development server: a live server then refuses checkout (orderService).
   payments: {
-    simulated: true,
+    simulated: !(process.env.PAYPACK_CLIENT_ID && process.env.PAYPACK_CLIENT_SECRET),
+    paypack: {
+      clientId: process.env.PAYPACK_CLIENT_ID || '',
+      clientSecret: process.env.PAYPACK_CLIENT_SECRET || '',
+      baseUrl: process.env.PAYPACK_BASE_URL || 'https://payments.paypack.rw/api',
+      // Secret from the Paypack dashboard, used to verify X-Paypack-Signature.
+      webhookSecret: process.env.PAYPACK_WEBHOOK_SECRET || '',
+      // Paypack calls the webhook URL registered for this mode.
+      webhookMode: process.env.PAYPACK_WEBHOOK_MODE || (explicitDev ? 'development' : 'production'),
+    },
   },
   orders: {
     agentKey: process.env.AGENT_API_KEY || 'dev-agent-key',

@@ -30,6 +30,10 @@ const paymentSchema = new mongoose.Schema(
     reference: { type: String, required: true, unique: true },
     failure_reason: { type: String, default: '' },
     paid_at: { type: Date },
+    // What this payment covers: the whole order, a big event's deposit, or its balance.
+    part: { type: String, enum: ['full', 'deposit', 'balance'], default: 'full' },
+    // The payment provider's own transaction id (Paypack's ref).
+    provider_reference: { type: String, index: true, sparse: true },
   },
   { timestamps }
 );
