@@ -1,0 +1,24 @@
+# Keep secrets, local data and Windows-installed modules out of the image.
+.git
+.gitignore
+.vscode
+node_modules
+npm-debug.log*
+*.log
+
+# Environment files (production settings come from deploy/backend.env at runtime)
+.env
+.env.*
+!.env.example
+
+# User uploads live in Docker volumes, never in the image
+uploads
+private-uploads
+src/uploads
+
+# Not needed at runtime
+deploy
+test
+*.md
+Dockerfile
+.dockerignore

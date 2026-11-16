@@ -74,7 +74,42 @@ const orderSchema = new mongoose.Schema(
     delivery_fee_rwf: { type: Number, required: true },
     // Road distance kitchen -> drop-off used to price delivery at checkout.
     delivery_distance_km: { type: Number, min: 0, default: null },
-    delivery_distance_source: { type: String, enum: ['google', 'estimate', null], default: null },
+    delivery_distance_source: { type: String, enum: ['google', 'osrm', 'estimate', null], default: null },
+    // Standard platform delivery: the approved route and the exact prices it
+    // was charged with (see deliveryPricingService.pricingRecord). Fixed when
+    // the order is placed: admins changing prices later, or the worker taking
+    // a longer road, never change it. Null for pickup, kitchen-delivered and
+    // older orders.
+    delivery_pricing: {
+      type: new mongoose.Schema(
+        {
+          mode: { type: String, enum: ['per_meter', 'ranges', 'formula'], required: true },
+          distance_m: { type: Number, min: 0, required: true },
+          distance_km: { type: Number, min: 0, default: null },
+          distance_source: { type: String, enum: ['google', 'osrm', 'estimate'], required: true },
+          duration_minutes: { type: Number, min: 0, default: null },
+          base_fee_rwf: { type: Number, min: 0, default: null },
+          per_meter_rwf: { type: Number, min: 0, default: null },
+          per_km_fee_rwf: { type: Number, min: 0, default: null },
+          min_fee_rwf: { type: Number, min: 0, default: null },
+          max_fee_rwf: { type: Number, min: 0, default: null },
+          range: {
+            type: new mongoose.Schema(
+              { from_km: Number, to_km: { type: Number, default: null }, fee_rwf: Number },
+              { _id: false }
+            ),
+            default: null,
+          },
+          formula_fee_rwf: { type: Number, default: null },
+          fee_rwf: { type: Number, min: 0, required: true },
+          pickup: { latitude: Number, longitude: Number },
+          dropoff: { latitude: Number, longitude: Number },
+          priced_at: { type: Date, required: true },
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
     total_rwf: { type: Number, required: true },
     // 'delivery': a delivery worker brings it. 'pickup': the customer collects
     // it at the kitchen — no delivery fee, no delivery worker, and the vendor
@@ -189,5 +224,7 @@ orderSchema.index({ driver_id: 1, status: 1 });
 orderSchema.index({ order_type: 1, scheduled_for: 1 });
 // "Money still held": only orders that can still hold money (see heldTotal).
 orderSchema.index({ settlement_status: 1, rider_payout_settled_at: 1 });
+// Admin: delivery fee records (orders priced with the standard delivery fee).
+orderSchema.index({ 'delivery_pricing.priced_at': -1 }, { sparse: true });
 
 module.exports = mongoose.model('Order', orderSchema);

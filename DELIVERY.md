@@ -27,8 +27,9 @@ Driver confirm-delivery → delivered → completed
   `status` (online/offline/busy), `active_deliveries_count`, rating, wallet totals.
   Auth mirrors the vendor: OTP sign-in (`purpose: 'driver'`), JWT role `driver`.
 - **Delivery** — `/deliveries`: one per order (`order_id` unique). Stores the
-  lifecycle statuses, pickup + delivery points, `route_distance_km`
-  (haversine × road factor), `delivery_fee_rwf`, `promised_earnings_rwf`
+  lifecycle statuses, pickup + delivery points, `route_distance_km` and
+  `approved_distance_m` (the road distance charged at checkout),
+  `route_monitoring` (see below), `delivery_fee_rwf`, `promised_earnings_rwf`
   (driver share), `dispatch.offers` (broadcast bookkeeping), `otp_code`
   (proof-of-delivery), `status_history`.
 - **Order** — extended with `driver_id`, `delivery_id`, `picked_up_at`, `delivered_at`.
@@ -117,6 +118,55 @@ Triggered automatically when a vendor marks an order **Ready**. Algorithm in
 - **Customer unreachable** → driver escalates by cancelling via the guarded
   transition (payload-recorded in `status_history`).
 - **Mid-transit cancellation** → only allowed by a guarding transition; terminal.
+
+## Standard delivery fee (per meter)
+
+The platform's own delivery fee is set by admins in **Settings → Delivery fee by
+distance**, and applies to `fulfillment: 'delivery'` orders only. It does not
+cover kitchen-delivered orders (nationwide travel fee), big-event delivery or
+pickup. Pricing modes, in order of precedence (`deliveryPricingService`):
+
+1. **Per meter** (when enabled): `fee = base_fee_rwf + road_meters × per_meter_rwf`,
+   kept between `min_fee_rwf` (≥ 500 RWF) and `max_fee_rwf` (empty = none).
+   Example: 300 + 2,000 m × 1 = 2,300 RWF.
+2. Distance ranges, if the admin saved any.
+3. The config formula (`DELIVERY_BASE_FEE_RWF + DELIVERY_PER_KM_FEE_RWF × km`).
+
+**Road distance.** `routeDistanceService` measures the route from the kitchen's
+saved location to the drop-off point in meters, using Google Routes
+(`GOOGLE_MAPS_API_KEY`) and/or OSRM (`OSRM_URL`), as chosen by `ROUTING_PROVIDER`.
+Per-meter pricing **never** uses a straight-line estimate. If no routing service
+answers, the quote and the checkout return `503 ROUTE_UNAVAILABLE`: the customer
+can try again or choose pickup. Real routes are cached for
+`GOOGLE_MAPS_CACHE_TTL_SECONDS`, so the price shown at checkout is the price
+charged a moment later.
+
+**Server-side and fixed.** The fee is always recalculated on the server at
+checkout. Any fee or price the client sends is ignored. The order stores the
+approved route and the exact prices used in `Order.delivery_pricing`: mode,
+`distance_m`, source, base fee, rate, min/max, fee, pickup and drop-off points,
+and `priced_at`. Changing the prices later only affects new orders. The
+delivery worker is paid from that stored fee.
+
+**Route deviation monitoring.** While a delivery is `picked_up` or
+`out_for_delivery`, each worker GPS update (`PATCH /driver/location`) adds the
+distance moved to `Delivery.route_monitoring.tracked_distance_m`. These updates
+are ignored:
+
+- fixes with accuracy worse than 100 m
+- steps under 15 m (jitter)
+- jumps faster than ~150 km/h
+
+A delivery is flagged (`route_monitoring.flagged_at`) when the tracked distance
+exceeds the approved distance by the admin's route alert percentage (default
+50%) **and** by at least 500 m. A flag is for review only: it never changes the
+customer's fee or the worker's earnings.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/vendors/:id/delivery-quote?lat&lng` | quote: `distance_m`, `distance_source`, `delivery_fee_rwf`, `pricing`, `pickup` |
+| GET / PUT | `/admin/settings/delivery-fees` | `{ ranges?, per_meter? }`: either part can be saved on its own |
+| GET | `/admin/settings/delivery-fees/records?page&limit&flagged=true` | orders with distance, prices used, route monitoring, summary |
 
 ## Env vars (see `.env.example`)
 

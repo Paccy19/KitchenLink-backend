@@ -242,6 +242,7 @@ const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
   subtotal_rwf: order.subtotal_rwf,
   delivery_fee_rwf: order.delivery_fee_rwf,
   delivery_distance_km: order.delivery_distance_km ?? null,
+  delivery_distance_m: order.delivery_pricing?.distance_m ?? null,
   total_rwf: order.total_rwf,
   delivery_location: { ...order.delivery_location },
   payment: serializePayment(payment),
@@ -560,6 +561,8 @@ class OrderService {
       delivery_fee_rwf: fee,
       delivery_distance_km: quote.distance_km,
       delivery_distance_source: quote.distance_source,
+      // The approved route and prices, kept so the fee never changes later.
+      delivery_pricing: deliveryPricingService.pricingRecord(quote),
       total_rwf: total,
       fulfillment: quote.fulfillment,
       // Pickup orders get their code at once (like a delivery code), so the
@@ -1071,6 +1074,7 @@ class OrderService {
         delivery_fee_rwf: fee,
         delivery_distance_km: quote.distance_km,
         delivery_distance_source: quote.distance_source,
+        delivery_pricing: deliveryPricingService.pricingRecord(quote),
       },
       inc: { total_rwf: fee },
       historyStatus: order.status,

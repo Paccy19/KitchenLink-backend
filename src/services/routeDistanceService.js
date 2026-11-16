@@ -1,29 +1,44 @@
 const config = require('../config');
 const { haversineKm } = require('../utils/geo');
+const { runOsrm } = require('../utils/osrmQueue');
 
 const ROUTES_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes';
 const CACHE_MAX_ENTRIES = 1000;
-// ~4 decimal places is about 11 m, close enough to share a cached route.
+// ~4 decimal places is about 11 m, close enough to share a cached route. The
+// checkout quote and the order placed a moment later hit the same entry, so
+// the customer pays exactly the price they were shown.
 const cacheKey = (from, to) =>
   [from.latitude, from.longitude, to.latitude, to.longitude]
     .map((value) => Number(value).toFixed(4))
     .join(',');
 
 const roundKm = (km) => Math.round(km * 10) / 10;
+const ROAD_SOURCES = ['google', 'osrm'];
 
 /**
- * Road distance between two points. Uses the Google Routes API when
- * GOOGLE_MAPS_API_KEY is configured, otherwise (or whenever Google fails)
- * estimates road km as straight-line km x roadFactor so checkout never blocks
- * on the maps provider.
+ * Road distance between two points, in meters (and km, rounded to 0.1, for
+ * the existing screens).
+ *
+ * Providers (ROUTING_PROVIDER, see config.maps.routingProvider):
+ *   auto   - Google Routes API when GOOGLE_MAPS_API_KEY is set, then OSRM
+ *            (OpenStreetMap roads; OSRM_URL, public server by default)
+ *   google - Google only, osrm - OSRM only, none - no routing service
+ * When every provider fails, the straight-line distance x DELIVERY_ROAD_FACTOR
+ * is returned with source 'estimate'. Callers that must charge by the real
+ * road (per-meter pricing) check `isRoadDistance` and refuse estimates.
  */
 class RouteDistanceService {
   #cache = new Map();
 
+  /** True when the distance came from a routing service, not an estimate. */
+  isRoadDistance(route) {
+    return ROAD_SOURCES.includes(route?.source);
+  }
+
   /**
    * @param {{latitude:number, longitude:number}} from
    * @param {{latitude:number, longitude:number}} to
-   * @returns {Promise<{distance_km:number, duration_minutes:number|null, source:'google'|'estimate'}>}
+   * @returns {Promise<{distance_m:number, distance_km:number, duration_minutes:number|null, source:'google'|'osrm'|'estimate'}>}
    */
   async measure(from, to) {
     const key = cacheKey(from, to);
@@ -31,16 +46,18 @@ class RouteDistanceService {
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
     let value = null;
-    if (config.maps.googleApiKey) {
-      value = await this.#fromGoogle(from, to).catch((error) => {
-        console.log(`[maps] Routes API failed, using estimate: ${error.message}`);
+    for (const provider of this.#providers()) {
+      value = await provider(from, to).catch((error) => {
+        console.log(`[maps] ${provider.label} road distance failed: ${error.message}`);
         return null;
       });
+      if (value) break;
     }
     if (!value) value = this.#estimate(from, to);
 
-    // Only cache real routes; estimates are free to recompute.
-    if (value.source === 'google') {
+    // Only cache real routes; estimates are free to recompute (and the next
+    // request should try the routing service again).
+    if (this.isRoadDistance(value)) {
       if (this.#cache.size >= CACHE_MAX_ENTRIES) {
         this.#cache.delete(this.#cache.keys().next().value);
       }
@@ -52,13 +69,59 @@ class RouteDistanceService {
     return value;
   }
 
+  #providers() {
+    const google = Object.assign((from, to) => this.#fromGoogle(from, to), { label: 'Google Routes' });
+    const osrm = Object.assign((from, to) => this.#fromOsrm(from, to), { label: 'OSRM' });
+    switch (config.maps.routingProvider) {
+      case 'none':
+        return [];
+      case 'google':
+        return config.maps.googleApiKey ? [google] : [];
+      case 'osrm':
+        return [osrm];
+      default:
+        return config.maps.googleApiKey ? [google, osrm] : [osrm];
+    }
+  }
+
+  #result(meters, seconds, source) {
+    const distanceM = Math.max(0, Math.round(meters));
+    return {
+      distance_m: distanceM,
+      distance_km: roundKm(distanceM / 1000),
+      duration_minutes: Number.isFinite(seconds) ? Math.ceil(seconds / 60) : null,
+      source,
+    };
+  }
+
   #estimate(from, to) {
     const straight = haversineKm(from.latitude, from.longitude, to.latitude, to.longitude);
-    return {
-      distance_km: roundKm(straight * config.delivery.roadFactor),
-      duration_minutes: null,
-      source: 'estimate',
-    };
+    const meters = Math.round(straight * config.delivery.roadFactor * 1000);
+    return this.#result(meters, NaN, 'estimate');
+  }
+
+  async #fromOsrm(from, to) {
+    const data = await runOsrm(async () => {
+      const url = new URL(
+        `/route/v1/driving/${Number(from.longitude)},${Number(from.latitude)};${Number(to.longitude)},${Number(to.latitude)}`,
+        config.maps.osrmUrl
+      );
+      // Distance only: no geometry or turn-by-turn steps.
+      url.searchParams.set('overview', 'false');
+      url.searchParams.set('steps', 'false');
+      const response = await fetch(url, {
+        headers: { 'User-Agent': config.maps.geocoderUserAgent },
+        signal: AbortSignal.timeout(config.maps.routingTimeoutMs),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    }, config.maps.osrmMinIntervalMs);
+
+    const route = data?.routes?.[0];
+    if (data?.code !== 'Ok' || !route || !Number.isFinite(route.distance)) {
+      throw new Error(data?.code || 'no route returned');
+    }
+    return this.#result(route.distance, Number(route.duration), 'osrm');
   }
 
   async #fromGoogle(from, to) {
@@ -92,11 +155,7 @@ class RouteDistanceService {
     }
 
     const seconds = Number.parseInt(String(route.duration || '').replace(/s$/, ''), 10);
-    return {
-      distance_km: roundKm(route.distanceMeters / 1000),
-      duration_minutes: Number.isFinite(seconds) ? Math.ceil(seconds / 60) : null,
-      source: 'google',
-    };
+    return this.#result(route.distanceMeters, seconds, 'google');
   }
 }
 
