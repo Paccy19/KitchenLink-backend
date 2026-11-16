@@ -88,7 +88,7 @@ test('a declined prompt leaves the order unpaid so the customer can try again', 
   assert.equal(checked.payment.status, 'failed');
 });
 
-test('only mobile money is offered while a real provider is connected', async () => {
+test('card is refused before any order is created', async () => {
   const customer = await createCustomer();
   await api('POST', '/cart', { token: customer.token, body: { menu_item_id: String(kitchen.items[0]._id), quantity: 1 } });
   const res = await api('POST', '/orders/checkout', {

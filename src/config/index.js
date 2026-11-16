@@ -199,6 +199,9 @@ const config = {
   // development server: a live server then refuses checkout (orderService).
   payments: {
     simulated: !(process.env.PAYPACK_CLIENT_ID && process.env.PAYPACK_CLIENT_SECRET),
+    // Only these can be chosen for now: MTN MoMo and Airtel Money through
+    // Paypack. Card, eKash and wallet come back once they have a provider.
+    enabledMethods: ['mobile_money'],
     paypack: {
       clientId: process.env.PAYPACK_CLIENT_ID || '',
       clientSecret: process.env.PAYPACK_CLIENT_SECRET || '',

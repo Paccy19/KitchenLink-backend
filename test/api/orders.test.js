@@ -95,14 +95,20 @@ test('a failed payment leaves the order unpaid and it can be paid again', async 
   assert.equal(twice.body.error.code, 'ALREADY_PAID');
 });
 
-test('card numbers are never stored in full', async () => {
+test('only mobile money can be chosen for now; nothing is created otherwise', async () => {
   const { token } = await customerWithCart();
-  const res = await checkout(token, {
-    payment_method: 'card',
-    payment_details: { card_number: '4242 4242 4242 4242', card_expiry: '12/99' },
-  });
-  assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.ok(!JSON.stringify(res.body).includes('4242424242424242'));
+  const methods = await api('GET', '/orders/payment-methods');
+  assert.deepEqual(methods.body.payment_methods.map((m) => m.code), ['mobile_money']);
+  for (const payment_method of ['card', 'ekash', 'wallet']) {
+    const res = await checkout(token, {
+      payment_method,
+      payment_details: payment_method === 'card' ? { card_number: '4242 4242 4242 4242', card_expiry: '12/99' } : { phone: '0788123456' },
+    });
+    assert.equal(res.status, 400, payment_method);
+    assert.equal(res.body.error.code, 'PAYMENT_METHOD_UNAVAILABLE');
+  }
+  const cart = await api('GET', '/cart', { token });
+  assert.ok(cart.body.items.length > 0, 'the basket is untouched');
 });
 
 test('bad checkout details are refused', async () => {

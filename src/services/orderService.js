@@ -65,8 +65,8 @@ const assertPaymentsAvailable = (method) => {
       "Online payment isn't available yet. Please try again later."
     );
   }
-  // Paypack collects mobile money only; the other methods have no provider yet.
-  if (!config.payments.simulated && method !== 'mobile_money') {
+  // Card, eKash and wallet are off until they have a provider.
+  if (!config.payments.enabledMethods.includes(method)) {
     throw new ApiError(400, 'PAYMENT_METHOD_UNAVAILABLE', 'Pay with mobile money (MTN or Airtel) for now.');
   }
 };
@@ -343,8 +343,7 @@ const serializeTracking = (order, vendor, payment, delivery) => {
 
 class OrderService {
   paymentMethods() {
-    // With Paypack connected, only mobile money can really be collected.
-    const methods = config.payments.simulated ? orders.paymentMethods : orders.paymentMethods.filter((m) => m.code === 'mobile_money');
+    const methods = orders.paymentMethods.filter((m) => config.payments.enabledMethods.includes(m.code));
     return { payment_methods: methods };
   }
 

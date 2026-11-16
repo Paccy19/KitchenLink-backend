@@ -42,8 +42,9 @@ Payments: mobile money (MTN MoMo and Airtel Money) goes through Paypack once
 `PAYPACK_CLIENT_ID` and `PAYPACK_CLIENT_SECRET` are set; a live server then also
 needs `PAYPACK_WEBHOOK_SECRET` (from the Paypack dashboard, webhook URL
 `<PUBLIC_BASE_URL>/api/v1/payments/paypack/webhook`). Only a validly signed
-report marks an order paid, and a repeated report changes nothing. While Paypack
-is connected, cards, eKash and the wallet are refused (no provider yet), and a
+report marks an order paid, and a repeated report changes nothing. Only mobile
+money can be chosen for now (`config.payments.enabledMethods`): cards, eKash and
+the wallet are refused until they have a provider. While Paypack is connected, a
 paid pickup order can't be switched to delivery (its extra fee would need a second
 prompt). Without Paypack keys every method is simulated, which only a
 development server allows.
