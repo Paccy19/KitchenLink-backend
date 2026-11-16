@@ -1,5 +1,6 @@
 const config = require('../config');
 const { haversineKm } = require('../utils/geo');
+const { runOsrm } = require('../utils/osrmQueue');
 
 const GOOGLE_ROUTES_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes';
 const CACHE_MAX_ENTRIES = 500;
@@ -22,9 +23,6 @@ const CACHE_TTL_MS = 60 * 1000;
  */
 class RouteNavigationService {
   #cache = new Map();
-  // The public OSRM server asks for at most about one request per second.
-  #osrmQueue = Promise.resolve();
-  #osrmLast = 0;
 
   async route(from, to) {
     const key = [from.lat, from.lng, to.lat, to.lng].map((n) => Number(n).toFixed(4)).join(',');
@@ -54,10 +52,8 @@ class RouteNavigationService {
   /* --------------------------------- OSRM --------------------------------- */
 
   async #osrm(from, to) {
-    const run = this.#osrmQueue.then(async () => {
-      const wait = this.#osrmLast + 1000 - Date.now();
-      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-      this.#osrmLast = Date.now();
+    // Shared with delivery pricing: the public OSRM server allows ~1 request/s.
+    const data = await runOsrm(async () => {
       const url = new URL(
         `/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}`,
         config.maps.osrmUrl
@@ -71,9 +67,7 @@ class RouteNavigationService {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.json();
-    });
-    this.#osrmQueue = run.catch(() => {});
-    const data = await run;
+    }, config.maps.osrmMinIntervalMs);
     const route = data?.routes?.[0];
     if (data?.code !== 'Ok' || !route) throw new Error(data?.code || 'no route');
 

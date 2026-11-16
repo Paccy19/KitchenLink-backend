@@ -793,6 +793,27 @@ function serializeAdminDriver(driver) {
   };
 }
 
+/** An order's delivery price record for admins (null when the order has none). */
+function serializeDeliveryPricing(pricing) {
+  if (!pricing) return null;
+  return {
+    mode: pricing.mode,
+    distance_m: pricing.distance_m,
+    distance_km: pricing.distance_km ?? null,
+    distance_source: pricing.distance_source,
+    duration_minutes: pricing.duration_minutes ?? null,
+    base_fee_rwf: pricing.base_fee_rwf ?? null,
+    per_meter_rwf: pricing.per_meter_rwf ?? null,
+    per_km_fee_rwf: pricing.per_km_fee_rwf ?? null,
+    min_fee_rwf: pricing.min_fee_rwf ?? null,
+    max_fee_rwf: pricing.max_fee_rwf ?? null,
+    range: pricing.range ?? null,
+    formula_fee_rwf: pricing.formula_fee_rwf ?? null,
+    fee_rwf: pricing.fee_rwf,
+    priced_at: pricing.priced_at ?? null,
+  };
+}
+
 function serializeAdminOrder(order) {
   const vendor = order.vendor_id && typeof order.vendor_id === 'object' ? order.vendor_id : null;
   const customer =
@@ -850,6 +871,8 @@ function serializeAdminOrder(order) {
     subtotal_rwf: order.subtotal_rwf,
     delivery_fee_rwf: order.delivery_fee_rwf,
     delivery_distance_km: order.delivery_distance_km ?? null,
+    // How the standard delivery fee was calculated (approved route + prices).
+    delivery_pricing: serializeDeliveryPricing(order.delivery_pricing),
     total_amount_rwf: order.total_rwf,
     commission_percent: order.commission_percent ?? 0,
     commission_rwf: order.commission_rwf ?? 0,

@@ -7,6 +7,9 @@ process.env.NODE_ENV = 'test';
 process.env.MONGODB_URI = `${(process.env.TEST_MONGODB_SERVER || 'mongodb://127.0.0.1:27017').replace(/\/+$/, '')}/kitchenlink_${process.pid}_test`;
 // No outside services: straight-line distances, SMS and emails only logged.
 process.env.GOOGLE_MAPS_API_KEY = '';
+// No public routing server either; a test file that needs road distances sets
+// ROUTING_PROVIDER=osrm and points OSRM_URL at a local stub before this runs.
+process.env.ROUTING_PROVIDER = process.env.ROUTING_PROVIDER || 'none';
 process.env.SMS_ENABLED = 'false';
 process.env.EMAIL_PROVIDER = '';
 process.env.SMTP_HOST = '';

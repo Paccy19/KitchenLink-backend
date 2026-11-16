@@ -159,7 +159,7 @@ router.get(
   requirePermission('deliveries:read'),
   asyncHandler(async (req, res) => res.json(await adminOperationsService.latePickups(req.query)))
 );
-// Delivery fee by distance ranges (no fee below 500 RWF).
+// Standard delivery fee: per meter or by distance ranges (no fee below 500 RWF).
 router.get(
   '/settings/delivery-fees',
   requirePermission('deliveries:read'),
@@ -170,10 +170,14 @@ router.put(
   requirePermission('deliveries:write'),
   asyncHandler(async (req, res) => {
     const { previous, current } = await deliveryFeeSettingsService.update(req.admin, req.body);
-    const describe = (ranges) =>
-      ranges.length
-        ? ranges.map((r) => `${r.from_km}-${r.to_km ?? '∞'} km: ${r.fee_rwf} RWF`)
-        : ['standard formula'];
+    const describe = (settings) => {
+      const pm = settings.per_meter;
+      const perMeter = `per meter ${pm.enabled ? 'ON' : 'off'}: ${pm.base_fee_rwf} RWF + ${pm.per_meter_rwf} RWF/m, min ${pm.min_fee_rwf}, max ${pm.max_fee_rwf ?? 'none'}, route alert +${pm.route_deviation_alert_percent}%`;
+      const ranges = settings.ranges.length
+        ? settings.ranges.map((r) => `${r.from_km}-${r.to_km ?? '∞'} km: ${r.fee_rwf} RWF`)
+        : ['no ranges (standard formula)'];
+      return [`in use: ${settings.mode}`, perMeter, ...ranges];
+    };
     await adminActionLogService.record(
       req.admin,
       {
@@ -181,12 +185,18 @@ router.put(
         target_type: 'system',
         target_id: 'delivery_fees',
         target_label: 'Delivery fee by distance',
-        metadata: { before: describe(previous.ranges), after: describe(current.ranges) },
+        metadata: { before: describe(previous), after: describe(current) },
       },
       req
     );
     res.json(current);
   })
+);
+// Orders charged the standard delivery fee: distance, prices used, detours.
+router.get(
+  '/settings/delivery-fees/records',
+  requirePermission('deliveries:read'),
+  asyncHandler(async (req, res) => res.json(await adminOperationsService.deliveryFeeRecords(req.query)))
 );
 
 // Banks people can withdraw to, with each bank's account-number length.

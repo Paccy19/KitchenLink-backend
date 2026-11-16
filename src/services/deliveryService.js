@@ -27,6 +27,15 @@ const orderNotifications = require('./orderNotifications');
 const deliverySettingsService = require('./deliverySettingsService');
 const dispatchSettingsService = require('./dispatchSettingsService');
 const { usesHandoverCode } = require('../utils/fulfillment');
+const deliveryFeeSettingsService = require('./deliveryFeeSettingsService');
+
+// Route deviation monitoring (see #monitorRoutes): which deliveries are on
+// the road, which GPS fixes count, and the smallest detour worth a flag.
+const ROUTE_MONITOR_STATUSES = ['picked_up', 'out_for_delivery'];
+const ROUTE_MONITOR_MAX_ACCURACY_M = 100;
+const ROUTE_MONITOR_MIN_STEP_M = 15;
+const ROUTE_MONITOR_MAX_SPEED_MPS = 42; // ~150 km/h
+const ROUTE_ALERT_MIN_EXTRA_M = 500;
 
 // Admin-set dispatch rules in force right now (Settings → Delivery & pickup rules).
 const dispatchRules = () => dispatchSettingsService.current();
@@ -96,6 +105,8 @@ class DeliveryService {
         longitude: order.delivery_location.longitude,
       },
       route_distance_km: distanceKm,
+      // The road distance the customer was charged for (route monitoring compares against it).
+      approved_distance_m: order.delivery_pricing?.distance_m ?? null,
       delivery_fee_rwf: fee,
       promised_earnings_rwf: earnings,
       payment_method: order.payment_method,
@@ -1158,6 +1169,10 @@ class DeliveryService {
       speedMps: speedMps == null ? null : Math.round(speedMps * 10) / 10,
       accuracyM: accuracyM == null ? null : Math.round(accuracyM),
     });
+    // Route deviation monitoring: a review flag only, never a price change.
+    await this.#monitorRoutes(driver._id, coords, accuracyM).catch((error) => {
+      console.error('[route-monitor] update failed:', error.message);
+    });
     return {
       current_location: {
         latitude: coords.lat,
@@ -1383,6 +1398,57 @@ class DeliveryService {
     const [lng, lat] = coordinates;
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
     return { lat, lng };
+  }
+
+  /**
+   * Adds the worker's movement to each delivery they are carrying (picked up,
+   * on the way) and flags a delivery whose tracked trip is much longer than
+   * the route the customer was charged for (admin's alert percentage, and at
+   * least ROUTE_ALERT_MIN_EXTRA_M more). The customer's fee and the worker's
+   * earnings were fixed at checkout and are never changed here.
+   */
+  async #monitorRoutes(driverId, coords, accuracyM) {
+    // Wifi/cell position estimates would add made-up distance.
+    if (accuracyM != null && accuracyM > ROUTE_MONITOR_MAX_ACCURACY_M) return;
+    const carrying = await deliveryRepository.findAssignedToDriver(driverId, ROUTE_MONITOR_STATUSES);
+    if (!carrying.length) return;
+    const alertPercent = deliveryFeeSettingsService.perMeter().route_deviation_alert_percent;
+    const now = new Date();
+
+    for (const delivery of carrying) {
+      const monitor = delivery.route_monitoring || {};
+      const last = monitor.last_point;
+      let stepM = 0;
+      if (last?.latitude != null && last?.longitude != null) {
+        stepM = haversineKm(last.latitude, last.longitude, coords.lat, coords.lng) * 1000;
+        // GPS jitter while standing still: keep the previous point.
+        if (stepM < ROUTE_MONITOR_MIN_STEP_M) continue;
+        // Faster than any moto in town: a bad fix, not a real trip.
+        const seconds = (now.getTime() - new Date(last.at || 0).getTime()) / 1000;
+        if (seconds > 0 && stepM / seconds > ROUTE_MONITOR_MAX_SPEED_MPS) continue;
+      }
+
+      const tracked = Math.round((monitor.tracked_distance_m || 0) + stepM);
+      const approved = delivery.approved_distance_m ?? Math.round((delivery.route_distance_km || 0) * 1000);
+      const ratio = approved > 0 ? Math.round((tracked / approved) * 100) / 100 : null;
+      const flag =
+        !monitor.flagged_at &&
+        ratio !== null &&
+        tracked > approved * (1 + alertPercent / 100) &&
+        tracked - approved >= ROUTE_ALERT_MIN_EXTRA_M;
+
+      await deliveryRepository.update(delivery._id, {
+        'route_monitoring.tracked_distance_m': tracked,
+        'route_monitoring.last_point': { latitude: coords.lat, longitude: coords.lng, at: now },
+        'route_monitoring.deviation_ratio': ratio,
+        ...(flag ? { 'route_monitoring.flagged_at': now } : {}),
+      });
+      if (flag) {
+        console.warn(
+          `[route-monitor] Delivery ${delivery.order_number}: ${tracked} m travelled for a ${approved} m route (x${ratio}). Flagged for review; the fee is unchanged.`
+        );
+      }
+    }
   }
 
   #routeDistance(vendor, deliveryLocation) {

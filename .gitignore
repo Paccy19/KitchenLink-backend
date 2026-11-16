@@ -4,3 +4,8 @@ node_modules/
 uploads/*
 private-uploads/
 !uploads/.gitkeep
+
+# Production deployment: real settings and backups never go into Git
+deploy/.env
+deploy/backend.env
+deploy/backups/

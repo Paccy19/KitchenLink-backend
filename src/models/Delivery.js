@@ -37,7 +37,23 @@ const deliverySchema = new mongoose.Schema(
     },
 
     route_distance_km: { type: Number, min: 0, default: 0 },
+    // The road distance the customer was charged for (Order.delivery_pricing).
+    approved_distance_m: { type: Number, min: 0, default: null },
     delivery_fee_rwf: { type: Number, min: 0, default: 0 },
+    // Route deviation monitoring, from the worker's GPS updates between pickup
+    // and drop-off. Only flags long detours for review: it never changes the
+    // customer's fee or the worker's earnings.
+    route_monitoring: {
+      tracked_distance_m: { type: Number, min: 0, default: 0 },
+      last_point: {
+        latitude: { type: Number, default: null },
+        longitude: { type: Number, default: null },
+        at: { type: Date, default: null },
+      },
+      // tracked / approved distance (1.0 = exactly the approved route).
+      deviation_ratio: { type: Number, min: 0, default: null },
+      flagged_at: { type: Date, default: null },
+    },
     promised_earnings_rwf: { type: Number, min: 0, default: 0 },
     // What the worker was actually paid for this delivery: the promised
     // earnings minus the late-pickup penalty (equal when there was none).
