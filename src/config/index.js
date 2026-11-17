@@ -141,6 +141,18 @@ const config = {
     // Google key is set. The public demo server is fine for light use; point
     // this at your own OSRM server for production traffic.
     osrmUrl: process.env.OSRM_URL || 'https://router.project-osrm.org',
+    // Gap between OSRM requests (the public server asks for ~1/s); 0 for your own server.
+    osrmMinIntervalMs: numberFromEnvOrZero(process.env.OSRM_MIN_INTERVAL_MS, 1000),
+    // Road distance for delivery prices (routeDistanceService):
+    //   auto   - Google Routes when GOOGLE_MAPS_API_KEY is set, then OSRM
+    //   google - Google Routes only      osrm - OSRM only
+    //   none   - no routing service: straight-line estimate (km ranges/formula
+    //            pricing only; per-meter pricing needs a real road distance)
+    routingProvider: ['auto', 'google', 'osrm', 'none'].includes(process.env.ROUTING_PROVIDER)
+      ? process.env.ROUTING_PROVIDER
+      : 'auto',
+    // How long one routing request may take before the next provider is tried.
+    routingTimeoutMs: numberFromEnv(process.env.ROUTING_TIMEOUT_MS, 5000),
     nominatimUrl: process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org',
     // OpenStreetMap's usage policy asks for an identifying User-Agent.
     geocoderUserAgent:
@@ -444,6 +456,19 @@ const config = {
     baseFeeRwf: numberFromEnvOrZero(process.env.DELIVERY_BASE_FEE_RWF, 500),
     perKmFeeRwf: numberFromEnvOrZero(process.env.DELIVERY_PER_KM_FEE_RWF, 200),
     minFeeRwf: numberFromEnvOrZero(process.env.DELIVERY_MIN_FEE_RWF, 800),
+    // Per-meter pricing starting values (fee = base + road meters x rate),
+    // used until an admin saves their own in Settings -> Delivery fee by
+    // distance. ENABLED=true makes it the pricing for new orders from the start.
+    perMeter: {
+      enabled: process.env.DELIVERY_PER_METER_ENABLED === 'true',
+      baseFeeRwf: numberFromEnvOrZero(process.env.DELIVERY_PER_METER_BASE_FEE_RWF, 500),
+      rateRwf: numberFromEnvOrZero(process.env.DELIVERY_PER_METER_RWF, 0.3),
+      minFeeRwf: numberFromEnvOrZero(process.env.DELIVERY_PER_METER_MIN_FEE_RWF, 500),
+      // Empty = no maximum.
+      maxFeeRwf: process.env.DELIVERY_PER_METER_MAX_FEE_RWF
+        ? numberFromEnvOrZero(process.env.DELIVERY_PER_METER_MAX_FEE_RWF, null)
+        : null,
+    },
     // Share of the delivery fee paid to the driver (percent). Drivers keep the
     // entire delivery fee — no platform commission is taken from it.
     driverSharePercent: numberFromEnvOrZero(

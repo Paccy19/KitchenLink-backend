@@ -130,6 +130,98 @@ class AdminOperationsService {
    * delivery and the records of late workers who were replaced by support.
    * Late events are rare, so they are gathered and paged in memory.
    */
+  /**
+   * Delivery fee records: every order charged the standard platform delivery
+   * fee, newest first, with the approved road distance, the prices it was
+   * charged with, and route monitoring from its delivery (tracked distance,
+   * detour flag). Query: page, limit, flagged=true (detours only).
+   */
+  async deliveryFeeRecords(query = {}) {
+    const { limit, page, offset } = parseAdminListQuery(query, {
+      defaultLimit: config.admin.limits.listDefault,
+      maxLimit: config.admin.limits.listMax,
+    });
+    const filter = { 'delivery_pricing.priced_at': { $ne: null } };
+    if (query.flagged === 'true') {
+      const flagged = await Delivery.find({ 'route_monitoring.flagged_at': { $ne: null } }).select('order_id').lean();
+      filter._id = { $in: flagged.map((delivery) => delivery.order_id) };
+    }
+
+    const [orders, total, totals] = await Promise.all([
+      Order.find(filter)
+        .sort({ 'delivery_pricing.priced_at': -1 })
+        .skip(offset)
+        .limit(limit)
+        .select('order_number status vendor_id delivery_fee_rwf delivery_pricing delivery_location.address created_at')
+        .populate({ path: 'vendor_id', select: 'name' })
+        .lean(),
+      Order.countDocuments(filter),
+      Order.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: null,
+            fees_rwf: { $sum: '$delivery_pricing.fee_rwf' },
+            avg_distance_m: { $avg: '$delivery_pricing.distance_m' },
+            avg_fee_rwf: { $avg: '$delivery_pricing.fee_rwf' },
+          },
+        },
+      ]),
+    ]);
+
+    const deliveries = orders.length
+      ? await Delivery.find({ order_id: { $in: orders.map((order) => order._id) } })
+          .select('order_id status approved_distance_m route_monitoring')
+          .lean()
+      : [];
+    const deliveryByOrder = new Map(deliveries.map((delivery) => [String(delivery.order_id), delivery]));
+    const sum = totals[0] || {};
+
+    return {
+      items: orders.map((order) => {
+        const p = order.delivery_pricing;
+        const delivery = deliveryByOrder.get(String(order._id));
+        const monitor = delivery?.route_monitoring;
+        return {
+          order_id: String(order._id),
+          order_number: order.order_number,
+          status: order.status,
+          vendor: order.vendor_id ? { name: order.vendor_id.name } : null,
+          delivery_address: order.delivery_location?.address || null,
+          priced_at: p.priced_at,
+          mode: p.mode,
+          distance_m: p.distance_m,
+          distance_source: p.distance_source,
+          base_fee_rwf: p.base_fee_rwf ?? null,
+          per_meter_rwf: p.per_meter_rwf ?? null,
+          per_km_fee_rwf: p.per_km_fee_rwf ?? null,
+          min_fee_rwf: p.min_fee_rwf ?? null,
+          max_fee_rwf: p.max_fee_rwf ?? null,
+          range: p.range ?? null,
+          formula_fee_rwf: p.formula_fee_rwf ?? null,
+          fee_rwf: p.fee_rwf,
+          route_monitoring: delivery
+            ? {
+                delivery_status: delivery.status,
+                tracked_distance_m: monitor?.tracked_distance_m ?? 0,
+                deviation_ratio: monitor?.deviation_ratio ?? null,
+                flagged_at: monitor?.flagged_at ?? null,
+              }
+            : null,
+        };
+      }),
+      total,
+      page,
+      limit,
+      summary: {
+        orders: total,
+        fees_rwf: Math.round(sum.fees_rwf || 0),
+        avg_distance_m: sum.avg_distance_m == null ? null : Math.round(sum.avg_distance_m),
+        avg_fee_rwf: sum.avg_fee_rwf == null ? null : Math.round(sum.avg_fee_rwf),
+      },
+    };
+  }
+
   async latePickups(query = {}) {
     const { limit, page, offset } = parseAdminListQuery(query, {
       defaultLimit: config.admin.limits.listDefault,
@@ -447,7 +539,10 @@ class AdminOperationsService {
         max_wrong_codes: dispatchSettingsService.current().pickup_code_max_attempts,
       },
       fees: {
-        // The admin's distance ranges when set; otherwise the config formula.
+        // Per-meter pricing when enabled; else the admin's distance ranges
+        // when set; otherwise the config formula.
+        mode: deliveryFeeSettingsService.current().mode,
+        per_meter: deliveryFeeSettingsService.perMeter(),
         ranges: deliveryFeeSettingsService.current().ranges,
         base_rwf: d.baseFeeRwf,
         per_km_rwf: d.perKmFeeRwf,
@@ -456,6 +551,8 @@ class AdminOperationsService {
       },
       tracking: {
         routes_provider: maps.googleApiKey ? 'Google Routes API' : `OSRM (${maps.osrmUrl})`,
+        // Road distance for delivery prices (ROUTING_PROVIDER).
+        pricing_distance_provider: maps.routingProvider,
         place_search_provider: maps.googleApiKey ? 'Google Places API' : 'OpenStreetMap (Photon + Nominatim)',
         google_key_configured: Boolean(maps.googleApiKey),
         customer_refresh_seconds: 4,

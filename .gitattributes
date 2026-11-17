@@ -1,0 +1,8 @@
+# Files that run on the Linux server must keep LF line endings, even when
+# edited or committed from Windows (CRLF breaks shell scripts and the shebang).
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+Caddyfile   text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+deploy/**   text eol=lf

@@ -1,0 +1,149 @@
+# KitchenLink — production stack (Ubuntu VPS).
+#
+# Expected layout on the server (both repositories cloned side by side):
+#   /opt/kitchenlink/KitchenLink-backend    <- this repo (compose file in deploy/)
+#   /opt/kitchenlink/KitchenLink-frontend
+#
+# Settings:
+#   deploy/.env          compose variables: domains, database passwords, frontend build values
+#   deploy/backend.env   API settings (JWT secret, SMS, email, ...)
+# Both are gitignored; start from .env.example / backend.env.example.
+#
+# Run from the deploy/ folder:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Only Caddy publishes ports (80/443). MongoDB, PostgreSQL, the API and the
+# website container are reachable only on Docker's internal networks.
+
+name: kitchenlink
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:-igikoni.online}
+      WWW_DOMAIN: ${WWW_DOMAIN:-www.igikoni.online}
+      API_DOMAIN: ${API_DOMAIN:-api.igikoni.online}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificates: keep this volume
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    networks: [edge]
+    logging: *default-logging
+
+  frontend:
+    build:
+      context: ../../KitchenLink-frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://api.igikoni.online/api/v1}
+        VITE_UPLOADS_ORIGIN: ${VITE_UPLOADS_ORIGIN:-https://api.igikoni.online}
+        VITE_API_TIMEOUT: ${VITE_API_TIMEOUT:-8000}
+        VITE_CARTO_API_KEY: ${VITE_CARTO_API_KEY:-}
+    image: kitchenlink-frontend:prod
+    restart: unless-stopped
+    expose: ["8080"]
+    networks: [edge]
+    logging: *default-logging
+
+  backend:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: kitchenlink-backend:prod
+    restart: unless-stopped
+    init: true # forwards SIGTERM so the API closes its database connections
+    env_file:
+      - ./backend.env
+    environment:
+      # These win over backend.env: they must match the containers below.
+      NODE_ENV: production
+      PORT: "4000"
+      MONGODB_URI: mongodb://${MONGO_APP_USER:-kitchenlink}:${MONGO_APP_PASSWORD:?set MONGO_APP_PASSWORD in deploy/.env}@mongo:27017/${MONGO_APP_DB:-online_food_kitchen}?authSource=${MONGO_APP_DB:-online_food_kitchen}
+      PG_URI: postgresql://${POSTGRES_USER:-kitchenlink}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB:-online_food_kitchen}
+      UPLOAD_DIR: /app/uploads
+      PRIVATE_UPLOAD_DIR: /app/private-uploads
+    volumes:
+      - uploads:/app/uploads
+      - private_uploads:/app/private-uploads
+    expose: ["4000"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks: [edge, data]
+    logging: *default-logging
+
+  mongo:
+    image: mongo:8.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD in deploy/.env}
+      # Read by mongo-init/01-create-app-user.js (first start of an empty volume only).
+      MONGO_APP_DB: ${MONGO_APP_DB:-online_food_kitchen}
+      MONGO_APP_USER: ${MONGO_APP_USER:-kitchenlink}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?set MONGO_APP_PASSWORD in deploy/.env}
+    volumes:
+      - mongo_data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [data]
+    logging: *default-logging
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-online_food_kitchen}
+      POSTGRES_USER: ${POSTGRES_USER:-kitchenlink}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      # PostgreSQL 18 images keep data under /var/lib/postgresql/<version>/...
+      - pg_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [data]
+    logging: *default-logging
+
+networks:
+  # Public-facing: Caddy, website, API (the API needs internet for SMS/maps/email).
+  edge:
+  # Databases only: no internet access and no published ports.
+  data:
+    internal: true
+
+volumes:
+  mongo_data:
+  pg_data:
+  uploads:
+  private_uploads:
+  caddy_data:
+  caddy_config:

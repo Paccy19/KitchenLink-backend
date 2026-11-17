@@ -1,0 +1,26 @@
+# KitchenLink — public reverse proxy (HTTPS certificates are obtained
+# automatically from Let's Encrypt once DNS points at the server and ports
+# 80/443 are open). Domains come from deploy/.env (defaults below).
+{
+	email {$ACME_EMAIL}
+}
+
+# Website
+{$SITE_DOMAIN:igikoni.online} {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	reverse_proxy frontend:8080
+}
+
+# www -> main website (keeps the path and query string)
+{$WWW_DOMAIN:www.igikoni.online} {
+	redir https://{$SITE_DOMAIN:igikoni.online}{uri} permanent
+}
+
+# API (helmet in the API already sends HSTS and the other security headers).
+# Caddy replaces any client-sent X-Forwarded-For with the real visitor IP, so
+# TRUST_PROXY=1 in backend.env is safe.
+{$API_DOMAIN:api.igikoni.online} {
+	encode zstd gzip
+	reverse_proxy backend:4000
+}

@@ -314,7 +314,9 @@ CREATE TABLE orders (
   delivery_fee_rwf          NUMERIC     NOT NULL,
   delivery_distance_km      NUMERIC     CHECK (delivery_distance_km >= 0),
   delivery_distance_source  TEXT        CHECK (delivery_distance_source IS NULL
-                                              OR delivery_distance_source IN ('google','estimate')),
+                                              OR delivery_distance_source IN ('google','osrm','estimate')),
+  -- Standard delivery: approved road distance + prices charged (Order.delivery_pricing).
+  delivery_pricing          JSONB,
   total_rwf                 NUMERIC     NOT NULL,
   delivery_location         JSONB       NOT NULL DEFAULT '{}',
   payment_method            TEXT        NOT NULL
@@ -372,6 +374,9 @@ CREATE TABLE deliveries (
   pickup_location       JSONB       NOT NULL DEFAULT '{}',
   delivery_location     JSONB       NOT NULL DEFAULT '{}',
   route_distance_km     NUMERIC     NOT NULL DEFAULT 0 CHECK (route_distance_km >= 0),
+  approved_distance_m   NUMERIC     CHECK (approved_distance_m >= 0),
+  -- Route deviation monitoring (tracked distance, detour flag); never changes the fee.
+  route_monitoring      JSONB,
   delivery_fee_rwf      NUMERIC     NOT NULL DEFAULT 0 CHECK (delivery_fee_rwf >= 0),
   promised_earnings_rwf NUMERIC     NOT NULL DEFAULT 0 CHECK (promised_earnings_rwf >= 0),
   payment_method        TEXT        NOT NULL DEFAULT '',
