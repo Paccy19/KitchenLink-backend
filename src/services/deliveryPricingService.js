@@ -4,7 +4,6 @@ const routeDistanceService = require('./routeDistanceService');
 const deliveryFeeSettingsService = require('./deliveryFeeSettingsService');
 const dispatchSettingsService = require('./dispatchSettingsService');
 const { nationwideFor, travelFeeFor } = require('../config/vendorTypes');
-const { rangeForDistance } = require('../utils/distanceFeeRanges');
 
 const { MIN_FEE_RWF } = deliveryFeeSettingsService;
 
@@ -20,8 +19,9 @@ const deliveryConfig = config.delivery;
  *     Needs a real road distance (Google Routes or OSRM): when no routing
  *     service answers, delivery can't be priced (pickup still can) instead of
  *     charging a straight-line guess.
- *  2. the admin's distance ranges ("0–3 km: 500 RWF, 3–6 km: 1,000 RWF …");
- *  3. the config formula: max(minFeeRwf, baseFeeRwf + perKmFeeRwf * road_km).
+ *  2. otherwise the config formula: max(minFeeRwf, baseFeeRwf + perKmFeeRwf * road_km).
+ * (Admin distance ranges are no longer used or shown; ranges saved earlier
+ * stay in the database untouched.)
  *
  * No fee is ever below 500 RWF. The fee is always computed here, on the
  * server, from the kitchen's saved location and the drop-off point; whatever
@@ -36,10 +36,8 @@ const deliveryConfig = config.delivery;
  * receives in full; other kitchens can't deliver that far (pickup only).
  */
 class DeliveryPricingService {
-  /** Ranges / formula fee for a distance in km (legacy orders, previews). */
+  /** Formula fee for a distance in km (per-meter off; legacy orders). */
   feeForDistance(distanceKm) {
-    const ranged = deliveryFeeSettingsService.feeFor(distanceKm);
-    if (ranged !== null) return ranged;
     const { baseFeeRwf, perKmFeeRwf, minFeeRwf } = deliveryConfig;
     const floor = Math.max(MIN_FEE_RWF, minFeeRwf);
     return Math.max(floor, Math.round(baseFeeRwf + perKmFeeRwf * (distanceKm || 0)));
@@ -162,15 +160,6 @@ class DeliveryPricingService {
           formula_fee_rwf: perMeter.formula_fee_rwf,
           limited_by: perMeter.limited_by,
         },
-      };
-    }
-
-    const { ranges } = deliveryFeeSettingsService.current();
-    if (ranges.length) {
-      const range = rangeForDistance(ranges, route.distance_km);
-      return {
-        fee: this.feeForDistance(route.distance_km),
-        pricing: { mode: 'ranges', ranges, range, min_fee_rwf: MIN_FEE_RWF },
       };
     }
 
