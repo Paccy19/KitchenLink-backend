@@ -33,8 +33,16 @@ const DispatchSettings = require('./DispatchSettings');
 const OtpGuard = require('./OtpGuard');
 const RevokedToken = require('./RevokedToken');
 const SessionActivity = require('./SessionActivity');
+const BigEventDeliverySettings = require('./BigEventDeliverySettings');
+const SpecialDeliveryRequest = require('./SpecialDeliveryRequest');
+const DeliveryQuotation = require('./DeliveryQuotation');
+const Counter = require('./Counter');
 
 module.exports = {
+  BigEventDeliverySettings,
+  SpecialDeliveryRequest,
+  DeliveryQuotation,
+  Counter,
   VendorOffer,
   ChatConversation,
   ChatMessage,

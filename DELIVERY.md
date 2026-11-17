@@ -168,6 +168,97 @@ customer's fee or the worker's earnings.
 | GET / PUT | `/admin/settings/delivery-fees` | `{ ranges?, per_meter? }`: either part can be saved on its own |
 | GET | `/admin/settings/delivery-fees/records?page&limit&flagged=true` | orders with distance, prices used, route monitoring, summary |
 
+## Big-event delivery (platform pricing + special delivery negotiation)
+
+Big-event orders the kitchen delivers (`fulfillment: 'vendor_delivery'` from
+`POST /orders/event-checkout`) have their own pricing, separate from the
+standard fee above. Kitchens never set it (their old `delivery_fee_ranges`
+are ignored); they only choose **where** they deliver.
+
+**Price** (`bigEventDeliveryService`, `utils/bigEventDeliveryPricing.js`):
+`fee = starting_fee_rwf + road meters × per_meter_rwf`, at least
+`min_fee_rwf`. Defaults: 3,000 RWF + 0.5 RWF/m, automatic ceiling 40,000 RWF.
+Admins change them in **Delivery Management** (`/admin/settings/big-event-delivery`,
+logged in the audit log). Road distance only — an estimate, or a route that
+is implausible for the two points (shorter than the straight line, > 6× it,
+> 1,500 km), is never billed.
+
+**Coverage** (`config/deliveryCoverage.js`, vendor dashboard → Delivery
+Coverage, `/vendor/delivery-coverage`): `big_event_enabled` plus areas — a
+district (`config/rwandaDistricts.js`, nearest-reference-point
+approximation) or "within N km" of the kitchen. Checked on the server.
+Kitchens with old fee ranges were migrated at start-up to "within their
+farthest range" + their district.
+
+The event quote returns `delivery.status`:
+
+| status | when | customer can |
+| --- | --- | --- |
+| `automatic` | in coverage and fee ≤ ceiling | book; fee is charged |
+| `negotiation_required` | outside coverage, fee > ceiling (never cut to the ceiling), no road route, or automatic pricing off | request a special delivery |
+| `unavailable` | kitchen doesn't deliver big events | pick up only |
+
+Checkout refuses `negotiation_required` with `409 SPECIAL_DELIVERY_REQUIRED`.
+
+**Special delivery requests** (`SpecialDeliveryRequest`, reference `SD-000124`,
+one open request per customer–kitchen pair / per order). States and who may
+move them are in `config/specialDelivery.js`; every change goes through
+`specialDeliveryTransitions.js` (atomic, logged in `status_history` with
+previous/new state, actor, time, reason). The kitchen accepts to negotiate,
+asks for information, or declines (reason required). A dedicated chat
+(`ChatConversation.special_delivery_request_id`, text / location / photo /
+system notes, read receipts) opens on acceptance; it is never listed in the
+general chats.
+
+**Quotations** (`DeliveryQuotation`): fee, destination, proposed delivery time,
+arrangement (own / rented / third-party / multiple trips / other),
+conditions, validity. Never edited: a revision is a new version and the open
+one becomes `superseded`; at most one is `submitted`. Expired ones are swept
+every 5 minutes. The customer accepts (fee locked in `agreed_fee_rwf`), asks
+for another price, or rejects.
+
+**Booking**: `POST /orders/event-checkout` with `special_delivery_request_id`
+claims the agreement atomically, uses its venue and locked fee (anything the
+client sends is ignored), and records `Order.big_event_delivery` (`mode:
+negotiated`, quotation reference) separately from the food. Payment is the
+normal deposit/balance flow. Paid → `delivery_confirmed`; order delivered →
+`completed`; order cancelled → `customer_cancelled` (history and quotations
+kept). Disputes go to admins, who resolve them in Delivery Management.
+
+**Refunds** (`refundService`, same refund queue, payout service and ledger as
+cancellations; `Refund.kind` tells them apart, one of each kind per order):
+
+- *While a dispute is open* the kitchen is not paid: `releaseOrder` keeps a
+  disputed order's money held, even if the food was handed over.
+- *Resolve → cancel the arrangement*: the order is cancelled through the
+  normal admin cancellation, so everything paid is refunded (`order_cancelled`).
+  Not allowed once the food was delivered.
+- *Resolve → completed / delivery still on, with `fee_reduction_rwf`*: the
+  order's `delivery_fee_rwf`, `total_rwf` and the kitchen's payout drop by
+  that amount (`big_event_delivery.fee_rwf` keeps the agreed price; the change
+  is in `big_event_delivery.adjustments`). It comes off an unpaid balance
+  first (a balance brought to 0 counts as paid and sends the handover code);
+  only what the customer already overpaid is refunded (`delivery_fee_adjustment`,
+  at most once per order). Only for a paid order whose money is still held.
+  Then the frozen payout is released.
+- *A later cancellation* refunds what was paid less what was already refunded,
+  so nothing is refunded twice and the platform books stay balanced.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET/PUT | `/vendor/delivery-coverage` | coverage; sending any price field → 403 |
+| GET | `/vendor/delivery-coverage/check?lat&lng` | inside / outside, district |
+| POST | `/special-deliveries` | customer request (409 if automatic price applies) |
+| GET | `/special-deliveries`, `/special-deliveries/:id` | customer list / detail |
+| POST | `/special-deliveries/:id/{cancel,information,dispute}` | customer actions |
+| POST | `/special-deliveries/:id/quotations/:qid/{accept,request-revision,reject}` | customer decision |
+| GET/POST | `/special-deliveries/:id/messages`, POST `/attachments`, `/read` | chat (both sides, also under `/vendor/…`) |
+| POST | `/vendor/special-deliveries/:id/{accept-negotiation,request-information,decline}` | kitchen review |
+| POST | `/vendor/special-deliveries/:id/quotations`, `…/quotations/:qid/withdraw` | submit / revise / withdraw |
+| GET/PUT | `/admin/settings/big-event-delivery` | pricing (`deliveries:read` / `write`) |
+| GET | `/admin/special-deliveries[/:id]` | all negotiations, quotations, chat |
+| POST | `/admin/special-deliveries/:id/resolve-dispute` | `{ outcome, resolution, fee_reduction_rwf? }` |
+
 ## Env vars (see `.env.example`)
 
 The radius, workers per broadcast, location age, re-offer interval, deliveries

@@ -1,18 +1,20 @@
 const crypto = require('crypto');
 const ApiError = require('../utils/ApiError');
-const { parseDistanceFeeRanges, rangeForDistance } = require('../utils/distanceFeeRanges');
 
 /**
  * Big events: each kitchen sets up its own ways of hosting events in its
  * settings — one or more packages (e.g. "Wedding buffet", "Corporate lunch"),
  * each with its own guest ranges and price per plate, what a plate holds and
- * the service — plus one delivery fee by distance for all of them (ranges
- * like the admin's delivery fees). A customer enters the number of guests and
- * chooses delivery or pick-up, and sees every package whose ranges cover that
- * number, with the total cost:
+ * the service. A customer enters the number of guests and chooses delivery or
+ * pick-up, and sees every package whose ranges cover that number:
  *
  *   total = guests × the package's plate price (of the range that covers them)
- *         + delivery fee for the distance (delivery only; pick-up pays none)
+ *         + big-event delivery fee (delivery only; pick-up pays none)
+ *
+ * The kitchen never sets the delivery fee: the platform prices it from the
+ * road distance (services/bigEventDeliveryService.js), or the customer and
+ * kitchen agree one through a special delivery request. Where the kitchen
+ * delivers is its delivery coverage (config/deliveryCoverage.js).
  */
 const SERVICE_STYLES = [
   { code: 'buffet', label: 'Buffet' },
@@ -143,7 +145,7 @@ function parsePackage(raw = {}, index) {
   };
 }
 
-/** Validates the kitchen's big-event settings: its packages and its delivery fee. */
+/** Validates the kitchen's big-event settings: its packages and delivery notes. */
 function parseEventPackage(body = {}) {
   const enabled = body.enabled === true;
   const rawPackages = Array.isArray(body.packages) ? body.packages : [];
@@ -158,20 +160,14 @@ function parseEventPackage(body = {}) {
     ids.add(pkg.id);
   }
 
-  // Every kitchen delivers when the customer asks; customers may also pick up.
-  const [minFee, maxFee] = LIMITS.delivery_fee_rwf;
-  const deliveryFeeRanges = parseDistanceFeeRanges(body.delivery_fee_ranges ?? [], { minFee, maxFee, maxKm: LIMITS.delivery_km });
-
+  // Delivery fees are the platform's: any delivery_fee_ranges sent by an
+  // older screen are ignored. Where the kitchen delivers is its coverage.
   if (enabled && !packages.some((pkg) => pkg.enabled)) {
     throw ApiError.badRequest('Turn on at least one event package before turning big events on.', { packages: 'required' });
-  }
-  if (enabled && deliveryFeeRanges.length === 0) {
-    throw ApiError.badRequest('Set your delivery fee by distance before turning big events on.', { delivery_fee_ranges: 'required' });
   }
   return {
     enabled,
     packages,
-    delivery_fee_ranges: deliveryFeeRanges,
     delivery_details: text(body.delivery_details, 'delivery_details', 500),
   };
 }
@@ -200,7 +196,6 @@ function eventPackageFor(vendor) {
   return {
     enabled: Boolean(own.enabled),
     packages: packages.map(normalizePackage),
-    delivery_fee_ranges: (own.delivery_fee_ranges || []).map(({ from_km, to_km, fee_rwf }) => ({ from_km, to_km: to_km ?? null, fee_rwf })),
     delivery_details: own.delivery_details || '',
   };
 }
@@ -212,27 +207,23 @@ const orderablePackages = (offer) =>
 const tierFor = (pkg, guests) => pkg.tiers.find((t) => guests >= t.min_guests && guests <= t.max_guests);
 
 /**
- * A package's cost for `guests` people, or null when no range covers that
- * number: `pickup_total_rwf` when the customer picks the food up, `total_rwf`
- * when the kitchen delivers. The delivery fee needs the distance from the
- * kitchen to the customer (`distanceKm`); without it `delivery_fee_rwf` is
- * null and `total_rwf` is the food only.
+ * A package's food cost for `guests` people, or null when no range covers
+ * that number. The delivery fee is only known once the customer pins the
+ * event (road distance and the kitchen's coverage), so in lists
+ * `delivery_fee_rwf` is null and `total_rwf` is the food.
  */
 function eventQuoteFor(offer, pkg, guests, distanceKm = null) {
   const tier = tierFor(pkg, guests);
   if (!tier) return null;
   const food = guests * tier.price_per_plate_rwf;
-  const deliveryRange = typeof distanceKm === 'number' ? rangeForDistance(offer.delivery_fee_ranges, distanceKm) : null;
-  const delivery = deliveryRange ? deliveryRange.fee_rwf : null;
   return {
     guests,
     price_per_plate_rwf: tier.price_per_plate_rwf,
     tier: { min_guests: tier.min_guests, max_guests: tier.max_guests },
     food_total_rwf: food,
     distance_km: typeof distanceKm === 'number' ? Math.round(distanceKm * 10) / 10 : null,
-    delivery_fee_rwf: delivery,
-    delivery_range: deliveryRange,
-    total_rwf: food + (delivery ?? 0),
+    delivery_fee_rwf: null,
+    total_rwf: food,
     pickup_total_rwf: food,
   };
 }
@@ -240,7 +231,7 @@ function eventQuoteFor(offer, pkg, guests, distanceKm = null) {
 /**
  * What customers see of a kitchen in the Big Event list: its orderable
  * packages (with `guests`, only those covering that number, each with its
- * quote, cheapest first), plus the shared delivery fee. Null when none.
+ * quote, cheapest first). Null when none.
  */
 function serializeEventOffer(vendor, guests = null, distanceKm = null) {
   const offer = eventPackageFor(vendor);
@@ -260,8 +251,9 @@ function serializeEventOffer(vendor, guests = null, distanceKm = null) {
   if (!packages.length) return null;
   return {
     packages,
-    delivery_fee_ranges: offer.delivery_fee_ranges,
     delivery_details: offer.delivery_details,
+    // The kitchen delivers big events (platform-priced) — otherwise pick-up only.
+    delivers: Boolean(vendor?.delivery_coverage?.big_event_enabled),
     min_guests: Math.min(...packages.map((pkg) => pkg.min_guests)),
     max_guests: Math.max(...packages.map((pkg) => pkg.max_guests)),
     from_price_per_plate_rwf: Math.min(...packages.map((pkg) => pkg.from_price_per_plate_rwf)),
@@ -271,12 +263,13 @@ function serializeEventOffer(vendor, guests = null, distanceKm = null) {
 /**
  * A big-event order's price, worked out on the server from the package the
  * customer chose: guests × the plate price of their range, plus (delivery
- * only) the kitchen's fee for the road distance. Without a distance yet, a
+ * only) `deliveryFeeRwf` — the platform's big-event fee or an agreed
+ * special delivery fee, decided by the caller. Without one yet (null), a
  * delivery price has `delivery_fee_rwf` null and the food as its total.
  * `package` is the package priced. Throws when the package can't be ordered
  * or no guest range covers `guests`.
  */
-function priceEventOrder(offer, guests, { packageId = null, pickup, distanceKm = null }) {
+function priceEventOrder(offer, guests, { packageId = null, pickup, deliveryFeeRwf = null }) {
   const orderable = orderablePackages(offer);
   if (!orderable.length) {
     throw new ApiError(409, 'EVENTS_UNAVAILABLE', "This kitchen isn't taking big-event orders right now.");
@@ -296,8 +289,7 @@ function priceEventOrder(offer, guests, { packageId = null, pickup, distanceKm =
     throw new ApiError(409, 'GUESTS_OUT_OF_RANGE', `"${pkg.name}" is for ${min}–${max} guests, not ${guests}.`);
   }
   const food = guests * tier.price_per_plate_rwf;
-  const range = pickup || distanceKm == null ? null : rangeForDistance(offer.delivery_fee_ranges, distanceKm);
-  const deliveryFee = pickup ? 0 : range ? range.fee_rwf : null;
+  const deliveryFee = pickup ? 0 : deliveryFeeRwf ?? null;
   return {
     package: pkg,
     guests,
@@ -305,7 +297,6 @@ function priceEventOrder(offer, guests, { packageId = null, pickup, distanceKm =
     tier: { min_guests: tier.min_guests, max_guests: tier.max_guests },
     food_total_rwf: food,
     delivery_fee_rwf: deliveryFee,
-    delivery_range: range,
     total_rwf: food + (deliveryFee ?? 0),
   };
 }

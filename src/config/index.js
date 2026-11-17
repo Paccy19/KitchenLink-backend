@@ -457,6 +457,19 @@ const config = {
         ? numberFromEnvOrZero(process.env.DELIVERY_PER_METER_MAX_FEE_RWF, null)
         : null,
     },
+    // Big-event delivery (the kitchen delivers a catering order): platform
+    // pricing, separate from the standard fee above. Starting values only;
+    // admins change them in Delivery Management → Big-event delivery.
+    //   fee = starting fee + road meters × per-meter rate (at least the minimum)
+    // A fee above the automatic ceiling is never charged automatically: the
+    // customer and kitchen agree a price through a special delivery request.
+    bigEvent: {
+      startingFeeRwf: numberFromEnvOrZero(process.env.BIG_EVENT_DELIVERY_STARTING_FEE_RWF, 3000),
+      perMeterRwf: numberFromEnvOrZero(process.env.BIG_EVENT_DELIVERY_PER_METER_RWF, 0.5),
+      minFeeRwf: numberFromEnvOrZero(process.env.BIG_EVENT_DELIVERY_MIN_FEE_RWF, 3000),
+      autoCeilingRwf: numberFromEnvOrZero(process.env.BIG_EVENT_DELIVERY_AUTO_CEILING_RWF, 40000),
+      quotationValidityHours: numberFromEnv(process.env.BIG_EVENT_QUOTATION_VALIDITY_HOURS, 48),
+    },
     // Share of the delivery fee paid to the driver (percent). Drivers keep the
     // entire delivery fee — no platform commission is taken from it.
     driverSharePercent: numberFromEnvOrZero(

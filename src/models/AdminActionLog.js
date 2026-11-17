@@ -23,6 +23,7 @@ const adminActionLogSchema = new mongoose.Schema(
         'payout',
         'withdrawal',
         'delivery',
+        'special_delivery',
         'category',
         'complaint',
         'admin',

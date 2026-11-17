@@ -64,9 +64,13 @@ const serializeConversation = (conversation, side) => ({
 
 const serializeMessage = (message, side = null) => ({
   id: String(message._id),
+  kind: message.kind || 'text',
   author_role: message.author_role,
   mine: side ? message.author_role === side : false,
-  body: message.body,
+  body: message.body || '',
+  attachment_url: message.attachment_url || null,
+  location: message.location || null,
+  quotation_id: message.quotation_id ? String(message.quotation_id) : null,
   created_at: message.created_at,
 });
 
@@ -238,6 +242,9 @@ class ChatService {
         vendor_type_label: vendor.vendor_type ? vendorTypeLabel(vendor.vendor_type) : null,
       },
       messages_count: conversation.messages_count || 0,
+      special_delivery_request_id: conversation.special_delivery_request_id
+        ? String(conversation.special_delivery_request_id)
+        : null,
       last_message_at: conversation.last_message_at,
       last_message_preview: conversation.last_message_preview || '',
       last_message_role: conversation.last_message_role,
@@ -273,3 +280,6 @@ class ChatService {
 
 module.exports = new ChatService();
 module.exports.MESSAGE_MAX_LENGTH = MESSAGE_MAX_LENGTH;
+module.exports.serializeMessage = serializeMessage;
+module.exports.parseBody = parseBody;
+module.exports.PRIVACY_NOTE = PRIVACY_NOTE;
