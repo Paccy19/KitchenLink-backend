@@ -56,6 +56,12 @@ const notificationSchema = new mongoose.Schema(
         'category_added',
         // A new message in a customer–kitchen chat.
         'chat_message',
+        // Special delivery negotiation (big events): new request, status
+        // changes / quotations, chat messages, disputes (admin feed).
+        'special_delivery_request',
+        'special_delivery_update',
+        'special_delivery_message',
+        'special_delivery_dispute',
         // Delivery worker updates on an order they were offered or took.
         'delivery_update',
         'delivery_taken',

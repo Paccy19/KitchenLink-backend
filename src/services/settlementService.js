@@ -175,6 +175,14 @@ class SettlementService {
     const order = await orderRepository.findById(orderId);
     if (!order) return null;
     if (order.settlement_status !== 'held') return order;
+    // A special delivery in dispute: the money stays held until support
+    // resolves it (resolveDispute releases it, maybe with part refunded).
+    if (order.special_delivery_request_id) {
+      // eslint-disable-next-line global-require
+      const { SpecialDeliveryRequest } = require('../models');
+      const disputed = await SpecialDeliveryRequest.exists({ _id: order.special_delivery_request_id, status: 'disputed' });
+      if (disputed) return order;
+    }
 
     const split = await this.#computeSplit(order, null);
     const claimed = await orderRepository.claimSettlement(order._id, 'held', 'settled', {

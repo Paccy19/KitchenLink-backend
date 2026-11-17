@@ -19,6 +19,12 @@ const internalDeliveryRoutes = require('./internalDeliveryRoutes');
 const adminAuthRoutes = require('./adminAuthRoutes');
 const adminRoutes = require('./adminRoutes');
 const { customerChatRoutes, vendorChatRoutes } = require('./chatRoutes');
+const {
+  customerSpecialDeliveryRoutes,
+  vendorSpecialDeliveryRoutes,
+  vendorCoverageRoutes,
+} = require('./specialDeliveryRoutes');
+const { DISTRICTS, publicDistrict } = require('../config/rwandaDistricts');
 
 const {
   customerSupportRoutes,
@@ -37,6 +43,11 @@ router.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
+// Rwanda's districts (big-event delivery coverage).
+router.get('/districts', (req, res) => {
+  res.json({ districts: DISTRICTS.map(publicDistrict) });
+});
+
 router.use('/', homeRoutes);
 router.use('/geo', geoRoutes);
 router.use('/', vendorRoutes);
@@ -50,11 +61,14 @@ router.use('/vendor/wallet', vendorWalletRoutes);
 router.use('/vendor/notifications', vendorNotificationRoutes);
 router.use('/vendor/support', vendorSupportRoutes);
 router.use('/vendor/chats', vendorChatRoutes);
+router.use('/vendor/special-deliveries', vendorSpecialDeliveryRoutes);
+router.use('/vendor/delivery-coverage', vendorCoverageRoutes);
 router.use('/vendor', vendorDashboardRoutes);
 router.use('/orders', orderRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/support', customerSupportRoutes);
 router.use('/chats', customerChatRoutes);
+router.use('/special-deliveries', customerSpecialDeliveryRoutes);
 router.use('/driver/auth', driverAuthRoutes);
 router.use('/driver/support', driverSupportRoutes);
 router.use('/driver', driverRoutes);

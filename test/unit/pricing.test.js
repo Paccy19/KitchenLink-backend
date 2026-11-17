@@ -63,21 +63,24 @@ const offer = (overrides = {}) =>
           menu: ['Rice'],
         },
       ],
-      delivery_fee_ranges: [
-        { from_km: 0, to_km: 10, fee_rwf: 5000 },
-        { from_km: 10, to_km: null, fee_rwf: 20000 },
-      ],
       ...overrides,
     }),
   });
 
-test('event price: guests × the plate price of their range, plus delivery', () => {
-  const price = priceEventOrder(offer(), 50, { pickup: false, distanceKm: 12 });
+test('event price: guests × the plate price of their range, plus the delivery fee decided by the platform', () => {
+  const price = priceEventOrder(offer(), 50, { pickup: false, deliveryFeeRwf: 20000 });
   assert.equal(price.price_per_plate_rwf, 5000);
+  assert.equal(price.food_total_rwf, 50 * 5000);
+  assert.equal(price.delivery_fee_rwf, 20000);
   assert.equal(price.total_rwf, 50 * 5000 + 20000);
 
-  const pickup = priceEventOrder(offer(), 49, { pickup: true, distanceKm: 12 });
+  const pickup = priceEventOrder(offer(), 49, { pickup: true, deliveryFeeRwf: 20000 });
+  assert.equal(pickup.delivery_fee_rwf, 0);
   assert.equal(pickup.total_rwf, 49 * 7000);
+
+  const unknown = priceEventOrder(offer(), 50, { pickup: false });
+  assert.equal(unknown.delivery_fee_rwf, null, 'no fee until the platform prices the route');
+  assert.equal(unknown.total_rwf, 50 * 5000);
 });
 
 test('event price: guests no range covers are refused', () => {
@@ -85,7 +88,7 @@ test('event price: guests no range covers are refused', () => {
   assert.throws(() => priceEventOrder(offer(), 201, { pickup: true }), { code: 'GUESTS_OUT_OF_RANGE' });
 });
 
-test('event settings: overlapping guest ranges and big events without a delivery fee are refused', () => {
+test('event settings: overlapping guest ranges are refused; kitchens no longer set delivery fees', () => {
   assert.throws(() =>
     parseEventPackage({
       enabled: true,
@@ -102,11 +105,11 @@ test('event settings: overlapping guest ranges and big events without a delivery
       delivery_fee_ranges: [{ from_km: 0, to_km: null, fee_rwf: 1000 }],
     })
   );
-  assert.throws(() =>
-    parseEventPackage({
-      enabled: true,
-      packages: [{ name: 'Buffet', tiers: [{ min_guests: 1, max_guests: 9, price_per_plate_rwf: 1000 }], menu: ['Rice'] }],
-      delivery_fee_ranges: [],
-    })
-  );
+  // A kitchen's own delivery fee ranges are ignored (platform pricing).
+  const saved = parseEventPackage({
+    enabled: true,
+    packages: [{ name: 'Buffet', tiers: [{ min_guests: 1, max_guests: 9, price_per_plate_rwf: 1000 }], menu: ['Rice'] }],
+    delivery_fee_ranges: [{ from_km: 0, to_km: null, fee_rwf: 999999 }],
+  });
+  assert.equal(saved.delivery_fee_ranges, undefined);
 });

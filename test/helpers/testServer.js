@@ -128,6 +128,7 @@ async function createKitchen({ name = 'Test Kitchen', dishes = [], ...fields } =
 const MOBILE_MONEY = { payment_method: 'mobile_money', payment_details: { phone: '0788123456' } };
 
 module.exports = {
+  baseUrl: () => baseUrl,
   start,
   stop,
   api,

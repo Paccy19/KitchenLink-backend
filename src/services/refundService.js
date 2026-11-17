@@ -40,6 +40,9 @@ const serializeRefund = (refund, { admin = false } = {}) => {
     id: String(refund._id),
     order_id: String(refund.order_id?._id || refund.order_id),
     order_number: refund.order_number || '',
+    kind: refund.kind || 'order_cancelled',
+    kind_label: refund.kind === 'delivery_fee_adjustment' ? 'Delivery fee reduced' : 'Order cancelled',
+    special_delivery_request_id: refund.special_delivery_request_id ? String(refund.special_delivery_request_id) : null,
     amount_rwf: refund.amount_rwf,
     status: refund.status,
     status_label: STATUS_LABELS[refund.status] || refund.status,
@@ -73,32 +76,77 @@ const serializeRefund = (refund, { admin = false } = {}) => {
 };
 
 /**
- * Refunds for paid orders that were cancelled. Opened automatically by the
+ * Refunds for paid orders that were cancelled, and for special delivery fees
+ * support reduced when resolving a dispute. Cancellations are opened automatically by the
  * settlement step when a held order is cancelled (by the customer, kitchen,
  * support, or a kitchen suspension); the money goes back the way the customer
  * paid. With a manual payout service an admin sends it and records the
  * transaction reference; an automatic service sends it immediately.
  */
 class RefundService {
-  /** Called once per cancelled paid order (after the held money is claimed). */
-  async open(order, { by = 'system', reason = '' } = {}) {
+  /** Where the customer's money goes back: the way they paid. */
+  #destinationFor(order) {
     const details = order.payment_details || {};
-    const isCard = order.payment_method === 'card';
+    return order.payment_method === 'card'
+      ? { type: 'card', card_last4: String(details.card_number || '').slice(-4) }
+      : { type: 'mobile_money', phone: details.phone || '' };
+  }
+
+  /**
+   * Called once per cancelled paid order (after the held money is claimed).
+   * Gives back what was paid (two-part orders: maybe only the deposit), less
+   * any refund this order already had (a reduced special delivery fee).
+   */
+  async open(order, { by = 'system', reason = '' } = {}) {
+    const paid = Math.round(Number(order.amount_paid_rwf ?? order.total_rwf) || 0);
+    const alreadyRefunded = await refundRepository.totalForOrder(order._id, { exceptKind: 'order_cancelled' });
+    const amount = Math.max(0, paid - alreadyRefunded);
+    if (amount <= 0) return null;
     const refund = await refundRepository.createOnce({
       order_id: order._id,
+      kind: 'order_cancelled',
       order_number: order.order_number || '',
       customer_id: order.customer_id,
       vendor_id: order.vendor_id || null,
-      // Two-part orders give back what was paid so far (maybe only the deposit).
-      amount_rwf: Math.round(Number(order.amount_paid_rwf ?? order.total_rwf) || 0),
+      amount_rwf: amount,
       payment_method: order.payment_method || '',
-      destination: isCard
-        ? { type: 'card', card_last4: String(details.card_number || '').slice(-4) }
-        : { type: 'mobile_money', phone: details.phone || '' },
+      destination: this.#destinationFor(order),
       cancelled_by: by,
       reason: String(reason || '').slice(0, 200),
       provider: config.admin.owner.payoutProvider || 'manual',
     });
+    return this.#dispatch(refund, `for cancelled order ${refund?.order_number}`);
+  }
+
+  /**
+   * Support lowered an agreed special delivery fee while resolving a dispute
+   * and the customer had already paid more than the new total: `amountRwf`
+   * goes back to them. The order itself stays active (see
+   * specialDeliveryService.resolveDispute, which lowers the order's fee and
+   * total first, so the platform's books stay balanced).
+   */
+  async openDeliveryAdjustment(order, { amountRwf, reason = '', requestId = null } = {}) {
+    const amount = Math.round(Number(amountRwf) || 0);
+    if (amount <= 0) return null;
+    const refund = await refundRepository.createOnce({
+      order_id: order._id,
+      kind: 'delivery_fee_adjustment',
+      special_delivery_request_id: requestId,
+      order_number: order.order_number || '',
+      customer_id: order.customer_id,
+      vendor_id: order.vendor_id || null,
+      amount_rwf: amount,
+      payment_method: order.payment_method || '',
+      destination: this.#destinationFor(order),
+      cancelled_by: 'admin',
+      reason: String(reason || '').slice(0, 200),
+      provider: config.admin.owner.payoutProvider || 'manual',
+    });
+    return this.#dispatch(refund, `(delivery fee reduced) on ${refund?.order_number}`);
+  }
+
+  /** Sends a new refund automatically when possible, otherwise asks an admin. */
+  async #dispatch(refund, what) {
     if (!refund || refund.status !== 'pending') return refund;
 
     const sent = await this.#tryAutomatic(refund);
@@ -108,7 +156,7 @@ class RefundService {
       .notifyAdmin({
         type: 'refund_update',
         title: 'Refund to send',
-        body: `${formatRwf(refund.amount_rwf)} for cancelled order ${refund.order_number} goes back to ${destinationLabel(refund.destination)}.`,
+        body: `${formatRwf(refund.amount_rwf)} ${what} goes back to ${destinationLabel(refund.destination)}.`,
         orderId: refund.order_id,
         link: `/admin-dashboard/refunds?refund=${refund._id}`,
       })
@@ -151,11 +199,15 @@ class RefundService {
       customer_id: done.customer_id,
       reference: reference || done.order_number || '',
       description: `Refund for ${done.order_number} sent to ${destinationLabel(done.destination)}`,
-      metadata: { refund_id: String(done._id) },
+      metadata: { refund_id: String(done._id), kind: done.kind || 'order_cancelled' },
     });
-    await orderRepository.update(done.order_id, { payment_status: 'refunded' });
-    const payment = await paymentRepository.findLatestByOrder(done.order_id);
-    if (payment && payment.status === 'successful') await paymentRepository.update(payment._id, { status: 'refunded' });
+    // Only a cancellation refunds the order; a reduced delivery fee gives part
+    // of the money back and the order goes on.
+    if ((done.kind || 'order_cancelled') === 'order_cancelled') {
+      await orderRepository.update(done.order_id, { payment_status: 'refunded' });
+      const payment = await paymentRepository.findLatestByOrder(done.order_id);
+      if (payment && payment.status === 'successful') await paymentRepository.update(payment._id, { status: 'refunded' });
+    }
 
     this.#notifyCustomer(done, 'Refund sent', `${formatRwf(done.amount_rwf)} for ${done.order_number} was sent back to your ${destinationLabel(done.destination)}${reference ? ` (ref ${reference})` : ''}.`);
     return done;
