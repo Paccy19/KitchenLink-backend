@@ -539,11 +539,11 @@ class AdminOperationsService {
         max_wrong_codes: dispatchSettingsService.current().pickup_code_max_attempts,
       },
       fees: {
-        // Per-meter pricing when enabled; else the admin's distance ranges
-        // when set; otherwise the config formula.
+        // Per-meter pricing when enabled; otherwise the config formula.
         mode: deliveryFeeSettingsService.current().mode,
         per_meter: deliveryFeeSettingsService.perMeter(),
-        ranges: deliveryFeeSettingsService.current().ranges,
+        // Distance ranges are no longer used for pricing.
+        ranges: [],
         base_rwf: d.baseFeeRwf,
         per_km_rwf: d.perKmFeeRwf,
         minimum_rwf: Math.max(deliveryFeeSettingsService.MIN_FEE_RWF, d.minFeeRwf),
