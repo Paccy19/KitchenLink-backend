@@ -39,6 +39,7 @@ const bankSettingsService = require('../services/bankSettingsService');
 const deliveryFeeSettingsService = require('../services/deliveryFeeSettingsService');
 const bigEventDeliverySettingsService = require('../services/bigEventDeliverySettingsService');
 const specialDeliveryService = require('../services/specialDeliveryService');
+const adminOrderService = require('../services/adminOrderService');
 
 const router = Router();
 
@@ -374,6 +375,14 @@ router.post(
   '/orders/:orderId/cancel',
   requirePermission('orders:write'),
   adminOrderController.cancel
+);
+// This order's commission percentage (instead of the commission rules), until settled.
+router.put(
+  '/orders/:orderId/commission',
+  requirePermission('commissions:write'),
+  asyncHandler(async (req, res) =>
+    res.json(await adminOrderService.setCommission(req.params.orderId, req.body || {}, req.admin, req))
+  )
 );
 // Delivery workers near the kitchen, for support to call before reassigning.
 router.get(

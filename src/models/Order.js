@@ -250,6 +250,33 @@ const orderSchema = new mongoose.Schema(
     // fee: the vendor receives subtotal - commission, the rider receives the
     // full delivery fee.
     commission_percent: { type: Number, min: 0, max: 100, default: 0 },
+    // An admin's commission for this one order, used instead of the
+    // commission rules (vendor > category > type > global). Can only change
+    // before the order is settled (the kitchen paid); every change is kept.
+    commission_override: {
+      type: new mongoose.Schema(
+        {
+          percent: { type: Number, min: 0, max: 100, required: true },
+          reason: { type: String, default: '' },
+          set_by: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+          set_at: { type: Date, required: true },
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
+    commission_history: [
+      {
+        _id: false,
+        from_percent: { type: Number, default: null },
+        to_percent: { type: Number, default: null }, // null = back to the commission rules
+        commission_rwf: { type: Number, default: null },
+        vendor_payout_rwf: { type: Number, default: null },
+        reason: { type: String, default: '' },
+        by: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+        at: { type: Date, default: Date.now },
+      },
+    ],
     commission_rwf: { type: Number, min: 0, default: 0 },
     vendor_payout_rwf: { type: Number, min: 0, default: 0 },
     rider_payout_rwf: { type: Number, min: 0, default: 0 },
