@@ -1,7 +1,8 @@
 /**
  * Vendor (kitchen) business types. Stored on every vendor as the `code`;
- * responses also carry the `label`. Menu categories are NOT tied to a type:
- * a Home Cook can sell any kind of food.
+ * responses also carry the `label`. A kitchen's food categories are set
+ * automatically from its type (DEFAULT_FOOD_CATEGORIES below), but its menu
+ * is NOT limited by them: a Home Cook can sell any kind of food.
  *
  * Keep in sync with frontend/src/data/vendorTypes.js.
  */
@@ -315,7 +316,60 @@ function isTypeLocked(vendor) {
   return status === 'approved' || status === 'suspended';
 }
 
+/**
+ * The food categories every kitchen of a type gets automatically at
+ * registration (and when its type changes). Names of Category records:
+ * services/vendorCategoryService.js finds them by name (or alias), and
+ * scripts/ensureTypeCategories.js creates any that are missing at start-up.
+ * Kitchens can still sell any food in any category on their menu.
+ */
+const DEFAULT_FOOD_CATEGORIES = {
+  home_cook: ['Restaurant', 'Prepared Meals'],
+  restaurant: ['Restaurant', 'Prepared Meals'],
+  cafe: ['Coffee & Tea', 'Snacks'],
+  bakery: ['Breads', 'Pastries', 'Cakes', 'Cookies'],
+  caterer: ['Catering', 'Prepared Meals'],
+  food_truck: ['Street Food', 'Snacks', 'Prepared Meals'],
+  chef: ['Signature Meals', 'Prepared Meals'],
+  meal_prep: ['Meal Prep', 'Prepared Meals'],
+  juice_drinks: ['Juices', 'Smoothies', 'Beverages'],
+  other: ['General Food'],
+};
+
+// An existing category that already means the same thing is reused instead
+// of creating a near-duplicate (KitchenLink already has "Drinks").
+const DEFAULT_CATEGORY_ALIASES = {
+  Beverages: ['Drinks'],
+};
+
+// Descriptions for the categories created at start-up when missing.
+const DEFAULT_CATEGORY_DESCRIPTIONS = {
+  Restaurant: 'Restaurant dishes and full menus.',
+  'Prepared Meals': 'Ready-to-eat cooked meals.',
+  'Coffee & Tea': 'Coffee, tea and other hot drinks.',
+  Snacks: 'Light bites and snacks.',
+  Breads: 'Loaves, rolls, baguettes and other breads.',
+  Pastries: 'Croissants, puff pastries, samosas and more.',
+  Cakes: 'Birthday, wedding and sponge cakes.',
+  Cookies: 'Cookies and biscuits.',
+  Catering: 'Food for events, offices and large groups.',
+  'Street Food': 'Street-style food made to order.',
+  'Signature Meals': "A chef's own signature dishes.",
+  'Meal Prep': 'Meals prepared in advance for the week.',
+  Juices: 'Fresh fruit and vegetable juices.',
+  Smoothies: 'Blended fruit smoothies and shakes.',
+  Beverages: 'Soft drinks and other beverages.',
+  'General Food': 'Food that fits no other category.',
+};
+
+/** The default category names for a vendor type (empty for an unknown type). */
+const defaultCategoryNamesFor = (code) => DEFAULT_FOOD_CATEGORIES[toVendorTypeCode(code)] || [];
+
 module.exports = {
+  DEFAULT_FOOD_CATEGORIES,
+  DEFAULT_CATEGORY_ALIASES,
+  DEFAULT_CATEGORY_DESCRIPTIONS,
+  defaultCategoryNamesFor,
   isTypeLocked,
   VENDOR_TYPES,
   VENDOR_TYPE_CODES,

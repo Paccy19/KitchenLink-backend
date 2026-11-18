@@ -1,9 +1,14 @@
 /* eslint-disable no-console */
 /**
- * Makes sure the categories meant for a specific vendor type exist (e.g.
- * Breads, Pastries, Cakes and Cookies for Bakery kitchens). Unlike
- * `npm run seed:categories` it never deletes, hides or reorders anything:
- *  - a missing category is created (active, placed after the existing ones);
+ * Makes sure every vendor type's default food categories exist (the
+ * categories kitchens get automatically, config/vendorTypes.js
+ * DEFAULT_FOOD_CATEGORIES — e.g. Breads, Pastries, Cakes and Cookies for
+ * Bakery). Unlike `npm run seed:categories` it never deletes, hides or
+ * reorders anything:
+ *  - a missing category is created (active, placed after the existing ones),
+ *    tagged with the vendor types it is a default for;
+ *  - an existing equivalent (alias, e.g. Drinks for Beverages) is reused as it
+ *    is, never duplicated or re-tagged;
  *  - an existing one that has never been tagged gets its vendor types;
  *  - anything an admin already changed (tags, name case, hidden) is left alone.
  *
@@ -11,22 +16,46 @@
  * gets the categories without extra steps. Also: npm run seed:type-categories
  */
 const { Category } = require('../models');
+const {
+  DEFAULT_FOOD_CATEGORIES,
+  DEFAULT_CATEGORY_ALIASES,
+  DEFAULT_CATEGORY_DESCRIPTIONS,
+} = require('../config/vendorTypes');
 
-const TYPE_CATEGORIES = [
-  { name: 'Breads', vendor_types: ['bakery'], description: 'Loaves, rolls, baguettes and other breads.' },
-  { name: 'Pastries', vendor_types: ['bakery'], description: 'Croissants, puff pastries, samosas and more.' },
-  { name: 'Cakes', vendor_types: ['bakery'], description: 'Birthday, wedding and sponge cakes.' },
-  { name: 'Cookies', vendor_types: ['bakery'], description: 'Cookies and biscuits.' },
-];
+/** One entry per default category name, with the vendor types it belongs to. */
+const TYPE_CATEGORIES = (() => {
+  const byName = new Map();
+  for (const [code, names] of Object.entries(DEFAULT_FOOD_CATEGORIES)) {
+    for (const name of names) {
+      if (!byName.has(name)) byName.set(name, { name, vendor_types: [], description: DEFAULT_CATEGORY_DESCRIPTIONS[name] || '' });
+      byName.get(name).vendor_types.push(code);
+    }
+  }
+  return [...byName.values()];
+})();
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const byExactName = (name) => Category.findOne({ name: new RegExp(`^${escapeRegex(name)}$`, 'i') }).lean();
 
-/** Returns { created, tagged }: the names it created / tagged. */
+/** Returns { created, tagged, reused }: the names it created / tagged / reused as an equivalent. */
 async function ensureTypeCategories({ log = () => {} } = {}) {
   const created = [];
   const tagged = [];
+  const reused = [];
   for (const entry of TYPE_CATEGORIES) {
-    const existing = await Category.findOne({ name: new RegExp(`^${escapeRegex(entry.name)}$`, 'i') }).lean();
+    const existing = await byExactName(entry.name);
+    if (!existing) {
+      let equivalent = null;
+      for (const alias of DEFAULT_CATEGORY_ALIASES[entry.name] || []) {
+        equivalent = await byExactName(alias);
+        if (equivalent) break;
+      }
+      if (equivalent) {
+        reused.push(`${entry.name} → ${equivalent.name}`);
+        log(`Reused  ${equivalent.name} for ${entry.name}`);
+        continue;
+      }
+    }
     if (!existing) {
       const last = await Category.findOne().sort({ sort_order: -1 }).select('sort_order').lean();
       await Category.create({ ...entry, sort_order: (last?.sort_order ?? 0) + 1, is_active: true });
@@ -42,7 +71,7 @@ async function ensureTypeCategories({ log = () => {} } = {}) {
       log(`Kept    ${existing.name}`);
     }
   }
-  return { created, tagged };
+  return { created, tagged, reused };
 }
 
 module.exports = ensureTypeCategories;

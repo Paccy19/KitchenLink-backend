@@ -142,9 +142,13 @@ const start = async () => {
     // Categories meant for a vendor type (Breads, Pastries, Cakes, Cookies for
     // Bakery): created when missing, never deleted or changed once there.
     try {
-      const { created, tagged } = await ensureTypeCategories();
+      const { created, tagged, reused } = await ensureTypeCategories();
       if (created.length) console.log(`Added categories: ${created.join(", ")}`);
       if (tagged.length) console.log(`Tagged categories with their vendor type: ${tagged.join(", ")}`);
+      if (reused.length) console.log(`Default categories using an existing equivalent: ${reused.join(", ")}`);
+      // Kitchens with no food category get their type's defaults (others are left as they are).
+      const filled = await require('./services/vendorCategoryService').backfillMissing();
+      if (filled > 0) console.log(`Gave ${filled} kitchen(s) their vendor type's default food categories`);
     } catch (error) {
       console.error("Adding vendor-type categories failed:", error.message);
     }

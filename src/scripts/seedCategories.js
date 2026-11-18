@@ -36,6 +36,18 @@ const CATEGORY_VENDOR_TYPES = {
   Cookies: ['bakery'],
 };
 
+// Every vendor type's default categories (assigned automatically at
+// registration) are part of the official list too, so this seed never deletes
+// them. A default with an existing equivalent (Beverages → Drinks) is skipped.
+const { TYPE_CATEGORIES } = require('./ensureTypeCategories');
+const { DEFAULT_CATEGORY_ALIASES } = require('../config/vendorTypes');
+for (const entry of TYPE_CATEGORIES) {
+  const equivalent = (DEFAULT_CATEGORY_ALIASES[entry.name] || []).find((alias) => FOOD_CATEGORIES.includes(alias));
+  if (equivalent || FOOD_CATEGORIES.includes(entry.name)) continue;
+  FOOD_CATEGORIES.push(entry.name);
+  CATEGORY_VENDOR_TYPES[entry.name] = entry.vendor_types;
+}
+
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const run = async () => {
