@@ -387,6 +387,24 @@ function serializeVendorOrder(order, { customer } = {}) {
     vendor_payout_rwf: order.vendor_payout_rwf ?? 0,
     rider_payout_rwf: order.rider_payout_rwf ?? 0,
     settlement_status: order.settlement_status || 'unpaid',
+    // The admin's commission for this order (null = the commission rules).
+    commission_override: order.commission_override
+      ? {
+          percent: order.commission_override.percent,
+          reason: order.commission_override.reason || '',
+          set_at: order.commission_override.set_at,
+        }
+      : null,
+    commission_history: (order.commission_history || []).map((entry) => ({
+      from_percent: entry.from_percent ?? null,
+      to_percent: entry.to_percent ?? null,
+      commission_rwf: entry.commission_rwf ?? null,
+      vendor_payout_rwf: entry.vendor_payout_rwf ?? null,
+      reason: entry.reason || '',
+      at: entry.at,
+    })),
+    // Until the kitchen is paid (or the order refunded).
+    commission_editable: ['unpaid', 'held'].includes(order.settlement_status || 'unpaid'),
     payment_method: order.payment_method,
     payment_status: order.payment_status,
     order_type: order.order_type || 'immediate',
@@ -879,6 +897,24 @@ function serializeAdminOrder(order) {
     vendor_payout_rwf: order.vendor_payout_rwf ?? 0,
     rider_payout_rwf: order.rider_payout_rwf ?? 0,
     settlement_status: order.settlement_status || 'unpaid',
+    // The admin's commission for this order (null = the commission rules).
+    commission_override: order.commission_override
+      ? {
+          percent: order.commission_override.percent,
+          reason: order.commission_override.reason || '',
+          set_at: order.commission_override.set_at,
+        }
+      : null,
+    commission_history: (order.commission_history || []).map((entry) => ({
+      from_percent: entry.from_percent ?? null,
+      to_percent: entry.to_percent ?? null,
+      commission_rwf: entry.commission_rwf ?? null,
+      vendor_payout_rwf: entry.vendor_payout_rwf ?? null,
+      reason: entry.reason || '',
+      at: entry.at,
+    })),
+    // Until the kitchen is paid (or the order refunded).
+    commission_editable: ['unpaid', 'held'].includes(order.settlement_status || 'unpaid'),
     payment_method: order.payment_method,
     payment_status: order.payment_status,
     order_type: order.order_type || 'immediate',
