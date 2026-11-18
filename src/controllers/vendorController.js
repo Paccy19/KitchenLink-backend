@@ -2,11 +2,15 @@ const asyncHandler = require('../utils/asyncHandler');
 const { parseOptionalCoords, parseRequiredCoords } = require('../utils/geo');
 const vendorService = require('../services/vendorService');
 const homeService = require('../services/homeService');
-const { VENDOR_TYPES, parseVendorTypeFilter } = require('../config/vendorTypes');
+const { parseVendorTypeFilter } = require('../config/vendorTypes');
+const vendorCategoryService = require('../services/vendorCategoryService');
 
-/** GET /vendors/types — every vendor type with its label and description. */
+/**
+ * GET /vendors/types — every vendor type with its label and description, and
+ * the food categories a kitchen of that type gets automatically.
+ */
 const getTypes = asyncHandler(async (req, res) => {
-  res.json({ vendor_types: VENDOR_TYPES });
+  res.json({ vendor_types: await vendorCategoryService.typesWithDefaults() });
 });
 
 /**

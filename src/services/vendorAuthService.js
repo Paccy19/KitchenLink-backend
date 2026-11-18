@@ -1,5 +1,4 @@
 const crypto = require('crypto');
-const mongoose = require('mongoose');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { revokeAllSessions } = require('../utils/sessions');
@@ -15,14 +14,13 @@ const {
   parseOperatingHours,
   parsePaymentInformation,
   bindPayoutToPhone,
-  parseFoodCategoryTokens,
   parseVerificationDocuments,
 } = require('../utils/vendorValidators');
 const { serializeVendorAccount } = require('../utils/serializers');
 const { hashPassword, comparePassword } = require('../utils/password');
 const { privateRef, resolveImageUrl } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
-const categoryRepository = require('../repositories/categoryRepository');
+const vendorCategoryService = require('./vendorCategoryService');
 const otpRepository = require('../repositories/otpRepository');
 const otpGuardService = require('./otpGuardService');
 const { sendCodeSms } = require('../utils/sms');
@@ -62,9 +60,9 @@ class VendorAuthService {
     const operatingHours = parseOperatingHours(body.operating_hours);
     // Mobile-money payouts must use the phone the kitchen registers with.
     const paymentInformation = bindPayoutToPhone(parsePaymentInformation(body.payment_information), phone);
-    const { ids: categoryIds, names: categoryNames } = await this.#resolveCategories(
-      parseFoodCategoryTokens(body.food_categories)
-    );
+    // Food categories come from the vendor type, never from the form: any
+    // food_categories an older client still sends are ignored.
+    const { food_category_ids: categoryIds, food_categories: categoryNames } = await vendorCategoryService.fieldsFor(vendorType);
     const documents = this.#buildDocuments(files, body);
 
     const bannerImageUrl = await resolveImageUrl({
@@ -271,27 +269,6 @@ class VendorAuthService {
       expires_in: config.auth.jwtExpiresIn,
       vendor: serializeVendorAccount({ ...vendor, last_login_at: new Date() }),
     };
-  }
-
-  async #resolveCategories(tokens) {
-    const ids = [];
-    const names = [];
-    for (const token of tokens) {
-      let category = null;
-      if (mongoose.isValidObjectId(token)) {
-        category = await categoryRepository.findById(token);
-      }
-      if (!category) category = await categoryRepository.findByName(token);
-      if (!category) {
-        throw ApiError.badRequest(
-          'food_categories contains an unknown category.',
-          { food_categories: `"${token}" is not a known category` }
-        );
-      }
-      ids.push(String(category._id));
-      names.push(category.name);
-    }
-    return { ids: [...new Set(ids)], names: [...new Set(names)] };
   }
 
   #buildDocuments(files = {}, body = {}) {
