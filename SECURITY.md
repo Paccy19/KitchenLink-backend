@@ -69,6 +69,19 @@ Money, a gateway) is integrated in `orderService`.
 - Production builds include a Content Security Policy (`vite.config.js`): only the site's own scripts run, and connections only go to the API and the map tiles. A new outside service has to be added there, or the browser blocks it.
 - The host should also send `Content-Security-Policy: frame-ancestors 'self'` (a `<meta>` tag can't set it).
 
+## Admin sign-in through the customer phone login
+
+The public "How do you want to sign in?" choice shows only Customer, Vendor and Delivery Worker. Admins sign in from **Customer** with the phone number verified on their admin account (`Admin.phone`, which can only be set by proving the number with an SMS code in Settings → SMS codes), in two stages:
+
+1. **Phone code** — `POST /auth/send-otp` and `POST /auth/verify-otp`, the normal customer sign-in code (same OTP store, expiry, single use, attempt limit, lockout and daily cap). Sending a code behaves identically for every phone, so nobody learns which phones are admins'. Only once the code is verified does the server check whether the phone belongs to an **active** admin (not deactivated, deleted or still invited). If it does, `verify-otp` returns `{ admin_verification_required: true, challenge_token }` and **no session** (no customer and no admin token). Otherwise it is the normal customer sign-in.
+2. **Email + password** — `POST /admin/auth/phone-login { challenge_token, email, password }`. The challenge (`AdminLoginChallenge`) is a random token stored as a SHA-256 hash, bound on the server to the admin and the phone, valid 5 minutes, used once, and dropped after 5 wrong attempts. The email and password must belong to **that same admin**; another admin's credentials fail exactly like a wrong password. The email + password lockout of the password sign-in also applies. Success issues the normal admin session (JWT with the admin role, same roles and permissions, idle timeout, sign-out). The verified phone counts as the SMS step of admins who use SMS codes. Successes and failures are written to the admin audit log (`auth.login`, `auth.login_failed`), never with the password.
+
+The role is decided only by the server; the browser never sends one. Every `/admin/*` API checks the admin token and account (`requireAdminAuth`), so a customer token, a challenge token or a forged token is refused. `/admin-login` (email + password, then an SMS code when it is on) still works for admins, but is not linked anywhere.
+
+**One phone, two accounts.** A phone that is both an admin's and a customer's is shown the admin step after the code, with "Continue as a customer instead" (`POST /auth/continue-as-customer { challenge_token }`): it uses the challenge up and signs in to that customer account exactly as before (or creates it, like any first sign-in). Admin and customer records are never merged, linked, converted or changed by this flow.
+
+**Sign-in codes are stored hashed** (HMAC-SHA256 keyed with the server secret, `utils/otpHash.js`) for every role. Codes created before this change still work until they expire.
+
 ## Maintenance
 
 | When | What |

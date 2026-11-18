@@ -43,7 +43,8 @@ const registerBody = (vendorType, extra = {}) => {
     name: `Auto ${vendorType} kitchen`,
     vendor_type: vendorType,
     owner_name: 'Aline Uwase',
-    phone: `0788${String(process.pid % 1000).padStart(3, '0')}${String(phone).padStart(3, '0')}`,
+    // Airtel 073…: never the 078… numbers testServer.createCustomer makes.
+    phone: `073${String(process.pid % 10000).padStart(4, '0')}${String(phone).padStart(3, '0')}`,
     description: 'Fresh food made every day for our neighbours.',
     location: { address: 'KN 5 Rd', neighborhood: 'Kiyovu', latitude: -1.95, longitude: 30.06 },
     operating_hours: [{ day: 'monday', open_time: '08:00', close_time: '20:00' }],

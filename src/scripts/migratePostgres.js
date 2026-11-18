@@ -174,7 +174,7 @@ const SPECS = [
   {
     table: 'otpcodes', collection: 'otpcodes', sample: 'phone_number',
     fields: {
-      phone_number: 'text', purpose: 'text', context: 'text', code: 'text',
+      phone_number: 'text', purpose: 'text', context: 'text', code: 'text', code_hash: 'text',
       name: 'text', attempts: 'int', expires_at: 'date', consumed_at: 'date',
     },
   },

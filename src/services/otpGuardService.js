@@ -1,6 +1,7 @@
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { OtpCode, OtpGuard } = require('../models');
+const { otpMatches } = require('../utils/otpHash');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -121,7 +122,7 @@ class OtpGuardService {
       throw ApiError.tooMany('Too many incorrect attempts. Request a new code.', 'OTP_TOO_MANY_ATTEMPTS');
     }
 
-    if (claimed.code !== rawCode) {
+    if (!otpMatches(claimed, rawCode)) {
       const lockedUntil = await this.#recordFailure(phone, purpose);
       if (lockedUntil) {
         await OtpCode.updateOne({ _id: otp._id }, { $set: { consumed_at: new Date() } });

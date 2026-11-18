@@ -1,12 +1,14 @@
 const { OtpCode } = require('../models');
+const { hashOtp } = require('../utils/otpHash');
 
 class OtpRepository {
+  /** Stores a new code — only its keyed hash, never the code itself. */
   async create({ phoneNumber, purpose = 'customer', context = '', code, name, expiresAt }) {
     return OtpCode.create({
       phone_number: phoneNumber,
       purpose,
       context,
-      code,
+      code_hash: hashOtp(code),
       name: name || undefined,
       expires_at: expiresAt,
     });
