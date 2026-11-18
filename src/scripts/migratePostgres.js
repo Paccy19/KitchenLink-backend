@@ -41,6 +41,7 @@ const SPECS = [
       permissions: 'text[]', status: 'text', is_active: 'bool', phone: 'text',
       two_factor_enabled: 'bool', invite_token_hash: 'text',
       invite_expires_at: 'date', invited_at: 'date', invited_by: 'oid',
+      invite_phone_pending: 'text', invite_phone_verified: 'text', invite_phone_verified_at: 'date',
       accepted_at: 'date', deactivated_at: 'date', last_login_at: 'date',
       deleted_at: 'date',
     },

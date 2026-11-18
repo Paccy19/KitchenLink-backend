@@ -3,13 +3,20 @@ const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { parseObjectId } = require('../utils/adminValidators');
 const { parseEmail, parsePassword } = require('../utils/vendorValidators');
-const { NAME_MAX_LENGTH, parseName } = require('../utils/validators');
+const { NAME_MAX_LENGTH, parseName, normalizePhone } = require('../utils/validators');
 const { hashPassword } = require('../utils/password');
 const { sendEmail, escapeHtml } = require('../utils/email');
 const { Admin } = require('../models');
 const access = require('../config/adminAccess');
 const adminAuthService = require('./adminAuthService');
 const adminActionLogService = require('./adminActionLogService');
+const adminOtpService = require('./adminOtpService');
+
+// A verified phone must be used to finish joining within this time.
+const PHONE_VERIFICATION_VALID_MINUTES = 30;
+// What resets the phone step (a new invitation, or a different number).
+const CLEAR_INVITE_PHONE = { invite_phone_pending: '', invite_phone_verified: '', invite_phone_verified_at: null };
+const INVITE_PHONE_FIELDS = '+invite_phone_pending +invite_phone_verified +invite_phone_verified_at';
 
 const hashToken = (token) => crypto.createHash('sha256').update(String(token)).digest('hex');
 
@@ -88,6 +95,8 @@ class TeamService {
           invite_expires_at: expiresAt,
           invited_at: new Date(),
           invited_by: owner._id,
+          // A new link starts the phone step again.
+          ...CLEAR_INVITE_PHONE,
         },
       }
     );
@@ -98,8 +107,8 @@ class TeamService {
     const sent = await sendEmail({
       to: member.email,
       subject: `You're invited to the KitchenLink admin team (${role.label})`,
-      text: `${greeting}\n\n${owner.name || 'The owner'} invited you to join the KitchenLink admin team as ${role.label}.\n\nWhat you will be able to do: ${role.description}\n\nCreate your password here (the link works for ${hours} hours):\n${link}\n\nThen sign in on the website: Sign in > Admin, with this email and the password you set.\n\nIf you did not expect this, ignore this email.`,
-      html: `<p>${escapeHtml(greeting)}</p><p><strong>${escapeHtml(owner.name || 'The owner')}</strong> invited you to join the KitchenLink admin team as <strong>${escapeHtml(role.label)}</strong>.</p><p>${escapeHtml(role.description)}</p><p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 18px;background:#1f2937;color:#fff;border-radius:8px;text-decoration:none">Create my password</a></p><p style="color:#666">The link works for ${hours} hours. Then sign in on the website: Sign in &gt; Admin, with this email and the password you set.</p>`,
+      text: `${greeting}\n\n${owner.name || 'The owner'} invited you to join the KitchenLink admin team as ${role.label}.\n\nWhat you will be able to do: ${role.description}\n\nSet up your account here (the link works for ${hours} hours): verify your phone number with an SMS code, then create your password.\n${link}\n\nIf you did not expect this, ignore this email.`,
+      html: `<p>${escapeHtml(greeting)}</p><p><strong>${escapeHtml(owner.name || 'The owner')}</strong> invited you to join the KitchenLink admin team as <strong>${escapeHtml(role.label)}</strong>.</p><p>${escapeHtml(role.description)}</p><p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 18px;background:#1f2937;color:#fff;border-radius:8px;text-decoration:none">Set up my account</a></p><p style="color:#666">The link works for ${hours} hours. You will verify your phone number with an SMS code, then create your password.</p>`,
     });
     return {
       email_status: sent.status,
@@ -197,9 +206,20 @@ class TeamService {
 
   /* ------------------------- invitation (public) ------------------------- */
 
+  /*
+   * Joining takes three steps, all checked here (the page only shows them):
+   *   1. sendInvitePhoneCode: the invitee's phone gets an SMS code (`accept_invite`).
+   *   2. verifyInvitePhone: the code proves they own that phone; the server
+   *      records the number against this invitation.
+   *   3. acceptInvitation: refused until step 2 succeeded (within 30 minutes);
+   *      saves the verified phone and the password, and only then makes the
+   *      account active.
+   * The phone is never taken from the browser at steps 2 and 3, so a page
+   * that skips ahead, or sends another number, cannot finish without a code.
+   */
   async #findInvitation(token) {
-    const member = token
-      ? await Admin.findOne({ invite_token_hash: hashToken(token), deleted_at: null }).lean()
+    const member = typeof token === 'string' && token
+      ? await Admin.findOne({ invite_token_hash: hashToken(token), deleted_at: null }).select(INVITE_PHONE_FIELDS).lean()
       : null;
     if (!member || member.status !== 'invited' || member.is_active === false) {
       throw ApiError.notFound('This invitation link is not valid. Ask the owner to send a new one.', 'INVITATION_INVALID');
@@ -221,13 +241,78 @@ class TeamService {
         role_label: role?.label || member.role,
         role_description: role?.description || '',
         expires_at: member.invite_expires_at,
+        // Where the invitee is (so reopening the link resumes at the right step).
+        phone_verified: Boolean(this.#verifiedPhone(member)),
+        verified_phone: maskPhone(this.#verifiedPhone(member)),
       },
     };
   }
 
-  /** The invited person sets their own password; the account is then ready. */
-  async acceptInvitation(token, body = {}) {
+  /** The phone this invitee proved, while that proof is still fresh (else ''). */
+  #verifiedPhone(member) {
+    const at = member.invite_phone_verified_at ? new Date(member.invite_phone_verified_at).getTime() : 0;
+    const fresh = at && Date.now() - at < PHONE_VERIFICATION_VALID_MINUTES * 60 * 1000;
+    return fresh && member.invite_phone_verified ? member.invite_phone_verified : '';
+  }
+
+  /** Step 1: an SMS code to the phone the invitee enters (a new number starts over). */
+  async sendInvitePhoneCode(token, body = {}) {
     const member = await this.#findInvitation(token);
+    const phone = normalizePhone(body.phone ?? body.phone_number);
+    // Whether the number is already another admin's is only said after the
+    // code proves the invitee owns it (step 2), never to whoever types it.
+    await Admin.updateOne({ _id: member._id }, { $set: { ...CLEAR_INVITE_PHONE, invite_phone_pending: phone } });
+    const sent = await adminOtpService.send(phone, 'accept_invite');
+    return { ...sent, resend_after_seconds: 30 };
+  }
+
+  /** Step 2: the code proves the phone; the server keeps the verified number. */
+  async verifyInvitePhone(token, body = {}, req = null) {
+    const member = await this.#findInvitation(token);
+    const phone = member.invite_phone_pending;
+    if (!phone) {
+      throw new ApiError(400, 'PHONE_CODE_NOT_SENT', 'Enter your phone number and request a code first.');
+    }
+    try {
+      await adminOtpService.verify(phone, 'accept_invite', body.code ?? body.otp_code);
+    } catch (error) {
+      await this.#auditSelf(member, req, 'team.invite_phone_failed', { reason: error.code || 'invalid' });
+      throw error;
+    }
+    const taken = await Admin.findOne({ phone, _id: { $ne: member._id } }, { _id: 1 }).lean();
+    if (taken) {
+      throw ApiError.conflict(
+        'This phone number is already used by another admin account. Use a different number.',
+        'PHONE_ALREADY_REGISTERED'
+      );
+    }
+    // Only if the number was not changed meanwhile (another tab asked for a new code).
+    const saved = await Admin.updateOne(
+      { _id: member._id, status: 'invited', invite_phone_pending: phone },
+      { $set: { invite_phone_verified: phone, invite_phone_verified_at: new Date() } }
+    );
+    if (!saved.modifiedCount) {
+      throw ApiError.conflict('Your phone number was changed. Request a new code.', 'PHONE_CHANGED');
+    }
+    await this.#auditSelf(member, req, 'team.invite_phone_verified', { phone: maskPhone(phone) });
+    return { phone_verified: true, verified_phone: maskPhone(phone), valid_for_minutes: PHONE_VERIFICATION_VALID_MINUTES };
+  }
+
+  /**
+   * Step 3: the invitee sets their own password. Refused until their phone is
+   * verified; then the phone and password are saved and the account is active.
+   */
+  async acceptInvitation(token, body = {}, req = null) {
+    const member = await this.#findInvitation(token);
+    const phone = this.#verifiedPhone(member);
+    if (!phone) {
+      throw ApiError.forbidden(
+        member.invite_phone_verified
+          ? 'Your phone verification has expired. Verify your phone number again.'
+          : 'Verify your phone number before creating your password.',
+        'PHONE_VERIFICATION_REQUIRED'
+      );
+    }
     const provided = parseName(body.name, { required: false });
     const name = provided || member.name || member.email.split('@')[0].slice(0, NAME_MAX_LENGTH) || 'Team member';
     const password = parsePassword(body.password, { field: 'password' });
@@ -238,21 +323,52 @@ class TeamService {
       throw ApiError.badRequest('Choose a different password.', { password: 'too common' });
     }
 
-    await Admin.updateOne(
-      { _id: member._id },
-      {
-        $set: {
-          name,
-          two_factor_enabled: false,
-          password_hash: await hashPassword(password),
-          status: 'active',
-          accepted_at: new Date(),
-          invite_token_hash: null,
-          invite_expires_at: null,
-        },
+    if (body.confirm_password !== undefined && body.confirm_password !== password) {
+      throw ApiError.badRequest('Passwords do not match.', { confirm_password: 'does not match' });
+    }
+    const passwordHash = await hashPassword(password);
+
+    let result;
+    try {
+      // Atomic: the same invitation, still unaccepted, with the same verified phone.
+      result = await Admin.updateOne(
+        { _id: member._id, status: 'invited', invite_token_hash: hashToken(token), invite_phone_verified: phone },
+        {
+          $set: {
+            name,
+            phone,
+            // The phone is proven, so SMS codes (required for team members) are on.
+            two_factor_enabled: true,
+            password_hash: passwordHash,
+            status: 'active',
+            accepted_at: new Date(),
+            invite_token_hash: null,
+            invite_expires_at: null,
+            ...CLEAR_INVITE_PHONE,
+          },
+        }
+      );
+    } catch (error) {
+      if (error?.code === 11000) {
+        throw ApiError.conflict('This phone number is already used by another admin account. Use a different number.', 'PHONE_ALREADY_REGISTERED');
       }
+      throw error;
+    }
+    if (!result.modifiedCount) {
+      throw ApiError.notFound('This invitation link is not valid. Ask the owner to send a new one.', 'INVITATION_INVALID');
+    }
+    await this.#auditSelf(member, req, 'team.invite_accepted', { phone: maskPhone(phone) });
+    // No session here: the new admin signs in through the normal sign-in.
+    return { accepted: true, email: member.email, phone: maskPhone(phone) };
+  }
+
+  /** Audit entries written by the invitee themself (never with codes or passwords). */
+  async #auditSelf(member, req, action, metadata = {}) {
+    await adminActionLogService.record(
+      member,
+      { action, target_type: 'admin_member', target_id: member._id, target_label: member.email, metadata: { role: access.roleKey(member.role), ...metadata } },
+      req
     );
-    return { accepted: true, email: member.email };
   }
 
   async #audit(owner, req, action, member, metadata = {}) {
