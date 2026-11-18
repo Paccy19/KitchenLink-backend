@@ -11,7 +11,10 @@ const otpCodeSchema = new mongoose.Schema(
     },
     // What an admin code authorizes (e.g. 'login', 'platform_withdrawal').
     context: { type: String, default: '' },
-    code: { type: String, required: true },
+    // Only a keyed hash of the code is stored (utils/otpHash.js). `code` is
+    // kept for codes created before hashing (they expire within minutes).
+    code_hash: { type: String, default: null },
+    code: { type: String, default: null },
     name: { type: String, trim: true },
     attempts: { type: Number, default: 0 },
     expires_at: { type: Date, required: true },

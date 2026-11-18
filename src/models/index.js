@@ -37,8 +37,10 @@ const BigEventDeliverySettings = require('./BigEventDeliverySettings');
 const SpecialDeliveryRequest = require('./SpecialDeliveryRequest');
 const DeliveryQuotation = require('./DeliveryQuotation');
 const Counter = require('./Counter');
+const AdminLoginChallenge = require('./AdminLoginChallenge');
 
 module.exports = {
+  AdminLoginChallenge,
   BigEventDeliverySettings,
   SpecialDeliveryRequest,
   DeliveryQuotation,

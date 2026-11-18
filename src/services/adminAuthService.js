@@ -104,6 +104,19 @@ class AdminAuthService {
     return this.#issueSession({ ...admin, last_login_at: new Date() }, { usesDefaultPassword });
   }
 
+  /**
+   * Signs in an admin who passed both stages of the phone sign-in (SMS code
+   * to their verified phone, then their own email and password — checked by
+   * adminPhoneLoginService). The verified phone already counts as the SMS
+   * step, so no second code is asked. Same session as a password sign-in.
+   */
+  async issuePhoneLoginSession(admin, passwordHash) {
+    const usesDefaultPassword = await this.#isDefaultPassword(passwordHash);
+    await this.#flagDefaultPassword(admin, usesDefaultPassword);
+    await adminRepository.touchLogin(admin._id);
+    return this.#issueSession({ ...admin, last_login_at: new Date() }, { usesDefaultPassword });
+  }
+
   async me(admin) {
     return {
       admin: serializeAdmin(admin, { usesDefaultPassword: await this.usesDefaultPassword(admin) }),

@@ -11,6 +11,7 @@ const driverRepository = require('../repositories/driverRepository');
 const otpRepository = require('../repositories/otpRepository');
 const otpGuardService = require('./otpGuardService');
 const { sendCodeSms } = require('../utils/sms');
+const adminPhoneLoginService = require('./adminPhoneLoginService');
 
 const serializeCustomer = (customer) => ({
   id: String(customer._id),
@@ -152,11 +153,11 @@ class AuthService {
     const otp = await otpRepository.findLatestActive(phone);
     if (!otp) {
       const latest = await otpRepository.findLatestAny(phone);
-      throw ApiError.badRequest(
-        latest && latest.expires_at < new Date()
-          ? 'Code expired. Request a new one.'
-          : 'No active code for this phone number. Request a new one.',
-        latest && latest.expires_at < new Date() ? 'OTP_EXPIRED' : 'OTP_NOT_FOUND'
+      const isExpired = latest && latest.expires_at < new Date();
+      throw new ApiError(
+        400,
+        isExpired ? 'OTP_EXPIRED' : 'OTP_NOT_FOUND',
+        isExpired ? 'Code expired. Request a new one.' : 'No active code for this phone number. Request a new one.'
       );
     }
 
@@ -164,13 +165,30 @@ class AuthService {
     // codes, and uses the code up when it is right.
     await otpGuardService.check(otp, rawCode, phone, 'customer');
 
+    // The verified phone is an active admin's: no session yet, only a
+    // short-lived challenge for the admin email + password step (or to
+    // continue as a customer). Known only now, after the code was verified.
+    const challenge = await adminPhoneLoginService.challengeFor(phone, { name: name ?? otp.name ?? '' });
+    if (challenge) {
+      return { admin_verification_required: true, ...challenge };
+    }
+
+    return this.customerSession(phone, { name, otpName: otp.name });
+  }
+
+  /**
+   * The customer session for a verified phone: signs in the customer with
+   * this phone, or creates their account (with the name given). Used by
+   * verifyOtp and by an admin who chose to continue as a customer.
+   */
+  async customerSession(phone, { name, otpName = null } = {}) {
     // Same rule as when the code was sent (the name may be resent here).
-    const registeredName = await assertLinkedName(phone, name ?? otp.name);
+    const registeredName = await assertLinkedName(phone, name ?? otpName);
 
     let customer = await customerRepository.findByPhone(phone);
     if (!customer) {
       // A kitchen owner or delivery worker gets their registered name.
-      const customerName = registeredName || parseName(name) || (otp.name ? parseName(otp.name) : null);
+      const customerName = registeredName || (name ? parseName(name) : null) || (otpName ? parseName(otpName) : null);
       if (!customerName) {
         throw ApiError.badRequest(
           'name is required to complete registration.',
