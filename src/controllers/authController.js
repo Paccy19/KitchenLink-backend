@@ -1,22 +1,14 @@
 const asyncHandler = require('../utils/asyncHandler');
 const authService = require('../services/authService');
-const { normalizePhone, parseName } = require('../utils/validators');
 
+// The body is passed as it is: `identifier` (phone or email) or the older
+// `phone_number`, the name, and the optional phone of an email sign-up.
 const sendOtp = asyncHandler(async (req, res) => {
-  const result = await authService.sendOtp({
-    phone_number: req.body?.phone_number,
-    name: req.body?.name,
-  });
-  res.json(result);
+  res.json(await authService.sendOtp(req.body || {}));
 });
 
 const verifyOtp = asyncHandler(async (req, res) => {
-  const result = await authService.verifyOtp({
-    phone_number: req.body?.phone_number,
-    code: req.body?.code,
-    name: req.body?.name,
-  });
-  res.json(result);
+  res.json(await authService.verifyOtp(req.body || {}));
 });
 
 const me = asyncHandler(async (req, res) => {

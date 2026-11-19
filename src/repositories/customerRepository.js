@@ -1,11 +1,24 @@
 const { Customer } = require('../models');
+const { phoneVariants } = require('../utils/identifier');
 
 const escapeRegex = (value) =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 class CustomerRepository {
+  /**
+   * The customer whose (verified) phone this is. Also finds numbers older
+   * code stored as 07… or 2507… (migrateCustomerIdentity normalizes them).
+   */
   async findByPhone(phoneNumber) {
-    return Customer.findOne({ phone_number: phoneNumber }).lean();
+    if (!phoneNumber) return null;
+    const variants = /^\+2507\d{8}$/.test(phoneNumber) ? phoneVariants(phoneNumber) : [phoneNumber];
+    return Customer.findOne({ phone_number: { $in: variants } }).lean();
+  }
+
+  /** Another customer (not `exceptId`) whose phone this is. */
+  async findOtherByPhone(phoneNumber, exceptId) {
+    const owner = await this.findByPhone(phoneNumber);
+    return owner && String(owner._id) !== String(exceptId) ? owner : null;
   }
 
   async findByEmail(email) {
@@ -21,10 +34,16 @@ class CustomerRepository {
     return Customer.find({ _id: { $in: customerIds } }).lean();
   }
 
-  async create({ name, phoneNumber }) {
+  /**
+   * phoneNumber: a verified phone (phone sign-up). email: a verified email
+   * (email sign-up), with an optional unverified pendingPhone.
+   */
+  async create({ name, phoneNumber, email, pendingPhone }) {
     const customer = await Customer.create({
       name,
-      phone_number: phoneNumber,
+      ...(phoneNumber ? { phone_number: phoneNumber } : {}),
+      ...(email ? { email, email_verified_at: new Date() } : {}),
+      ...(pendingPhone ? { pending_phone_number: pendingPhone } : {}),
       is_verified: true,
       last_login_at: new Date(),
     });

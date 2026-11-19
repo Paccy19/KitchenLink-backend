@@ -1,39 +1,47 @@
-const crypto = require('crypto');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { signToken } = require('../utils/jwt');
 const { normalizePhone, parseName } = require('../utils/validators');
 const { parseEmail } = require('../utils/vendorValidators');
+const { identifierFrom, nameKey, sameName, maskEmail } = require('../utils/identifier');
 const { resolveImageUrl } = require('../utils/uploads');
+const { Customer } = require('../models');
 const customerRepository = require('../repositories/customerRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const driverRepository = require('../repositories/driverRepository');
-const otpRepository = require('../repositories/otpRepository');
-const otpGuardService = require('./otpGuardService');
-const { sendCodeSms } = require('../utils/sms');
+const loginOtpService = require('./loginOtpService');
 const adminPhoneLoginService = require('./adminPhoneLoginService');
 
 const serializeCustomer = (customer) => ({
   id: String(customer._id),
   name: customer.name,
-  phone_number: customer.phone_number,
+  // Always a verified phone (or null for an email sign-up without one yet).
+  phone_number: customer.phone_number || null,
+  phone_verified: Boolean(customer.phone_number),
+  pending_phone_number: customer.pending_phone_number || null,
   email: customer.email || null,
+  email_verified: Boolean(customer.email && customer.email_verified_at),
+  pending_email: customer.pending_email || null,
   profile_image_url: customer.profile_image_url || null,
 });
 
-/**
- * A name compared the way people write it: "  UWASE  aline" and "Aline Uwase"
- * are the same (case, spacing, accents and word order don't matter).
- */
-const nameKey = (value) =>
-  String(value || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean)
-    .sort()
-    .join(' ');
+const PHONE_TAKEN_MESSAGE =
+  'This phone number is already associated with another customer account. Please use your own phone number or sign in to your existing account.';
+/** Never says whose account it is: no name, email or anything else about them. */
+const phoneTaken = () => new ApiError(409, 'PHONE_BELONGS_TO_ANOTHER_CUSTOMER', PHONE_TAKEN_MESSAGE);
+const emailTaken = () =>
+  new ApiError(
+    409,
+    'EMAIL_BELONGS_TO_ANOTHER_CUSTOMER',
+    'This email address is already associated with another customer account. Please use your own email address or sign in to your existing account.'
+  );
+const emailNotVerified = () =>
+  new ApiError(
+    409,
+    'EMAIL_NOT_VERIFIED',
+    "This email isn't verified on a KitchenLink account yet. Sign in with your phone number, then verify your email in your profile."
+  );
+const isDuplicateKey = (error) => error?.code === 11000;
 
 /**
  * The kitchen owner and delivery worker registered with this phone, with the
@@ -60,8 +68,7 @@ async function assertLinkedName(phone, name) {
   const accounts = await linkedAccounts(phone);
   if (!accounts.length) return null;
   const roles = accounts.map((account) => account.role).join(' and ');
-  const given = nameKey(name);
-  if (!given) {
+  if (!nameKey(name)) {
     throw new ApiError(
       400,
       'NAME_REQUIRED',
@@ -69,7 +76,7 @@ async function assertLinkedName(phone, name) {
       { name: 'required for this phone number' }
     );
   }
-  if (accounts.some((account) => nameKey(account.name) !== given)) {
+  if (accounts.some((account) => !sameName(account.name, name))) {
     throw new ApiError(
       400,
       'NAME_DOES_NOT_MATCH',
@@ -80,100 +87,109 @@ async function assertLinkedName(phone, name) {
   return accounts[0].name;
 }
 
+/**
+ * The phone belongs to a customer account: a different name means a
+ * different person trying to use it, so it is refused. No name given is an
+ * ordinary sign-in (the code to that phone is the proof).
+ */
+function assertSameCustomer(existing, name) {
+  if (existing && nameKey(name) && !sameName(name, existing.name)) throw phoneTaken();
+}
+
+/**
+ * Customer sign-in, and sign-up, with one field: a phone number or an email
+ * address (the server tells which). A code goes to that phone or inbox; the
+ * verified code signs the customer in, or creates their account when the
+ * phone/email has none yet (the customer form is also the sign-up form).
+ *
+ * Phone ownership: a customer's `phone_number` is always a phone proven with a
+ * code. A phone given at email sign-up is kept as `pending_phone_number` until
+ * the customer verifies it, and is refused if it is already another customer's
+ * (different name) or already has an account (same name: sign in instead).
+ */
 class AuthService {
-  async sendOtp({ phone_number, name }) {
-    const phone = normalizePhone(phone_number);
-    const existing = await customerRepository.findByPhone(phone);
-    // Checked before any code is sent: a wrong name gets no SMS.
-    const registeredName = await assertLinkedName(phone, name);
-    const pendingName = existing ? null : registeredName || parseName(name);
-
-    const now = Date.now();
-    const lastSentAt = await otpRepository.lastSentAt(phone);
-    if (lastSentAt && now - new Date(lastSentAt).getTime() < config.auth.otpResendCooldownSeconds * 1000) {
-      throw ApiError.tooMany(
-        'A code was just sent. Please wait before requesting another.',
-        'OTP_RESEND_TOO_SOON',
-        { retry_after_seconds: config.auth.otpResendCooldownSeconds }
-      );
-    }
-
-    const recentCount = await otpRepository.countRecent(
-      phone,
-      new Date(now - config.auth.otpRateWindowMinutes * 60 * 1000)
-    );
-    if (recentCount >= config.auth.otpRateMaxSends) {
-      throw ApiError.tooMany(
-        'Too many code requests. Please try again later.',
-        'OTP_RATE_LIMITED',
-        { retry_after_minutes: config.auth.otpRateWindowMinutes }
-      );
-    }
-
-    // Locked-out phones get no codes; at most a set number a day.
-    await otpGuardService.beforeSend(phone, 'customer');
-
-    const code = String(crypto.randomInt(100000, 1000000));
-    const created = await otpRepository.create({
-      phoneNumber: phone,
-      code,
-      name: pendingName || undefined,
-      expiresAt: new Date(now + config.auth.otpTtlMinutes * 60 * 1000),
-    });
-
-    await sendCodeSms(
-      phone,
-      `KitchenLink: your sign-in code is ${code}. It expires in ${config.auth.otpTtlMinutes} minutes. Never share it.`,
-      { onFail: () => otpRepository.remove(created._id) }
-    );
-
-    // Only a server whose .env explicitly says development/test shows the code
-    // (in the console and the response) so the flow can be tried without SMS.
-    const isDev = config.explicitDev;
-    if (isDev) console.log(`[otp] ${phone} -> ${code}`);
-
-    return {
-      phone_number: phone,
-      expires_in_seconds: config.auth.otpTtlMinutes * 60,
-      requires_name: !existing,
-      ...(isDev ? { dev_otp: code } : {}),
-    };
+  async sendOtp(body = {}) {
+    const identifier = identifierFrom(body, 'phone_number', 'email');
+    return identifier.type === 'phone' ? this.#sendPhoneCode(identifier, body.name) : this.#sendEmailCode(identifier, body);
   }
 
-  async verifyOtp({ phone_number, code, name }) {
-    const phone = normalizePhone(phone_number);
-    const rawCode = typeof code === 'string' ? code.trim() : String(code ?? '');
-    if (!/^\d{6}$/.test(rawCode)) {
-      throw ApiError.badRequest('code must be a 6-digit number.', {
-        code: 'expected 6 digits',
-      });
+  async #sendPhoneCode(identifier, name) {
+    const phone = identifier.value;
+    // Checked before any code is sent: a wrong name gets no SMS.
+    const registeredName = await assertLinkedName(phone, name);
+    const existing = await customerRepository.findByPhone(phone);
+    assertSameCustomer(existing, name);
+    const pendingName = existing ? null : registeredName || parseName(name);
+
+    const sent = await loginOtpService.send({ identifier, purpose: 'customer', name: pendingName || undefined });
+    return { phone_number: phone, identifier: phone, requires_name: !existing, ...sent };
+  }
+
+  async #sendEmailCode(identifier, body) {
+    const email = identifier.value;
+    const existing = await customerRepository.findByEmail(email);
+    if (existing) {
+      if (!existing.email_verified_at) throw emailNotVerified();
+      if (nameKey(body.name) && !sameName(body.name, existing.name)) throw emailTaken();
+      const sent = await loginOtpService.send({ identifier, purpose: 'customer' });
+      return { identifier: email, email, requires_name: false, ...sent };
     }
 
-    await otpGuardService.assertNotLocked(phone, 'customer');
-    const otp = await otpRepository.findLatestActive(phone);
-    if (!otp) {
-      const latest = await otpRepository.findLatestAny(phone);
-      const isExpired = latest && latest.expires_at < new Date();
+    // Sign-up with an email: a name, and optionally a phone (checked now and
+    // again when the account is created; saved unverified).
+    const name = parseName(body.name);
+    const registrationPhone = await this.#checkRegistrationPhone(this.#registrationPhoneFrom(body), name);
+    const sent = await loginOtpService.send({ identifier, purpose: 'customer', name, registrationPhone: registrationPhone || undefined });
+    return { identifier: email, email, requires_name: true, ...sent };
+  }
+
+  /** With `identifier`, `phone_number` is the optional phone of an email sign-up. */
+  #registrationPhoneFrom(body) {
+    if (body.registration_phone !== undefined) return body.registration_phone;
+    return body.identifier !== undefined ? body.phone_number : undefined;
+  }
+
+  /**
+   * The phone given at email sign-up must not be another customer's, nor
+   * already have its own account (that person signs in with it instead).
+   */
+  async #checkRegistrationPhone(raw, name) {
+    if (raw === undefined || raw === null || String(raw).trim() === '') return null;
+    const phone = normalizePhone(raw);
+    await assertLinkedName(phone, name);
+    const owner = await customerRepository.findByPhone(phone);
+    if (owner) {
+      if (!sameName(name, owner.name)) throw phoneTaken();
       throw new ApiError(
-        400,
-        isExpired ? 'OTP_EXPIRED' : 'OTP_NOT_FOUND',
-        isExpired ? 'Code expired. Request a new one.' : 'No active code for this phone number. Request a new one.'
+        409,
+        'PHONE_HAS_ACCOUNT',
+        'This phone number already has a KitchenLink customer account. Sign in with your phone number, then add this email in your profile.'
       );
     }
+    return phone;
+  }
 
-    // Counts the try atomically, locks the phone out after too many wrong
-    // codes, and uses the code up when it is right.
-    await otpGuardService.check(otp, rawCode, phone, 'customer');
+  async verifyOtp(body = {}) {
+    const identifier = identifierFrom(body, 'phone_number', 'email');
+    if (identifier.type === 'email') {
+      const otp = await loginOtpService.verify({ identifier, purpose: 'customer', code: body.code });
+      return this.#emailSession(identifier.value, otp, body.name);
+    }
+
+    const phone = identifier.value;
+    // Before the code is used up: a different person's name is refused.
+    assertSameCustomer(await customerRepository.findByPhone(phone), body.name);
+    const otp = await loginOtpService.verify({ identifier, purpose: 'customer', code: body.code });
 
     // The verified phone is an active admin's: no session yet, only a
     // short-lived challenge for the admin email + password step (or to
     // continue as a customer). Known only now, after the code was verified.
-    const challenge = await adminPhoneLoginService.challengeFor(phone, { name: name ?? otp.name ?? '' });
+    const challenge = await adminPhoneLoginService.challengeFor(phone, { name: body.name ?? otp.name ?? '' });
     if (challenge) {
       return { admin_verification_required: true, ...challenge };
     }
 
-    return this.customerSession(phone, { name, otpName: otp.name });
+    return this.customerSession(phone, { name: body.name, otpName: otp.name });
   }
 
   /**
@@ -186,6 +202,7 @@ class AuthService {
     const registeredName = await assertLinkedName(phone, name ?? otpName);
 
     let customer = await customerRepository.findByPhone(phone);
+    assertSameCustomer(customer, name ?? otpName);
     if (!customer) {
       // A kitchen owner or delivery worker gets their registered name.
       const customerName = registeredName || (name ? parseName(name) : null) || (otpName ? parseName(otpName) : null);
@@ -195,17 +212,46 @@ class AuthService {
           { name: 'expected a non-empty string' }
         );
       }
-      customer = await customerRepository.create({
-        name: customerName,
-        phoneNumber: phone,
-      });
+      try {
+        customer = await customerRepository.create({ name: customerName, phoneNumber: phone });
+      } catch (error) {
+        if (!isDuplicateKey(error)) throw error;
+        // Someone else's sign-up claimed this phone a moment ago (the unique
+        // index decides): only the same person may continue, into that account.
+        customer = await customerRepository.findByPhone(phone);
+        if (!customer || !sameName(customerName, customer.name)) throw phoneTaken();
+      }
     } else {
       await customerRepository.touchLogin(customer._id);
       customer = { ...customer, last_login_at: new Date() };
     }
+    return this.#session(customer);
+  }
 
-    const token = signToken({ sub: String(customer._id), phone: customer.phone_number });
+  /** A verified email code: the customer with that (verified) email, or a new account. */
+  async #emailSession(email, otp, name) {
+    let customer = await customerRepository.findByEmail(email);
+    if (customer) {
+      if (!customer.email_verified_at) throw emailNotVerified();
+      if (nameKey(name) && !sameName(name, customer.name)) throw emailTaken();
+      await customerRepository.touchLogin(customer._id);
+      return this.#session({ ...customer, last_login_at: new Date() });
+    }
 
+    const customerName = parseName(otp.name || name);
+    // Checked again: the phone may have been claimed since the code was sent.
+    const pendingPhone = otp.registration_phone ? await this.#checkRegistrationPhone(otp.registration_phone, customerName) : null;
+    try {
+      customer = await customerRepository.create({ name: customerName, email, pendingPhone });
+    } catch (error) {
+      if (isDuplicateKey(error)) throw ApiError.conflict('An account with this email was just created. Sign in again.', 'EMAIL_ALREADY_REGISTERED');
+      throw error;
+    }
+    return this.#session(customer);
+  }
+
+  #session(customer) {
+    const token = signToken({ sub: String(customer._id), ...(customer.phone_number ? { phone: customer.phone_number } : {}) });
     return {
       token,
       token_type: 'Bearer',
@@ -223,35 +269,29 @@ class AuthService {
 
     if (body.name !== undefined) {
       payload.name = parseName(body.name);
-    }
-
-    if (body.phone_number !== undefined) {
-      const phone = normalizePhone(body.phone_number);
-      const existing = await customerRepository.findByPhone(phone);
-      if (existing && String(existing._id) !== String(customer._id)) {
-        throw ApiError.conflict(
-          'A customer with this phone number is already registered.',
-          'PHONE_ALREADY_REGISTERED'
-        );
+      // A phone that is also a kitchen's or delivery worker's keeps that
+      // person's registered name, so a rename can't hand it to someone else.
+      if (customer.phone_number && !sameName(payload.name, customer.name)) {
+        await assertLinkedName(customer.phone_number, payload.name);
       }
-      payload.phone_number = phone;
     }
 
-    // Optional email: unique among customers; an empty value removes it.
+    // Phone and email change only through their code (see start/confirm
+    // below); the current values may be sent back unchanged.
+    if (body.phone_number !== undefined && body.phone_number !== null && String(body.phone_number).trim() !== '') {
+      const phone = normalizePhone(body.phone_number);
+      if (phone !== customer.phone_number) {
+        throw new ApiError(409, 'PHONE_VERIFICATION_REQUIRED', 'Verify your new phone number with the code we send to it first.');
+      }
+    }
+
     const unset = [];
     if (body.email !== undefined) {
       if (body.email === null || String(body.email).trim() === '') {
-        unset.push('email');
-      } else {
-        const email = parseEmail(body.email);
-        const existing = await customerRepository.findByEmail(email);
-        if (existing && String(existing._id) !== String(customer._id)) {
-          throw ApiError.conflict(
-            'A customer with this email is already registered.',
-            'EMAIL_ALREADY_REGISTERED'
-          );
-        }
-        payload.email = email;
+        unset.push('email', 'pending_email');
+        payload.email_verified_at = null;
+      } else if (parseEmail(body.email) !== customer.email) {
+        throw new ApiError(409, 'EMAIL_VERIFICATION_REQUIRED', 'Verify your new email address with the code we send to it first.');
       }
     }
 
@@ -263,6 +303,7 @@ class AuthService {
     if (profileImageUrl !== undefined) payload.profile_image_url = profileImageUrl;
 
     if (Object.keys(payload).length === 0 && unset.length === 0) {
+      if (body.phone_number !== undefined || body.email !== undefined) return { customer: serializeCustomer(customer) };
       throw ApiError.badRequest('No supported profile fields were provided.', {
         body: 'expected name, phone_number, email or profile_image',
       });
@@ -270,6 +311,88 @@ class AuthService {
 
     const updated = await customerRepository.update(customer._id, payload, { unset });
     return { customer: serializeCustomer(updated) };
+  }
+
+  /* ------------------------ changing phone / email ----------------------- */
+
+  /**
+   * Step 1 of a new phone: refused if it is another customer's; otherwise a
+   * code goes to it. The current phone stays the account's until step 2.
+   */
+  async startPhoneChange(customer, body = {}) {
+    const phone = normalizePhone(body.phone_number ?? body.phone);
+    if (phone === customer.phone_number) throw ApiError.badRequest('This is already your phone number.', { phone_number: 'unchanged' });
+    if (await customerRepository.findOtherByPhone(phone, customer._id)) throw phoneTaken();
+    await assertLinkedName(phone, customer.name);
+    await customerRepository.update(customer._id, { pending_phone_number: phone });
+    const sent = await loginOtpService.send({
+      identifier: { type: 'phone', value: phone },
+      purpose: 'customer',
+      context: 'change_phone',
+      message: (code) => `KitchenLink: your code to verify this phone number is ${code}. It expires in ${config.auth.otpTtlMinutes} minutes. Never share it.`,
+    });
+    return { pending_phone_number: phone, ...sent };
+  }
+
+  /** Step 2: the code proves the new phone; only then does it replace the old one. */
+  async confirmPhoneChange(customer, body = {}) {
+    const phone = customer.pending_phone_number;
+    if (!phone) throw new ApiError(400, 'PHONE_CODE_NOT_SENT', 'Enter your new phone number and request a code first.');
+    await loginOtpService.verify({ identifier: { type: 'phone', value: phone }, purpose: 'customer', context: 'change_phone', code: body.code });
+    if (await customerRepository.findOtherByPhone(phone, customer._id)) throw phoneTaken();
+    let updated;
+    try {
+      updated = await Customer.findOneAndUpdate(
+        { _id: customer._id, pending_phone_number: phone },
+        { $set: { phone_number: phone }, $unset: { pending_phone_number: 1 } },
+        { returnDocument: 'after' }
+      ).lean();
+    } catch (error) {
+      if (isDuplicateKey(error)) throw phoneTaken();
+      throw error;
+    }
+    if (!updated) throw ApiError.conflict('Your new phone number was changed meanwhile. Request a new code.', 'PHONE_CHANGED');
+    return { customer: serializeCustomer(updated) };
+  }
+
+  /** Step 1 of an email (new, or the current one not verified yet): a code goes to it. */
+  async startEmailVerification(customer, body = {}) {
+    const email = parseEmail(body.email ?? customer.email);
+    if (email === customer.email && customer.email_verified_at) {
+      throw ApiError.badRequest('This email address is already verified.', { email: 'already verified' });
+    }
+    const other = await customerRepository.findByEmail(email);
+    if (other && String(other._id) !== String(customer._id)) throw emailTaken();
+    await customerRepository.update(customer._id, { pending_email: email });
+    const sent = await loginOtpService.send({
+      identifier: { type: 'email', value: email },
+      purpose: 'customer',
+      context: 'verify_email',
+      label: 'email verification',
+    });
+    return { pending_email: email, ...sent };
+  }
+
+  /** Step 2: the code proves the email; it becomes the account's verified email. */
+  async confirmEmailVerification(customer, body = {}) {
+    const email = customer.pending_email;
+    if (!email) throw new ApiError(400, 'EMAIL_CODE_NOT_SENT', 'Enter your email address and request a code first.');
+    await loginOtpService.verify({ identifier: { type: 'email', value: email }, purpose: 'customer', context: 'verify_email', code: body.code });
+    const other = await customerRepository.findByEmail(email);
+    if (other && String(other._id) !== String(customer._id)) throw emailTaken();
+    let updated;
+    try {
+      updated = await Customer.findOneAndUpdate(
+        { _id: customer._id, pending_email: email },
+        { $set: { email, email_verified_at: new Date() }, $unset: { pending_email: 1 } },
+        { returnDocument: 'after' }
+      ).lean();
+    } catch (error) {
+      if (isDuplicateKey(error)) throw emailTaken();
+      throw error;
+    }
+    if (!updated) throw ApiError.conflict('Your email address was changed meanwhile. Request a new code.', 'EMAIL_CHANGED');
+    return { customer: serializeCustomer(updated), verified_email: maskEmail(email) };
   }
 
   /** Records the customer's current GPS position (sent while location tracking is on). */
@@ -301,3 +424,4 @@ class AuthService {
 }
 
 module.exports = new AuthService();
+module.exports.PHONE_TAKEN_MESSAGE = PHONE_TAKEN_MESSAGE;

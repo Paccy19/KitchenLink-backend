@@ -124,13 +124,19 @@ async function sendViaHttp(message) {
  * @param {{to:string, subject:string, text:string, html?:string}} message
  * @returns {Promise<{status:'sent'|'skipped'|'failed', error?:string}>}
  */
-async function sendEmail(message) {
+async function sendEmail({ sensitive = false, ...message }) {
+  // Automated tests only (NODE_ENV=test): captured in memory, never sent.
+  if (testTransport && process.env.NODE_ENV === 'test') return testTransport(message);
+
   const useHttp = Boolean(config.mail.provider && config.mail.apiKey);
   const useSmtp = Boolean(config.mail.host);
 
   if (!useHttp && !useSmtp) {
-    // Emails can hold invitation links: only printed on an explicit development server.
-    if (config.explicitDev) console.log(`[email] to ${message.to}: ${message.subject}\n${message.text}`);
+    // Emails can hold invitation links: only printed on an explicit
+    // development server. Codes (`sensitive`) are never printed anywhere.
+    if (config.explicitDev) {
+      console.log(sensitive ? `[email] to ${message.to}: ${message.subject} (not sent: no email service; contents hidden)` : `[email] to ${message.to}: ${message.subject}\n${message.text}`);
+    }
     return { status: 'skipped' };
   }
 
@@ -181,4 +187,13 @@ async function checkEmailSetup() {
   return { status: 'off', detail: 'no email service' };
 }
 
-module.exports = { sendEmail, escapeHtml, checkEmailSetup };
+/**
+ * Tests only: `fn(message)` receives every email instead of a real service
+ * (ignored unless NODE_ENV=test). Pass null to remove it.
+ */
+let testTransport = null;
+function setTestTransport(fn) {
+  testTransport = process.env.NODE_ENV === 'test' ? fn : null;
+}
+
+module.exports = { sendEmail, escapeHtml, checkEmailSetup, setTestTransport };

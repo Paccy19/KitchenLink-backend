@@ -188,6 +188,18 @@ const start = async () => {
     } catch (error) {
       console.error('Special delivery migration failed:', error.message);
     }
+    try {
+      const identity = await require('./scripts/migrateCustomerIdentity')();
+      if (identity.droppedOldPhoneIndex) console.log('Customers: phone numbers are now unique only among customers who have one (email sign-up)');
+      if (identity.normalized > 0) console.log(`Customers: wrote ${identity.normalized} phone number(s) in the standard +2507… form`);
+      if (identity.duplicates.length || identity.invalid.length) {
+        console.warn(
+          `[customers] ${identity.duplicates.length} phone number(s) shared by several customer accounts and ${identity.invalid.length} invalid number(s) need an admin to sort them out (nothing was changed). List them: npm run report:customer-phones`
+        );
+      }
+    } catch (error) {
+      console.error('Customer phone migration failed:', error.message);
+    }
     // Expires delivery quotations past their validity.
     specialDeliveryService.start();
     // Admin-set dispatch rules (notification radius, re-offer interval...).
