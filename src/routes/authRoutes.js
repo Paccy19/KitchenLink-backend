@@ -39,4 +39,12 @@ router.patch(
 );
 router.put('/auth/me/location', requireAuth, authController.updateLocation);
 
+// A new phone or email only counts once its code is verified (the current
+// one stays until then). Same per-IP limit as sign-in.
+const authService = require('../services/authService');
+router.post('/auth/me/phone/send-code', authLimit, requireAuth, asyncHandler(async (req, res) => res.json(await authService.startPhoneChange(req.customer, req.body || {}))));
+router.post('/auth/me/phone/verify', authLimit, requireAuth, asyncHandler(async (req, res) => res.json(await authService.confirmPhoneChange(req.customer, req.body || {}))));
+router.post('/auth/me/email/send-code', authLimit, requireAuth, asyncHandler(async (req, res) => res.json(await authService.startEmailVerification(req.customer, req.body || {}))));
+router.post('/auth/me/email/verify', authLimit, requireAuth, asyncHandler(async (req, res) => res.json(await authService.confirmEmailVerification(req.customer, req.body || {}))));
+
 module.exports = router;

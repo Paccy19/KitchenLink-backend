@@ -116,8 +116,9 @@ class CustomerErasureService {
     await Promise.all([
       CartItem.deleteMany({ customer_id: id }),
       WishlistItem.deleteMany({ customer_id: id }),
-      OtpCode.deleteMany({ phone_number: customer.phone_number }),
-      OtpGuard.deleteMany({ key: `customer:${customer.phone_number}` }),
+      // Codes and lockouts for their phone and email (both sign-in identifiers).
+      OtpCode.deleteMany({ phone_number: { $in: [customer.phone_number, customer.email, customer.pending_email, customer.pending_phone_number].filter(Boolean) } }),
+      OtpGuard.deleteMany({ key: { $in: [customer.phone_number, customer.email].filter(Boolean).map((value) => `customer:${value}`) } }),
       // Earlier audit entries keep what happened, without the name.
       AdminActionLog.updateMany({ target_type: 'customer', target_id: String(id) }, { $set: { target_label: ERASED_NAME } }),
     ]);
@@ -138,7 +139,7 @@ class CustomerErasureService {
           erased_at: now,
           erased_by: admin?._id || null,
         },
-        $unset: { email: '', last_location: '' },
+        $unset: { email: '', email_verified_at: '', pending_email: '', pending_phone_number: '', last_location: '' },
       }
     );
 

@@ -18,11 +18,11 @@ const cartRepository = require('../repositories/cartRepository');
 const cartService = require('./cartService');
 const vendorRepository = require('../repositories/vendorRepository');
 const deliveryRepository = require('../repositories/deliveryRepository');
-const notificationRepository = require('../repositories/notificationRepository');
 const notificationService = require('./notificationService');
 const settlementService = require('./settlementService');
 const deliveryPricingService = require('./deliveryPricingService');
 const deliveryService = require('./deliveryService');
+const deliveryCodeService = require('./deliveryCodeService');
 const { isKitchenReady } = require('../utils/deliveryReady');
 const orderNotifications = require('./orderNotifications');
 const refundService = require('./refundService');
@@ -90,9 +90,9 @@ const CLOSED_DELIVERY_STATUSES = ['completed', 'cancelled', 'rejected'];
 const SWITCHABLE_STATUSES = ['placed', 'confirmed', 'preparing', 'ready'];
 
 /**
- * Customer-facing view of the delivery leg. The proof-of-delivery code is only
- * revealed while the delivery is in-flight (and not yet verified) — once it is
- * completed/closed the code is withheld.
+ * Customer-facing view of the delivery leg. The proof-of-delivery code is
+ * never in it: only where it was sent, and whether it can be sent again
+ * (while the delivery is in flight, once the food is ready).
  */
 const serializeOrderDelivery = (delivery) => {
   if (!delivery) return null;
@@ -106,10 +106,12 @@ const serializeOrderDelivery = (delivery) => {
     id: String(delivery._id),
     status: delivery.status,
     status_label: config.delivery.statusLabels[delivery.status] || delivery.status,
-    otp_required: Boolean(delivery.otp_code),
-    proof_of_delivery_code: closed ? null : delivery.otp_code || null,
+    otp_required: true,
     otp_verified: Boolean(delivery.otp_verified_at),
-    can_confirm: !closed && Boolean(delivery.otp_code),
+    // Never the code itself: it goes only to the customer's verified email
+    // (or SMS). The order screen says where, and offers to send it again.
+    ...deliveryCodeService.describe(delivery),
+    can_resend_code: !closed,
   };
 };
 
@@ -1001,29 +1003,23 @@ class OrderService {
   }
 
   /**
-   * Backfills a delivery-code notification for deliveries that were created
-   * before the notification channel existed (or that raced it). Guarantees the
-   * customer always has an in-app notification while the delivery is in-flight.
+   * Makes sure a delivery whose food is ready has a code sent to the customer
+   * (deliveries from before codes were emailed, or that raced it).
    */
   async #ensureDeliveryCodeNotification(order, delivery) {
-    if (!delivery?.otp_code || delivery.otp_verified_at || !isKitchenReady(delivery)) return;
+    if (!delivery || delivery.otp_verified_at || !isKitchenReady(delivery)) return;
     if (CLOSED_DELIVERY_STATUSES.includes(delivery.status)) return;
-
-    const existing = await notificationRepository.findByOrderAndCustomer(
-      order.customer_id,
-      order._id
-    );
-    if (existing) return;
-
     try {
-      await notificationService.notifyDeliveryCode(order.customer_id, {
-        orderNumber: order.order_number,
-        orderId: order._id,
-        code: delivery.otp_code,
-      });
+      await deliveryCodeService.issueIfMissing(delivery);
     } catch (error) {
-      console.log(`[order] could not backfill delivery code notification: ${error?.message}`);
+      console.log(`[order] could not issue the delivery code: ${error?.message}`);
     }
+  }
+
+  /** The customer asks for their delivery code again (sent to their verified email). */
+  async resendDeliveryCode(customerId, orderId) {
+    await this.#loadOrder(customerId, orderId);
+    return deliveryCodeService.resend(customerId, orderId);
   }
 
   async getDetail(customerId, orderId) {

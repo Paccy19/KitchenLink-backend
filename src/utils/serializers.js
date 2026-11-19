@@ -568,7 +568,11 @@ function serializeDelivery(delivery, options = {}) {
     delivery_fee_rwf: delivery.delivery_fee_rwf,
     promised_earnings_rwf: delivery.promised_earnings_rwf,
     payment_method: delivery.payment_method || null,
-    otp_required: Boolean(delivery.otp_code),
+    // Every delivery is confirmed with the customer's code; the worker never
+    // sees it, only whether the customer could be sent one.
+    otp_required: true,
+    otp_code_sent: Boolean(delivery.otp_code_hash || delivery.otp_code) && delivery.otp_channel !== 'none',
+    otp_customer_has_no_channel: delivery.otp_channel === 'none',
     // Private proof photos have no public link (admins open them by id).
     proof_photo_url: isPrivateRef(delivery.proof_photo_url) ? null : delivery.proof_photo_url || null,
     has_proof_photo: Boolean(delivery.proof_photo_url),
@@ -661,13 +665,19 @@ function serializeDelivery(delivery, options = {}) {
 }
 
 function serializeNotification(notification) {
+  // Delivery codes are never shown in the app any more: older notifications
+  // that still hold one are shown without it.
+  const legacyCode = notification.type === 'delivery_code' && notification.data?.otp_code;
+  const { otp_code: _hidden, ...data } = notification.data || {};
   return {
     id: String(notification._id),
     type: notification.type || 'general',
     title: notification.title,
-    body: notification.body,
+    body: legacyCode
+      ? 'Your delivery confirmation code was sent to you. Open the order to have it sent again to your verified email.'
+      : notification.body,
     order_id: notification.order_id ? String(notification.order_id) : null,
-    data: notification.data || {},
+    data: notification.type === 'delivery_code' ? data : notification.data || {},
     sms_status: notification.sms_status || 'pending',
     read: Boolean(notification.read_at),
     read_at: notification.read_at ?? null,

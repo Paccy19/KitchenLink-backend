@@ -470,6 +470,8 @@ const config = {
       autoCeilingRwf: numberFromEnvOrZero(process.env.BIG_EVENT_DELIVERY_AUTO_CEILING_RWF, 40000),
       quotationValidityHours: numberFromEnv(process.env.BIG_EVENT_QUOTATION_VALIDITY_HOURS, 48),
     },
+    // How long the customer's delivery confirmation code works.
+    codeValidHours: numberFromEnv(process.env.DELIVERY_CODE_VALID_HOURS, 12),
     // Share of the delivery fee paid to the driver (percent). Drivers keep the
     // entire delivery fee — no platform commission is taken from it.
     driverSharePercent: numberFromEnvOrZero(

@@ -8,17 +8,12 @@ const register = asyncHandler(async (req, res) => {
 });
 
 const sendOtp = asyncHandler(async (req, res) => {
-  const result = await vendorAuthService.sendLoginOtp({
-    phone: req.body?.phone,
-  });
+  const result = await vendorAuthService.sendLoginOtp(req.body || {});
   res.json(result);
 });
 
 const verifyOtp = asyncHandler(async (req, res) => {
-  const result = await vendorAuthService.verifyLoginOtp({
-    phone: req.body?.phone,
-    code: req.body?.code,
-  });
+  const result = await vendorAuthService.verifyLoginOtp(req.body || {});
   res.json(result);
 });
 

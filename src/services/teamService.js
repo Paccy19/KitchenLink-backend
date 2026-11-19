@@ -11,6 +11,8 @@ const access = require('../config/adminAccess');
 const adminAuthService = require('./adminAuthService');
 const adminActionLogService = require('./adminActionLogService');
 const adminOtpService = require('./adminOtpService');
+const customerRepository = require('../repositories/customerRepository');
+const { sameName } = require('../utils/identifier');
 
 // A verified phone must be used to finish joining within this time.
 const PHONE_VERIFICATION_VALID_MINUTES = 30;
@@ -286,6 +288,7 @@ class TeamService {
         'PHONE_ALREADY_REGISTERED'
       );
     }
+    await this.#assertNotOtherCustomers(phone, member.name);
     // Only if the number was not changed meanwhile (another tab asked for a new code).
     const saved = await Admin.updateOne(
       { _id: member._id, status: 'invited', invite_phone_pending: phone },
@@ -326,6 +329,7 @@ class TeamService {
     if (body.confirm_password !== undefined && body.confirm_password !== password) {
       throw ApiError.badRequest('Passwords do not match.', { confirm_password: 'does not match' });
     }
+    await this.#assertNotOtherCustomers(phone, name);
     const passwordHash = await hashPassword(password);
 
     let result;
@@ -360,6 +364,23 @@ class TeamService {
     await this.#auditSelf(member, req, 'team.invite_accepted', { phone: maskPhone(phone) });
     // No session here: the new admin signs in through the normal sign-in.
     return { accepted: true, email: member.email, phone: maskPhone(phone) };
+  }
+
+  /**
+   * A phone that is a customer's may also be its owner's admin phone (one
+   * person, two separate accounts), but not another person's: a different
+   * name is refused, without saying whose it is.
+   */
+  async #assertNotOtherCustomers(phone, name) {
+    if (!name) return;
+    const customer = await customerRepository.findByPhone(phone);
+    if (customer && !sameName(customer.name, name)) {
+      throw new ApiError(
+        409,
+        'PHONE_BELONGS_TO_ANOTHER_CUSTOMER',
+        'This phone number is already associated with another customer account. Please use your own phone number.'
+      );
+    }
   }
 
   /** Audit entries written by the invitee themself (never with codes or passwords). */

@@ -3,7 +3,11 @@ const timestamps = require('./timestamps');
 
 const otpCodeSchema = new mongoose.Schema(
   {
+    // Where the code was sent: a phone (+2507…) or, for email codes
+    // (channel 'email'), the email address. One field so limits, lockouts and
+    // lookups work the same for both.
     phone_number: { type: String, required: true, index: true },
+    channel: { type: String, enum: ['sms', 'email'], default: 'sms' },
     purpose: {
       type: String,
       enum: ['customer', 'vendor', 'driver', 'admin'],
@@ -16,6 +20,9 @@ const otpCodeSchema = new mongoose.Schema(
     code_hash: { type: String, default: null },
     code: { type: String, default: null },
     name: { type: String, trim: true },
+    // Email sign-up only: the optional phone the new customer gave (checked
+    // again when the account is created; saved unverified).
+    registration_phone: { type: String, default: undefined },
     attempts: { type: Number, default: 0 },
     expires_at: { type: Date, required: true },
     consumed_at: { type: Date },

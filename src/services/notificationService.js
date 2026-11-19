@@ -7,18 +7,6 @@ const notificationRepository = require('../repositories/notificationRepository')
 const customerRepository = require('../repositories/customerRepository');
 const driverRepository = require('../repositories/driverRepository');
 
-const buildDeliveryCodeBody = (orderNumber, code, reminder) => {
-  const orderRef = orderNumber ? `order ${orderNumber}` : 'your order';
-  return reminder
-    ? `Your delivery worker is arriving with ${orderRef}. Share this code to confirm delivery: ${code}`
-    : `Keep this code ready for ${orderRef}. Give it to the delivery worker to confirm you received your delivery: ${code}`;
-};
-
-const buildDeliveryCodeSms = (orderNumber, code) => {
-  const orderRef = orderNumber ? ` for order ${orderNumber}` : '';
-  return `KitchenLink delivery confirmation code${orderRef}: ${code}. Share it with the delivery worker at handover, only once your food arrives.`;
-};
-
 class NotificationService {
   /**
    * The delivery "channel": stores an in-app notification the customer reads in
@@ -77,43 +65,37 @@ class NotificationService {
     return serializeNotification({ ...notification, sms_status: smsResult.status });
   }
 
-  async notifyDeliveryCode(customerId, { orderNumber, code, orderId = null, reminder = false }) {
-    if (!customerId || !code) return null;
-
-    const title = reminder ? 'Delivery worker is arriving — delivery code' : 'Delivery confirmation code';
-    const body = buildDeliveryCodeBody(orderNumber, code, reminder);
-    const data = {
-      otp_code: code,
-      order_number: orderNumber || null,
-      link: orderId ? `/track/${orderId}` : '/track',
-    };
-
+  /**
+   * Tells the customer in the app where their delivery confirmation code went.
+   * The code itself is never in a notification (deliveryCodeService sends it
+   * to their verified email, or by SMS).
+   */
+  async notifyDeliveryCodeSent(customerId, { orderNumber, orderId = null, channel, sentTo = '', reminder = false }) {
+    if (!customerId) return null;
+    const ref = orderNumber ? `order ${orderNumber}` : 'your order';
+    const where = channel === 'email' ? `by email to ${sentTo}` : channel === 'sms' ? `by SMS to ${sentTo}` : '';
+    let title;
+    let body;
+    if (channel === 'none') {
+      title = 'Verify your email to get your delivery code';
+      body = `We couldn't send the delivery confirmation code for ${ref}: you have no verified email address. Add and verify your email in your profile, then open the order and tap "Send my delivery code".`;
+    } else if (reminder) {
+      title = 'Delivery worker is on the way';
+      body = `Your delivery worker is on the way with ${ref}. Have the confirmation code we sent ${where} ready, and give it to them only once you have your food.`;
+    } else {
+      title = 'Delivery confirmation code sent';
+      body = `We sent the confirmation code for ${ref} ${where}. Give it to the delivery worker only after you receive your food.`;
+    }
     const notification = await notificationRepository.create({
       customer_id: customerId,
       type: 'delivery_code',
       title,
       body,
       order_id: orderId || null,
-      data,
-      sms_status: 'pending',
+      data: { order_number: orderNumber || null, sent_via: channel, link: orderId ? `/track/${orderId}` : '/track' },
+      sms_status: 'skipped',
     });
-
-    // Mirror the code over SMS. Never let a gateway hiccup break the flow.
-    let smsResult = { status: 'skipped' };
-    try {
-      const customer = await customerRepository.findById(customerId);
-      if (customer?.phone_number) {
-        smsResult = await sendSms(customer.phone_number, buildDeliveryCodeSms(orderNumber, code));
-      }
-      await notificationRepository.setSmsStatus(notification._id, {
-        status: smsResult.status,
-        error: smsResult.error,
-      });
-    } catch {
-      /* SMS bookkeeping is best-effort */
-    }
-
-    return serializeNotification({ ...notification, sms_status: smsResult.status });
+    return serializeNotification(notification);
   }
 
   async list(customerId, query = {}) {

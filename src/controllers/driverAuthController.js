@@ -6,15 +6,12 @@ const register = asyncHandler(async (req, res) => {
 });
 
 const sendOtp = asyncHandler(async (req, res) => {
-  res.json(await driverAuthService.sendLoginOtp({ phone: req.body?.phone }));
+  res.json(await driverAuthService.sendLoginOtp(req.body || {}));
 });
 
 const verifyOtp = asyncHandler(async (req, res) => {
   res.json(
-    await driverAuthService.verifyLoginOtp({
-      phone: req.body?.phone,
-      code: req.body?.code,
-    })
+    await driverAuthService.verifyLoginOtp(req.body || {})
   );
 });
 
