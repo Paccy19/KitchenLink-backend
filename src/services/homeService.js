@@ -26,9 +26,7 @@ class HomeService {
     const locationUsed = Boolean(coords);
     const radiusKm = locationUsed ? config.geo.feedRadiusKm : null;
 
-    const categories = (await categoryRepository.findAll(config.limits.categories)).map(
-      serializeCategory
-    );
+    const { categories } = await this.getCategories();
 
     let vendorRows;
     if (locationUsed) {
@@ -77,8 +75,16 @@ class HomeService {
   }
 
   async getCategories() {
-    const categories = await categoryRepository.findAll(config.limits.categories);
-    return { categories: categories.map(serializeCategory) };
+    const [categories, availableCategoryIds] = await Promise.all([
+      categoryRepository.findAllActive(config.limits.categories),
+      menuItemRepository.findCategoryIdsWithAvailableItems(),
+    ]);
+    const availableIds = new Set(availableCategoryIds);
+    return {
+      categories: categories
+        .filter((category) => availableIds.has(String(category._id)))
+        .map(serializeCategory),
+    };
   }
 
   /** All kitchens in the system; nearby ones first when coordinates are given. */

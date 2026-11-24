@@ -19,6 +19,38 @@ class MenuItemRepository {
     }).lean();
   }
 
+  /** Categories with at least one available item from an active, live vendor. */
+  async findCategoryIdsWithAvailableItems() {
+    const categories = await MenuItem.aggregate([
+      {
+        $match: {
+          category_id: { $ne: null },
+          is_available: true,
+          deleted_at: null,
+        },
+      },
+      {
+        $lookup: {
+          from: 'vendors',
+          localField: 'vendor_id',
+          foreignField: '_id',
+          as: 'vendor',
+        },
+      },
+      { $unwind: '$vendor' },
+      {
+        $match: {
+          'vendor.is_active': true,
+          'vendor.deleted_at': null,
+          ...liveVendorFilter('vendor'),
+        },
+      },
+      { $group: { _id: '$category_id' } },
+    ]);
+
+    return categories.map(({ _id }) => String(_id));
+  }
+
   /** Vendor-scoped lookup (includes unavailable items, excludes deleted). */
   async findByIdForVendor(menuItemId, vendorId) {
     return MenuItem.findOne({
