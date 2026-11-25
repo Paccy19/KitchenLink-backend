@@ -4,7 +4,7 @@ const adminAuthService = require('../services/adminAuthService');
 const login = asyncHandler(async (req, res) => {
   res.json(
     await adminAuthService.login({
-      email: req.body?.email,
+      identifier: req.body?.identifier ?? req.body?.email,
       password: req.body?.password,
     })
   );
