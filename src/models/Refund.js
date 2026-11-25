@@ -15,11 +15,20 @@ const REFUND_STATUSES = ['pending', 'completed', 'failed'];
  *   failed    sending failed (e.g. wrong number); still owed. The customer can
  *             give another number, or an admin retries, which makes it pending
  *
- * One refund per order.
+ * Kinds (one refund of each kind per order):
+ *   order_cancelled          the paid order was cancelled: what was paid,
+ *                            less any refund already given for the order
+ *   delivery_fee_adjustment  support lowered an agreed special delivery fee
+ *                            when resolving a dispute: the part the customer
+ *                            had already paid (the order stays active)
  */
+const REFUND_KINDS = ['order_cancelled', 'delivery_fee_adjustment'];
+
 const refundSchema = new mongoose.Schema(
   {
-    order_id: { type: ObjectId, ref: 'Order', required: true, unique: true },
+    order_id: { type: ObjectId, ref: 'Order', required: true },
+    kind: { type: String, enum: REFUND_KINDS, default: 'order_cancelled' },
+    special_delivery_request_id: { type: ObjectId, ref: 'SpecialDeliveryRequest', default: null },
     order_number: { type: String, default: '' },
     customer_id: { type: ObjectId, ref: 'Customer', required: true, index: true },
     vendor_id: { type: ObjectId, ref: 'Vendor', default: null },
@@ -50,8 +59,13 @@ const refundSchema = new mongoose.Schema(
   { timestamps }
 );
 
+// Replaces the older unique { order_id } index (dropped at start-up by
+// scripts/migrateSpecialDelivery.js). Old refunds have no kind: they are
+// cancellations, and "missing" never clashes with a delivery adjustment.
+refundSchema.index({ order_id: 1, kind: 1 }, { unique: true, name: 'one_refund_per_order_and_kind' });
 refundSchema.index({ status: 1, created_at: -1 });
 refundSchema.index({ customer_id: 1, created_at: -1 });
 
 module.exports = mongoose.model('Refund', refundSchema);
 module.exports.REFUND_STATUSES = REFUND_STATUSES;
+module.exports.REFUND_KINDS = REFUND_KINDS;

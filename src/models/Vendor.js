@@ -80,6 +80,26 @@ const vendorSchema = new mongoose.Schema(
       delivery_details: { type: String, default: '', trim: true },
       updated_at: { type: Date, default: null },
     },
+    // Big-event delivery coverage, set by the kitchen (config/deliveryCoverage.js):
+    // where it is able to deliver big events. It never sets the price —
+    // big-event delivery is priced by the platform.
+    delivery_coverage: {
+      big_event_enabled: { type: Boolean, default: false },
+      areas: [
+        {
+          _id: false,
+          id: { type: String, required: true },
+          kind: { type: String, enum: ['district', 'radius'], required: true },
+          district: { type: String, default: null },
+          label: { type: String, default: '', trim: true },
+          // A radius without a centre is measured from the kitchen.
+          latitude: { type: Number, default: null },
+          longitude: { type: Number, default: null },
+          radius_km: { type: Number, min: 0, default: null },
+        },
+      ],
+      updated_at: { type: Date, default: null },
+    },
     owner_name: { type: String, trim: true },
     description: { type: String, default: '', trim: true },
     // Credentials (Vendor Dashboard login).

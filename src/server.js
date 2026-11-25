@@ -16,6 +16,9 @@ const deliverySettingsService = require('./services/deliverySettingsService');
 const bankSettingsService = require('./services/bankSettingsService');
 const deliveryFeeSettingsService = require('./services/deliveryFeeSettingsService');
 const dispatchSettingsService = require('./services/dispatchSettingsService');
+const bigEventDeliverySettingsService = require('./services/bigEventDeliverySettingsService');
+const specialDeliveryService = require('./services/specialDeliveryService');
+const migrateSpecialDelivery = require('./scripts/migrateSpecialDelivery');
 const privateDocumentsService = require('./services/privateDocumentsService');
 const maskStoredCardNumbers = require('./scripts/maskCardNumbers');
 const normalizeVendorTypes = require('./scripts/normalizeVendorTypes');
@@ -139,9 +142,13 @@ const start = async () => {
     // Categories meant for a vendor type (Breads, Pastries, Cakes, Cookies for
     // Bakery): created when missing, never deleted or changed once there.
     try {
-      const { created, tagged } = await ensureTypeCategories();
+      const { created, tagged, reused } = await ensureTypeCategories();
       if (created.length) console.log(`Added categories: ${created.join(", ")}`);
       if (tagged.length) console.log(`Tagged categories with their vendor type: ${tagged.join(", ")}`);
+      if (reused.length) console.log(`Default categories using an existing equivalent: ${reused.join(", ")}`);
+      // Kitchens with no food category get their type's defaults (others are left as they are).
+      const filled = await require('./services/vendorCategoryService').backfillMissing();
+      if (filled > 0) console.log(`Gave ${filled} kitchen(s) their vendor type's default food categories`);
     } catch (error) {
       console.error("Adding vendor-type categories failed:", error.message);
     }
@@ -171,6 +178,30 @@ const start = async () => {
     await deliverySettingsService.load();
     await bankSettingsService.load();
     await deliveryFeeSettingsService.load();
+    // Big-event delivery pricing (separate from the standard fee).
+    await bigEventDeliverySettingsService.load();
+    try {
+      const { droppedChatIndex, droppedRefundIndex, coverageMigrated } = await migrateSpecialDelivery();
+      if (droppedChatIndex) console.log('Chats: replaced the one-chat-per-pair index (negotiation chats per request)');
+      if (droppedRefundIndex) console.log('Refunds: replaced the one-refund-per-order index (delivery fee adjustments)');
+      if (coverageMigrated > 0) console.log(`Gave ${coverageMigrated} big-event kitchen(s) delivery coverage from their old fee ranges`);
+    } catch (error) {
+      console.error('Special delivery migration failed:', error.message);
+    }
+    try {
+      const identity = await require('./scripts/migrateCustomerIdentity')();
+      if (identity.droppedOldPhoneIndex) console.log('Customers: phone numbers are now unique only among customers who have one (email sign-up)');
+      if (identity.normalized > 0) console.log(`Customers: wrote ${identity.normalized} phone number(s) in the standard +2507… form`);
+      if (identity.duplicates.length || identity.invalid.length) {
+        console.warn(
+          `[customers] ${identity.duplicates.length} phone number(s) shared by several customer accounts and ${identity.invalid.length} invalid number(s) need an admin to sort them out (nothing was changed). List them: npm run report:customer-phones`
+        );
+      }
+    } catch (error) {
+      console.error('Customer phone migration failed:', error.message);
+    }
+    // Expires delivery quotations past their validity.
+    specialDeliveryService.start();
     // Admin-set dispatch rules (notification radius, re-offer interval...).
     await dispatchSettingsService.load();
     // Re-offers open orders to drivers who came into range and runs the

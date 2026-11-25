@@ -22,12 +22,13 @@ const ACTION_CONTEXTS = [
 ];
 const { hashPassword, comparePassword } = require('../utils/password');
 const { parseEmail, parsePassword } = require('../utils/vendorValidators');
+const { parseIdentifier } = require('../utils/identifier');
 const { serializeAdmin } = require('../utils/serializers');
 const adminRepository = require('../repositories/adminRepository');
 
 class AdminAuthService {
-  async login({ email, password }) {
-    const normalizedEmail = parseEmail(email);
+  async login({ identifier, email, password }) {
+    const parsedIdentifier = parseIdentifier(identifier ?? email);
     const rawPassword = typeof password === 'string' ? password : '';
     if (!rawPassword) {
       throw ApiError.badRequest('password is required.', {
@@ -35,12 +36,14 @@ class AdminAuthService {
       });
     }
 
-    // Locked after too many wrong passwords for this email (any email, so the
+    // Locked after too many wrong passwords for this identifier (any identifier, so the
     // lockout never tells whether an admin account exists).
-    await otpGuardService.assertNotLocked(normalizedEmail, 'admin-login');
-    const admin = await adminRepository.findByEmailWithPassword(normalizedEmail);
+    await otpGuardService.assertNotLocked(parsedIdentifier.value, 'admin-login');
+    const admin = parsedIdentifier.type === 'email'
+      ? await adminRepository.findByEmailWithPassword(parseEmail(parsedIdentifier.value))
+      : await adminRepository.findByPhoneWithPassword(parsedIdentifier.value);
     if (!admin) {
-      await otpGuardService.recordFailedAttempt(normalizedEmail, 'admin-login');
+      await otpGuardService.recordFailedAttempt(parsedIdentifier.value, 'admin-login');
       throw ApiError.unauthorized('Invalid email or password.', 'INVALID_CREDENTIALS');
     }
     if (admin.status === 'invited' && admin.is_active !== false) {
@@ -52,10 +55,10 @@ class AdminAuthService {
 
     const ok = await comparePassword(rawPassword, admin.password_hash || '');
     if (!ok) {
-      await otpGuardService.recordFailedAttempt(normalizedEmail, 'admin-login');
+      await otpGuardService.recordFailedAttempt(parsedIdentifier.value, 'admin-login');
       throw ApiError.unauthorized('Invalid email or password.', 'INVALID_CREDENTIALS');
     }
-    await otpGuardService.clearFailures(normalizedEmail, 'admin-login');
+    await otpGuardService.clearFailures(parsedIdentifier.value, 'admin-login');
 
     // Only after the right password, so it never reveals which accounts exist.
     if (admin.is_active === false) {
@@ -67,16 +70,6 @@ class AdminAuthService {
 
     const usesDefaultPassword = await this.#isDefaultPassword(admin.password_hash);
     await this.#flagDefaultPassword(admin, usesDefaultPassword);
-
-    // Second step: a code sent to the admin's verified phone (only when 2FA is on).
-    if (admin.two_factor_enabled && admin.phone) {
-      const sent = await adminOtpService.send(admin.phone, 'login');
-      return {
-        two_factor_required: true,
-        challenge_token: signShortToken({ sub: String(admin._id), role: CHALLENGE_ROLE }),
-        ...sent,
-      };
-    }
 
     await adminRepository.touchLogin(admin._id);
     return this.#issueSession({ ...admin, last_login_at: new Date() }, { usesDefaultPassword });
@@ -100,6 +93,19 @@ class AdminAuthService {
     await adminOtpService.verify(admin.phone, 'login', code);
     const withPassword = await adminRepository.findByEmailWithPassword(admin.email);
     const usesDefaultPassword = await this.#isDefaultPassword(withPassword?.password_hash);
+    await adminRepository.touchLogin(admin._id);
+    return this.#issueSession({ ...admin, last_login_at: new Date() }, { usesDefaultPassword });
+  }
+
+  /**
+   * Signs in an admin who passed both stages of the phone sign-in (SMS code
+   * to their verified phone, then their own email and password — checked by
+   * adminPhoneLoginService). The verified phone already counts as the SMS
+   * step, so no second code is asked. Same session as a password sign-in.
+   */
+  async issuePhoneLoginSession(admin, passwordHash) {
+    const usesDefaultPassword = await this.#isDefaultPassword(passwordHash);
+    await this.#flagDefaultPassword(admin, usesDefaultPassword);
     await adminRepository.touchLogin(admin._id);
     return this.#issueSession({ ...admin, last_login_at: new Date() }, { usesDefaultPassword });
   }

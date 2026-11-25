@@ -1,12 +1,14 @@
 const { Refund } = require('../models');
 
 class RefundRepository {
-  /** Creates the order's refund once; a second call returns the existing one. */
+  /** Creates the order's refund of this kind once; a second call returns the existing one. */
   async createOnce(doc) {
     try {
       return (await Refund.create(doc)).toObject();
     } catch (error) {
-      if (error?.code === 11000) return Refund.findOne({ order_id: doc.order_id }).lean();
+      if (error?.code === 11000) {
+        return Refund.findOne({ order_id: doc.order_id, kind: doc.kind || 'order_cancelled' }).lean();
+      }
       throw error;
     }
   }
@@ -15,12 +17,33 @@ class RefundRepository {
     return Refund.findById(refundId).lean();
   }
 
+  /** The order's latest refund (a cancellation, or a delivery fee adjustment). */
   async findByOrder(orderId) {
-    return Refund.findOne({ order_id: orderId }).lean();
+    return Refund.findOne({ order_id: orderId }).sort({ created_at: -1 }).lean();
   }
 
+  async findByOrderAndKind(orderId, kind) {
+    return Refund.findOne({ order_id: orderId, kind }).lean();
+  }
+
+  async listByOrder(orderId) {
+    return Refund.find({ order_id: orderId }).sort({ created_at: 1 }).lean();
+  }
+
+  /** What this order has already been refunded (sent or still owed), other kinds than `exceptKind`. */
+  async totalForOrder(orderId, { exceptKind = null } = {}) {
+    const match = { order_id: orderId };
+    if (exceptKind) match.kind = { $ne: exceptKind };
+    const [row] = await Refund.aggregate([{ $match: match }, { $group: { _id: null, total: { $sum: '$amount_rwf' } } }]);
+    return row?.total ?? 0;
+  }
+
+  /** The customer's refund for this order still to be sent (else the latest one). */
   async findForCustomer(customerId, orderId) {
-    return Refund.findOne({ order_id: orderId, customer_id: customerId }).lean();
+    const open = await Refund.findOne({ order_id: orderId, customer_id: customerId, status: { $ne: 'completed' } })
+      .sort({ created_at: -1 })
+      .lean();
+    return open || Refund.findOne({ order_id: orderId, customer_id: customerId }).sort({ created_at: -1 }).lean();
   }
 
   async listByCustomer(customerId, { limit = 50 } = {}) {

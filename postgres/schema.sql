@@ -472,7 +472,8 @@ CREATE TABLE otpcodes (
   purpose      TEXT        NOT NULL DEFAULT 'customer'
                CHECK (purpose IN ('customer','vendor','driver','admin')),
   context      TEXT        NOT NULL DEFAULT '',
-  code         TEXT        NOT NULL,
+  code         TEXT,                     -- codes created before hashing only
+  code_hash    TEXT,                     -- HMAC of the code (utils/otpHash.js)
   name         TEXT,
   attempts     INTEGER     NOT NULL DEFAULT 0,
   expires_at   TIMESTAMPTZ NOT NULL,

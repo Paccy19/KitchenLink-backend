@@ -24,10 +24,21 @@ router.get(
   authLimit,
   asyncHandler(async (req, res) => res.json(await teamService.getInvitation(req.params.token)))
 );
+// Joining: verify a phone with an SMS code first, then create the password.
+router.post(
+  '/invitations/:token/phone/send-code',
+  authLimit,
+  asyncHandler(async (req, res) => res.json(await teamService.sendInvitePhoneCode(req.params.token, req.body || {})))
+);
+router.post(
+  '/invitations/:token/phone/verify',
+  authLimit,
+  asyncHandler(async (req, res) => res.json(await teamService.verifyInvitePhone(req.params.token, req.body || {}, req)))
+);
 router.post(
   '/invitations/:token/accept',
   authLimit,
-  asyncHandler(async (req, res) => res.json(await teamService.acceptInvitation(req.params.token, req.body)))
+  asyncHandler(async (req, res) => res.json(await teamService.acceptInvitation(req.params.token, req.body || {}, req)))
 );
 // Second sign-in step when SMS codes are on.
 router.post('/verify-2fa', authLimit, adminAuthController.verifyTwoFactor);

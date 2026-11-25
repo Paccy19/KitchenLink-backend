@@ -94,6 +94,39 @@ function serializePopularDish(dish) {
   };
 }
 
+/**
+ * A dish in the customer "All Dishes" list, with its kitchen's open state and,
+ * when the kitchen is closed, its next opening time (from its weekly hours).
+ */
+function serializeDishListing(dish, { nextOpening = null } = {}) {
+  const vendor = dish.vendor || {};
+  const isOpen = isVendorLive(vendor);
+  return {
+    id: String(dish._id),
+    name: dish.name,
+    description: dish.description || '',
+    price_rwf: dish.price_rwf,
+    image_url: dish.image_url || null,
+    is_available: Boolean(dish.is_available),
+    is_preorder: Boolean(dish.is_preorder),
+    preorder_cutoff: dish.preorder_cutoff || '',
+    has_options: Boolean(dish.has_options),
+    category_id: dish.category_id ? String(dish.category_id) : null,
+    category_name: dish.category?.name ?? null,
+    estimated_prep_time: dish.prep_minutes ?? dish.preparation_time_minutes ?? null,
+    rating: vendor.rating ?? 0,
+    vendor_id: String(dish.vendor_id),
+    vendor: {
+      id: String(vendor._id ?? dish.vendor_id),
+      name: vendor.name ?? null,
+      vendor_type: vendor.vendor_type ?? null,
+      vendor_type_label: vendor.vendor_type ? vendorTypeLabel(vendor.vendor_type) : null,
+      is_open: isOpen,
+      opens_at: isOpen ? null : nextOpening,
+    },
+  };
+}
+
 function serializeSearchDish(dish, { distanceKm } = {}) {
   return {
     id: String(dish._id),
@@ -111,7 +144,7 @@ function serializeSearchDish(dish, { distanceKm } = {}) {
   };
 }
 
-function serializeMenuItem(item) {
+function serializeMenuItem(item, options = []) {
   return {
     id: String(item._id),
     name: item.name,
@@ -121,6 +154,7 @@ function serializeMenuItem(item) {
     is_preorder: Boolean(item.is_preorder),
     preorder_cutoff: item.preorder_cutoff || '',
     image_url: item.image_url || null,
+    options: options.map(serializeMenuItemOption),
   };
 }
 
@@ -387,6 +421,24 @@ function serializeVendorOrder(order, { customer } = {}) {
     vendor_payout_rwf: order.vendor_payout_rwf ?? 0,
     rider_payout_rwf: order.rider_payout_rwf ?? 0,
     settlement_status: order.settlement_status || 'unpaid',
+    // The admin's commission for this order (null = the commission rules).
+    commission_override: order.commission_override
+      ? {
+          percent: order.commission_override.percent,
+          reason: order.commission_override.reason || '',
+          set_at: order.commission_override.set_at,
+        }
+      : null,
+    commission_history: (order.commission_history || []).map((entry) => ({
+      from_percent: entry.from_percent ?? null,
+      to_percent: entry.to_percent ?? null,
+      commission_rwf: entry.commission_rwf ?? null,
+      vendor_payout_rwf: entry.vendor_payout_rwf ?? null,
+      reason: entry.reason || '',
+      at: entry.at,
+    })),
+    // Until the kitchen is paid (or the order refunded).
+    commission_editable: ['unpaid', 'held'].includes(order.settlement_status || 'unpaid'),
     payment_method: order.payment_method,
     payment_status: order.payment_status,
     order_type: order.order_type || 'immediate',
@@ -550,7 +602,11 @@ function serializeDelivery(delivery, options = {}) {
     delivery_fee_rwf: delivery.delivery_fee_rwf,
     promised_earnings_rwf: delivery.promised_earnings_rwf,
     payment_method: delivery.payment_method || null,
-    otp_required: Boolean(delivery.otp_code),
+    // Every delivery is confirmed with the customer's code; the worker never
+    // sees it, only whether the customer could be sent one.
+    otp_required: true,
+    otp_code_sent: Boolean(delivery.otp_code_hash || delivery.otp_code) && delivery.otp_channel !== 'none',
+    otp_customer_has_no_channel: delivery.otp_channel === 'none',
     // Private proof photos have no public link (admins open them by id).
     proof_photo_url: isPrivateRef(delivery.proof_photo_url) ? null : delivery.proof_photo_url || null,
     has_proof_photo: Boolean(delivery.proof_photo_url),
@@ -643,13 +699,19 @@ function serializeDelivery(delivery, options = {}) {
 }
 
 function serializeNotification(notification) {
+  // Delivery codes are never shown in the app any more: older notifications
+  // that still hold one are shown without it.
+  const legacyCode = notification.type === 'delivery_code' && notification.data?.otp_code;
+  const { otp_code: _hidden, ...data } = notification.data || {};
   return {
     id: String(notification._id),
     type: notification.type || 'general',
     title: notification.title,
-    body: notification.body,
+    body: legacyCode
+      ? 'Your delivery confirmation code was sent to you. Open the order to have it sent again to your verified email.'
+      : notification.body,
     order_id: notification.order_id ? String(notification.order_id) : null,
-    data: notification.data || {},
+    data: notification.type === 'delivery_code' ? data : notification.data || {},
     sms_status: notification.sms_status || 'pending',
     read: Boolean(notification.read_at),
     read_at: notification.read_at ?? null,
@@ -879,6 +941,24 @@ function serializeAdminOrder(order) {
     vendor_payout_rwf: order.vendor_payout_rwf ?? 0,
     rider_payout_rwf: order.rider_payout_rwf ?? 0,
     settlement_status: order.settlement_status || 'unpaid',
+    // The admin's commission for this order (null = the commission rules).
+    commission_override: order.commission_override
+      ? {
+          percent: order.commission_override.percent,
+          reason: order.commission_override.reason || '',
+          set_at: order.commission_override.set_at,
+        }
+      : null,
+    commission_history: (order.commission_history || []).map((entry) => ({
+      from_percent: entry.from_percent ?? null,
+      to_percent: entry.to_percent ?? null,
+      commission_rwf: entry.commission_rwf ?? null,
+      vendor_payout_rwf: entry.vendor_payout_rwf ?? null,
+      reason: entry.reason || '',
+      at: entry.at,
+    })),
+    // Until the kitchen is paid (or the order refunded).
+    commission_editable: ['unpaid', 'held'].includes(order.settlement_status || 'unpaid'),
     payment_method: order.payment_method,
     payment_status: order.payment_status,
     order_type: order.order_type || 'immediate',
@@ -1109,6 +1189,7 @@ module.exports = {
   serializeVendorSpecialCard,
   serializeNearbyVendor,
   serializePopularDish,
+  serializeDishListing,
   serializeSearchDish,
   serializeMenuItem,
   serializeVendorStorefront,

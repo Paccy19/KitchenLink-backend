@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { MenuItem } = require('../models');
+const { MenuItem, MenuItemOption } = require('../models');
 const { buildTokenFilter } = require('../utils/search');
 const { liveVendorFilter } = require('../utils/vendorPresence');
 
@@ -17,6 +17,38 @@ class MenuItemRepository {
       is_available: true,
       deleted_at: null,
     }).lean();
+  }
+
+  /** Categories with at least one available item from an active, live vendor. */
+  async findCategoryIdsWithAvailableItems() {
+    const categories = await MenuItem.aggregate([
+      {
+        $match: {
+          category_id: { $ne: null },
+          is_available: true,
+          deleted_at: null,
+        },
+      },
+      {
+        $lookup: {
+          from: 'vendors',
+          localField: 'vendor_id',
+          foreignField: '_id',
+          as: 'vendor',
+        },
+      },
+      { $unwind: '$vendor' },
+      {
+        $match: {
+          'vendor.is_active': true,
+          'vendor.deleted_at': null,
+          ...liveVendorFilter('vendor'),
+        },
+      },
+      { $group: { _id: '$category_id' } },
+    ]);
+
+    return categories.map(({ _id }) => String(_id));
   }
 
   /** Vendor-scoped lookup (includes unavailable items, excludes deleted). */
@@ -53,6 +85,78 @@ class MenuItemRepository {
       { $sort: { orders_count: -1, 'vendor.rating': -1, name: 1 } },
       { $limit: limit },
     ]);
+  }
+
+  /**
+   * Every available dish from active kitchens (open or closed), one page at a
+   * time, for the customer "All Dishes" list. `sort`: recommended (open
+   * kitchens first, then most ordered), price_asc, price_desc, rating
+   * (kitchen rating) or delivery_time (preparation time).
+   */
+  async listForCustomers({ categoryId = null, sort = 'recommended', limit, offset }) {
+    const match = { is_available: true, deleted_at: null };
+    if (categoryId) match.category_id = new mongoose.Types.ObjectId(String(categoryId));
+
+    const sortSpec =
+      {
+        price_asc: { price_rwf: 1, orders_count: -1, _id: 1 },
+        price_desc: { price_rwf: -1, orders_count: -1, _id: 1 },
+        rating: { 'vendor.rating': -1, orders_count: -1, _id: 1 },
+        delivery_time: { prep_minutes: 1, orders_count: -1, _id: 1 },
+      }[sort] || { open_rank: -1, orders_count: -1, 'vendor.rating': -1, name: 1, _id: 1 };
+
+    const [result] = await MenuItem.aggregate([
+      { $match: match },
+      { $lookup: { from: 'vendors', localField: 'vendor_id', foreignField: '_id', as: 'vendor' } },
+      { $unwind: '$vendor' },
+      { $match: { 'vendor.is_active': true, 'vendor.deleted_at': null } },
+      {
+        $addFields: {
+          open_rank: { $cond: [{ $eq: ['$vendor.is_open', false] }, 0, 1] },
+          prep_minutes: {
+            $cond: [
+              { $gt: ['$preparation_time_minutes', 0] },
+              '$preparation_time_minutes',
+              { $ifNull: ['$vendor.estimated_prep_time', 30] },
+            ],
+          },
+        },
+      },
+      {
+        $facet: {
+          items: [
+            { $sort: sortSpec },
+            { $skip: offset },
+            { $limit: limit },
+            { $lookup: { from: 'categories', localField: 'category_id', foreignField: '_id', as: 'category' } },
+            { $unwind: { path: '$category', preserveNullAndEmptyArrays: true } },
+            // Dishes with options open their details instead of a one-tap add.
+            {
+              $lookup: {
+                from: MenuItemOption.collection.name,
+                let: { itemId: '$_id' },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: { $eq: ['$menu_item_id', '$$itemId'] },
+                      deleted_at: null,
+                      is_available: { $ne: false },
+                    },
+                  },
+                  { $limit: 1 },
+                  { $project: { _id: 1 } },
+                ],
+                as: 'option_probe',
+              },
+            },
+            { $addFields: { has_options: { $gt: [{ $size: '$option_probe' }, 0] } } },
+            { $project: { option_probe: 0 } },
+          ],
+          total: [{ $count: 'count' }],
+        },
+      },
+    ]);
+    return { items: result?.items ?? [], total: result?.total?.[0]?.count ?? 0 };
   }
 
   async findByVendor(vendorId) {

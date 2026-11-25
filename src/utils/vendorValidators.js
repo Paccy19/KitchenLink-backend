@@ -351,42 +351,6 @@ function parsePaymentInformation(raw) {
   return info;
 }
 
-/** Food categories as valid MongoDB ids or category names. */
-function parseFoodCategoryTokens(raw) {
-  const value = parseJsonField(raw, 'food_categories');
-  if (value === undefined) {
-    throw badRequest('food_categories is required.', {
-      food_categories: 'expected one or more category ids or names',
-    });
-  }
-
-  let list = value;
-  if (typeof value === 'string') {
-    list = value.split(',').map((token) => token.trim()).filter(Boolean);
-  }
-  if (!Array.isArray(list)) {
-    throw badRequest('food_categories must be an array.', {
-      food_categories: 'expected an array of category ids or names',
-    });
-  }
-
-  const tokens = list
-    .map((entry) => {
-      if (entry && typeof entry === 'object') {
-        return String(entry.id ?? entry.name ?? entry.category_id ?? '').trim();
-      }
-      return String(entry ?? '').trim();
-    })
-    .filter(Boolean);
-
-  if (tokens.length === 0) {
-    throw badRequest('food_categories must not be empty.', {
-      food_categories: 'provide at least one category',
-    });
-  }
-  return tokens;
-}
-
 /** Verification documents supplied as JSON (uploaded files are added separately). */
 function parseVerificationDocuments(raw) {
   const value = parseJsonField(raw, 'verification_documents');
@@ -436,7 +400,6 @@ module.exports = {
   parseOperatingHours,
   parsePaymentInformation,
   bindPayoutToPhone,
-  parseFoodCategoryTokens,
   parseVerificationDocuments,
   MENU_SORTS,
   ORDER_SORTS,

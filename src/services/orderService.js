@@ -19,12 +19,12 @@ const cartRepository = require('../repositories/cartRepository');
 const cartService = require('./cartService');
 const vendorRepository = require('../repositories/vendorRepository');
 const deliveryRepository = require('../repositories/deliveryRepository');
-const notificationRepository = require('../repositories/notificationRepository');
 const notificationService = require('./notificationService');
 const settlementService = require('./settlementService');
 const paypackService = require('./paypackService');
 const deliveryPricingService = require('./deliveryPricingService');
 const deliveryService = require('./deliveryService');
+const deliveryCodeService = require('./deliveryCodeService');
 const { isKitchenReady } = require('../utils/deliveryReady');
 const orderNotifications = require('./orderNotifications');
 const refundService = require('./refundService');
@@ -33,7 +33,8 @@ const refundRepository = require('../repositories/refundRepository');
 const { isVendorLive } = require('../utils/vendorPresence');
 const { usesHandoverCode, isKitchenDelivered } = require('../utils/fulfillment');
 const { serializeOrderEvent } = require('../utils/serializers');
-const routeDistanceService = require('./routeDistanceService');
+const bigEventDeliveryService = require('./bigEventDeliveryService');
+const specialDeliveryService = require('./specialDeliveryService');
 const {
   eventPackageFor,
   serializeEventOffer,
@@ -95,9 +96,9 @@ const CLOSED_DELIVERY_STATUSES = ['completed', 'cancelled', 'rejected'];
 const SWITCHABLE_STATUSES = ['placed', 'confirmed', 'preparing', 'ready'];
 
 /**
- * Customer-facing view of the delivery leg. The proof-of-delivery code is only
- * revealed while the delivery is in-flight (and not yet verified) — once it is
- * completed/closed the code is withheld.
+ * Customer-facing view of the delivery leg. The proof-of-delivery code is
+ * never in it: only where it was sent, and whether it can be sent again
+ * (while the delivery is in flight, once the food is ready).
  */
 const serializeOrderDelivery = (delivery) => {
   if (!delivery) return null;
@@ -111,10 +112,12 @@ const serializeOrderDelivery = (delivery) => {
     id: String(delivery._id),
     status: delivery.status,
     status_label: config.delivery.statusLabels[delivery.status] || delivery.status,
-    otp_required: Boolean(delivery.otp_code),
-    proof_of_delivery_code: closed ? null : delivery.otp_code || null,
+    otp_required: true,
     otp_verified: Boolean(delivery.otp_verified_at),
-    can_confirm: !closed && Boolean(delivery.otp_code),
+    // Never the code itself: it goes only to the customer's verified email
+    // (or SMS). The order screen says where, and offers to send it again.
+    ...deliveryCodeService.describe(delivery),
+    can_resend_code: !closed,
   };
 };
 
@@ -248,7 +251,18 @@ const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
   subtotal_rwf: order.subtotal_rwf,
   delivery_fee_rwf: order.delivery_fee_rwf,
   delivery_distance_km: order.delivery_distance_km ?? null,
-  delivery_distance_m: order.delivery_pricing?.distance_m ?? null,
+  delivery_distance_m: order.delivery_pricing?.distance_m ?? order.big_event_delivery?.distance_m ?? null,
+  // Big events the kitchen delivers: how the delivery fee was set.
+  big_event_delivery: order.big_event_delivery
+    ? {
+        mode: order.big_event_delivery.mode,
+        fee_rwf: order.big_event_delivery.fee_rwf,
+        distance_m: order.big_event_delivery.distance_m ?? null,
+        special_delivery_reference: order.big_event_delivery.special_delivery_reference ?? null,
+        quotation_reference: order.big_event_delivery.quotation_reference ?? null,
+      }
+    : null,
+  special_delivery_request_id: order.special_delivery_request_id ? String(order.special_delivery_request_id) : null,
   total_rwf: order.total_rwf,
   delivery_location: { ...order.delivery_location },
   payment: serializePayment(payment),
@@ -443,6 +457,12 @@ class OrderService {
       await settlementService.onBalancePaid(order, amount, { reference: payment.reference });
     } else {
       await settlementService.onPaymentSuccess(order, { amountRwf: part === 'deposit' ? amount : null });
+      // An agreed special delivery is confirmed once its order is paid.
+      if (order.special_delivery_request_id) {
+        await specialDeliveryService
+          .onOrderPaid(order)
+          .catch((error) => console.error('[special-delivery] could not confirm:', error.message));
+      }
     }
 
     return { paymentStatus: 'paid', payment, amount };
@@ -769,9 +789,13 @@ class OrderService {
   /**
    * Big events: the kitchen, its offer and the price for the customer's
    * choices (guests, delivery or pick-up, and where the event is). Delivery
-   * is priced by the road distance with the kitchen's own fee ranges.
+   * is priced by the platform (bigEventDeliveryService): starting fee + road
+   * meters × rate, inside the kitchen's coverage and up to the automatic
+   * ceiling. Otherwise `delivery.status` is 'negotiation_required' and the
+   * fee comes from an accepted special delivery quotation
+   * (`agreement`, when the caller passes one), never from the client.
    */
-  async #priceEvent(body = {}, { requireLocation = true } = {}) {
+  async #priceEvent(body = {}, { requireLocation = true, agreement = null } = {}) {
     const { guests, pickup, packageId: chosen } = parseEventOrder(body);
     if (!mongoose.isValidObjectId(body.vendor_id)) {
       throw ApiError.badRequest('vendor_id must be a valid id.', { vendor_id: 'expected a valid id' });
@@ -785,30 +809,57 @@ class OrderService {
     const packageId = chosen || packages[0]?.id || null;
 
     let deliveryLocation;
-    let route = null;
+    let delivery = null;
     if (pickup) {
       const note = body.delivery_location?.note;
       deliveryLocation = { note: typeof note === 'string' ? note.trim().slice(0, 300) : '' };
+    } else if (agreement) {
+      // The agreed special delivery: its destination, its locked fee.
+      const { request, quotation } = agreement;
+      const note = typeof body.delivery_location?.note === 'string' ? body.delivery_location.note.trim().slice(0, 300) : '';
+      deliveryLocation = { ...request.delivery_location, note: note || request.delivery_location.note || '' };
+      delivery = {
+        status: 'negotiated',
+        fee_rwf: request.agreed_fee_rwf,
+        distance_m: request.route?.distance_m ?? null,
+        distance_source: request.route?.distance_source ?? null,
+        record: {
+          mode: 'negotiated',
+          fee_rwf: request.agreed_fee_rwf,
+          distance_m: request.route?.distance_m ?? null,
+          distance_source: request.route?.distance_source ?? null,
+          auto_ceiling_rwf: request.auto_ceiling_rwf ?? null,
+          formula_fee_rwf: request.calculated_fee_rwf ?? null,
+          in_coverage: !(request.trigger_reasons || []).includes('outside_coverage'),
+          destination_district: request.destination_district ?? null,
+          special_delivery_reference: request.reference,
+          quotation_id: quotation._id,
+          quotation_reference: quotation.reference,
+          pickup: request.pickup,
+          dropoff: { latitude: request.delivery_location.latitude, longitude: request.delivery_location.longitude },
+          priced_at: new Date(),
+        },
+      };
     } else if (!requireLocation && body.delivery_location?.latitude == null) {
       // Quote before the customer has pinned the event: food price only.
       deliveryLocation = null;
+      delivery = { status: vendor.delivery_coverage?.big_event_enabled ? 'pending_location' : 'unavailable', fee_rwf: null };
     } else {
       // A quote only needs the pin; the order also needs the written address.
       const location = body.delivery_location || {};
       deliveryLocation = parseDeliveryLocation(
         requireLocation ? location : { ...location, address: location.address || 'Event venue' }
       );
-      const [lng, lat] = vendor.location?.coordinates ?? [];
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-        throw ApiError.conflict('This kitchen has no location set, so delivery cannot be priced.', 'VENDOR_LOCATION_MISSING');
-      }
-      route = await routeDistanceService.measure(
-        { latitude: lat, longitude: lng },
-        { latitude: deliveryLocation.latitude, longitude: deliveryLocation.longitude }
-      );
+      delivery = await bigEventDeliveryService.priceFor(vendor, deliveryLocation);
+      if (delivery.status === 'automatic') delivery.record = bigEventDeliveryService.automaticRecord(delivery);
     }
-    const price = priceEventOrder(offer, guests, { packageId, pickup, distanceKm: route?.distance_km ?? null });
-    return { vendor, offer, packages, guests, pickup, deliveryLocation, route, price };
+    const price = priceEventOrder(offer, guests, {
+      packageId,
+      pickup,
+      deliveryFeeRwf: delivery && ['automatic', 'negotiated'].includes(delivery.status) ? delivery.fee_rwf : null,
+    });
+    const route = delivery?.distance_m != null ? { distance_km: delivery.distance_m / 1000, source: delivery.distance_source } : null;
+    return { vendor, offer, packages, guests, pickup, deliveryLocation, route, price, delivery };
   }
 
   /**
@@ -817,8 +868,9 @@ class OrderService {
    * food price only (`delivery_fee_rwf` null).
    */
   async eventQuote(body = {}) {
-    const { vendor, offer, packages, pickup, route, price } = await this.#priceEvent(body, { requireLocation: false });
+    const { vendor, offer, packages, pickup, route, price, delivery } = await this.#priceEvent(body, { requireLocation: false });
     const { package: pkg, ...amounts } = price;
+    const { record: _record, pickup: _pickup, dropoff: _dropoff, ...deliveryInfo } = delivery || {};
     return {
       vendor: {
         id: String(vendor._id),
@@ -840,8 +892,12 @@ class OrderService {
           from_price_per_plate_rwf,
         })),
         delivery_details: offer.delivery_details,
-        delivery_fee_ranges: offer.delivery_fee_ranges,
+        delivers: Boolean(vendor.delivery_coverage?.big_event_enabled),
       },
+      // Big-event delivery: 'automatic' (fee_rwf is the platform's price),
+      // 'negotiation_required' (request a special delivery), 'unavailable'
+      // (pick-up only) or 'pending_location' (pin the event first).
+      delivery: pickup ? null : deliveryInfo,
       quote: {
         ...amounts,
         package_id: pkg.id,
@@ -879,7 +935,32 @@ class OrderService {
       );
     }
 
-    const { vendor, offer, guests, pickup, deliveryLocation, route, price } = await this.#priceEvent(body);
+    // Delivery with an agreed special delivery: the accepted quotation's fee,
+    // claimed for this order so it can't be used twice.
+    const orderId = new mongoose.Types.ObjectId();
+    const usesAgreement = body.fulfillment === 'delivery' && body.special_delivery_request_id;
+    const agreement = usesAgreement
+      ? await specialDeliveryService.claimForOrder(customerId, body.special_delivery_request_id, body.vendor_id, orderId)
+      : null;
+    try {
+      return await this.#placeEventOrder(customerId, body, { eventAt, orderId, agreement, paymentMethod, paymentDetails });
+    } catch (error) {
+      if (agreement) await specialDeliveryService.releaseClaim(agreement.request._id, orderId).catch(() => null);
+      throw error;
+    }
+  }
+
+  async #placeEventOrder(customerId, body, { eventAt, orderId, agreement, paymentMethod, paymentDetails }) {
+    const { vendor, offer, guests, pickup, deliveryLocation, route, price, delivery } = await this.#priceEvent(body, { agreement });
+    if (!pickup && delivery?.status === 'unavailable') {
+      throw new ApiError(409, 'BIG_EVENT_DELIVERY_UNAVAILABLE', delivery.message);
+    }
+    if (!pickup && delivery?.status === 'negotiation_required') {
+      throw new ApiError(409, 'SPECIAL_DELIVERY_REQUIRED', delivery.message, {
+        reasons: delivery.reasons,
+        reason_messages: delivery.reason_messages,
+      });
+    }
     const pkg = price.package;
     const note = typeof body.note === 'string' ? body.note.trim().slice(0, 300) : '';
     if (note) deliveryLocation.note = [deliveryLocation.note, note].filter(Boolean).join(' | ');
@@ -890,9 +971,14 @@ class OrderService {
     const plan = depositPlan(price.total_rwf, eventAt);
     const now = new Date();
     const order = await orderRepository.create({
+      _id: orderId,
       order_number: generateOrderNumber(),
       customer_id: customerId,
       vendor_id: vendor._id,
+      // How the delivery fee was set (platform formula or agreed quotation),
+      // kept apart from the food subtotal and fixed from now on.
+      big_event_delivery: pickup ? null : delivery?.record ?? null,
+      special_delivery_request_id: !pickup && agreement ? agreement.request._id : null,
       items: [
         {
           menu_item_id: null,
@@ -991,29 +1077,23 @@ class OrderService {
   }
 
   /**
-   * Backfills a delivery-code notification for deliveries that were created
-   * before the notification channel existed (or that raced it). Guarantees the
-   * customer always has an in-app notification while the delivery is in-flight.
+   * Makes sure a delivery whose food is ready has a code sent to the customer
+   * (deliveries from before codes were emailed, or that raced it).
    */
   async #ensureDeliveryCodeNotification(order, delivery) {
-    if (!delivery?.otp_code || delivery.otp_verified_at || !isKitchenReady(delivery)) return;
+    if (!delivery || delivery.otp_verified_at || !isKitchenReady(delivery)) return;
     if (CLOSED_DELIVERY_STATUSES.includes(delivery.status)) return;
-
-    const existing = await notificationRepository.findByOrderAndCustomer(
-      order.customer_id,
-      order._id
-    );
-    if (existing) return;
-
     try {
-      await notificationService.notifyDeliveryCode(order.customer_id, {
-        orderNumber: order.order_number,
-        orderId: order._id,
-        code: delivery.otp_code,
-      });
+      await deliveryCodeService.issueIfMissing(delivery);
     } catch (error) {
-      console.log(`[order] could not backfill delivery code notification: ${error?.message}`);
+      console.log(`[order] could not issue the delivery code: ${error?.message}`);
     }
+  }
+
+  /** The customer asks for their delivery code again (sent to their verified email). */
+  async resendDeliveryCode(customerId, orderId) {
+    await this.#loadOrder(customerId, orderId);
+    return deliveryCodeService.resend(customerId, orderId);
   }
 
   async getDetail(customerId, orderId) {

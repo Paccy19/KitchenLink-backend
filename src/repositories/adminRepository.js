@@ -13,7 +13,13 @@ class AdminRepository {
   }
 
   async findByPhone(phone) {
-    return Admin.findOne({ phone }).lean();
+    return Admin.findOne({ phone, deleted_at: null }).lean();
+  }
+
+  async findByPhoneWithPassword(phone) {
+    return Admin.findOne({ phone, deleted_at: null })
+      .select('+password_hash')
+      .lean();
   }
 
   async findByEmail(email) {

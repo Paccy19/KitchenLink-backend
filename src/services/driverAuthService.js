@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { revokeAllSessions } = require('../utils/sessions');
@@ -10,9 +9,8 @@ const { parseVehicleType } = require('../utils/deliveryValidators');
 const { serializeDriverAccount } = require('../utils/serializers');
 const { hashPassword, comparePassword } = require('../utils/password');
 const driverRepository = require('../repositories/driverRepository');
-const otpRepository = require('../repositories/otpRepository');
-const otpGuardService = require('./otpGuardService');
-const { sendCodeSms } = require('../utils/sms');
+const loginOtpService = require('./loginOtpService');
+const { identifierFrom } = require('../utils/identifier');
 const notificationService = require('./notificationService');
 
 class DriverAuthService {
@@ -75,108 +73,43 @@ class DriverAuthService {
     return { driver: serializeDriverAccount(driver), next: 'login' };
   }
 
-  async sendLoginOtp({ phone }) {
-    const normalizedPhone = normalizePhone(phone);
-    const driver = await driverRepository.findByPhone(normalizedPhone);
-    if (!driver) {
-      throw ApiError.notFound(
-        'No delivery worker account is registered with this phone number.',
-        'DRIVER_NOT_FOUND'
-      );
-    }
+  /**
+   * Sign-in code to the delivery worker's phone (SMS) or email address: the
+   * one sign-in field takes either, and the server tells which. Only a
+   * delivery worker account is ever signed in here.
+   */
+  async sendLoginOtp(body = {}) {
+    const identifier = identifierFrom(body, 'phone', 'email');
+    const driver = await this.#findForLogin(identifier);
     this.#assertCanLogin(driver);
-
-    const now = Date.now();
-    const lastSentAt = await otpRepository.lastSentAt(normalizedPhone);
-    if (
-      lastSentAt &&
-      now - new Date(lastSentAt).getTime() <
-        config.auth.otpResendCooldownSeconds * 1000
-    ) {
-      throw ApiError.tooMany(
-        'A code was just sent. Please wait before requesting another.',
-        'OTP_RESEND_TOO_SOON',
-        { retry_after_seconds: config.auth.otpResendCooldownSeconds }
-      );
-    }
-
-    const recentCount = await otpRepository.countRecent(
-      normalizedPhone,
-      new Date(now - config.auth.otpRateWindowMinutes * 60 * 1000)
-    );
-    if (recentCount >= config.auth.otpRateMaxSends) {
-      throw ApiError.tooMany(
-        'Too many code requests. Please try again later.',
-        'OTP_RATE_LIMITED',
-        { retry_after_minutes: config.auth.otpRateWindowMinutes }
-      );
-    }
-
-    // Locked-out phones get no codes; at most a set number a day.
-    await otpGuardService.beforeSend(normalizedPhone, 'driver');
-
-    const code = String(crypto.randomInt(100000, 1000000));
-    const created = await otpRepository.create({
-      phoneNumber: normalizedPhone,
-      purpose: 'driver',
-      code,
-      name: driver.name,
-      expiresAt: new Date(now + config.auth.otpTtlMinutes * 60 * 1000),
-    });
-
-    await sendCodeSms(
-      normalizedPhone,
-      `KitchenLink: your sign-in code is ${code}. It expires in ${config.auth.otpTtlMinutes} minutes. Never share it.`,
-      { onFail: () => otpRepository.remove(created._id) }
-    );
-
-    // Only a server whose .env explicitly says development/test shows the code
-    // (in the console and the response) so the flow can be tried without SMS.
-    const isDev = config.explicitDev;
-    if (isDev) console.log(`[driver otp] ${normalizedPhone} -> ${code}`);
-
+    const sent = await loginOtpService.send({ identifier, purpose: 'driver', name: driver.name });
     return {
-      phone_number: normalizedPhone,
-      expires_in_seconds: config.auth.otpTtlMinutes * 60,
-      ...(isDev ? { dev_otp: code } : {}),
+      identifier: identifier.value,
+      ...(identifier.type === 'phone' ? { phone_number: identifier.value } : { email: identifier.value }),
+      ...sent,
     };
   }
 
-  async verifyLoginOtp({ phone, code }) {
-    const normalizedPhone = normalizePhone(phone);
-    const rawCode = typeof code === 'string' ? code.trim() : String(code ?? '');
-    if (!/^\d{6}$/.test(rawCode)) {
-      throw ApiError.badRequest('code must be a 6-digit number.', {
-        code: 'expected 6 digits',
-      });
-    }
-
-    await otpGuardService.assertNotLocked(normalizedPhone, 'driver');
-    const otp = await otpRepository.findLatestActive(normalizedPhone, 'driver');
-    if (!otp) {
-      const latest = await otpRepository.findLatestAny(normalizedPhone, 'driver');
-      const expired = latest && latest.expires_at < new Date();
-      throw ApiError.badRequest(
-        expired
-          ? 'Code expired. Request a new one.'
-          : 'No active code for this phone number. Request a new one.',
-        expired ? 'OTP_EXPIRED' : 'OTP_NOT_FOUND'
-      );
-    }
-
-    // Counts the try atomically, locks the phone out after too many wrong
-    // codes, and uses the code up when it is right.
-    await otpGuardService.check(otp, rawCode, normalizedPhone, 'driver');
-    const driver = await driverRepository.findByPhone(normalizedPhone);
-    if (!driver) {
-      throw ApiError.notFound(
-        'This delivery worker account is no longer available.',
-        'DRIVER_NOT_FOUND'
-      );
-    }
+  async verifyLoginOtp(body = {}) {
+    const identifier = identifierFrom(body, 'phone', 'email');
+    await loginOtpService.verify({ identifier, purpose: 'driver', code: body.code });
+    const driver = await this.#findForLogin(identifier, 'This delivery worker account is no longer available.');
     this.#assertCanLogin(driver);
     await driverRepository.touchLogin(driver._id);
     return this.#issueSession(driver);
+  }
+
+  async #findForLogin(identifier, missing = null) {
+    const driver = identifier.type === 'phone'
+      ? await driverRepository.findByPhone(identifier.value)
+      : await driverRepository.findByEmail(identifier.value);
+    if (!driver || driver.deleted_at) {
+      throw ApiError.notFound(
+        missing || `No delivery worker account is registered with this ${identifier.type === 'phone' ? 'phone number' : 'email address'}.`,
+        'DRIVER_NOT_FOUND'
+      );
+    }
+    return driver;
   }
 
   me(driver) {

@@ -37,6 +37,9 @@ const asyncHandler = require('../utils/asyncHandler');
 const chatService = require('../services/chatService');
 const bankSettingsService = require('../services/bankSettingsService');
 const deliveryFeeSettingsService = require('../services/deliveryFeeSettingsService');
+const bigEventDeliverySettingsService = require('../services/bigEventDeliverySettingsService');
+const specialDeliveryService = require('../services/specialDeliveryService');
+const adminOrderService = require('../services/adminOrderService');
 
 const router = Router();
 
@@ -192,6 +195,71 @@ router.put(
     res.json(current);
   })
 );
+// Big-event delivery pricing (separate from the standard fee): starting fee,
+// price per meter, minimum and the automatic ceiling above which the price is
+// negotiated between customer and kitchen.
+router.get(
+  '/settings/big-event-delivery',
+  requirePermission('deliveries:read'),
+  asyncHandler(async (req, res) => res.json(bigEventDeliverySettingsService.current()))
+);
+router.put(
+  '/settings/big-event-delivery',
+  requirePermission('deliveries:write'),
+  asyncHandler(async (req, res) => {
+    const { previous, current } = await bigEventDeliverySettingsService.update(req.admin, req.body);
+    const describe = (s) =>
+      `${s.enabled ? 'ON' : 'off'}: ${s.starting_fee_rwf} RWF + ${s.per_meter_rwf} RWF/m, min ${s.min_fee_rwf}, automatic ceiling ${s.auto_ceiling_rwf}, quotations valid ${s.quotation_validity_hours} h`;
+    await adminActionLogService.record(
+      req.admin,
+      {
+        action: 'settings.big_event_delivery',
+        target_type: 'system',
+        target_id: 'big_event_delivery',
+        target_label: 'Big-event delivery pricing',
+        metadata: { before: describe(previous), after: describe(current) },
+      },
+      req
+    );
+    res.json(current);
+  })
+);
+// Special delivery negotiations (big events): every request, quotation and chat.
+router.get(
+  '/special-deliveries',
+  requirePermission('deliveries:read'),
+  asyncHandler(async (req, res) => res.json(await specialDeliveryService.adminList(req.query)))
+);
+router.get(
+  '/special-deliveries/:requestId',
+  requirePermission('deliveries:read'),
+  asyncHandler(async (req, res) => res.json(await specialDeliveryService.adminGet(req.params.requestId)))
+);
+router.post(
+  '/special-deliveries/:requestId/resolve-dispute',
+  requirePermission('deliveries:write'),
+  asyncHandler(async (req, res) => {
+    const { previous, current } = await specialDeliveryService.resolveDispute(req.admin, req.params.requestId, req.body || {}, req);
+    await adminActionLogService.record(
+      req.admin,
+      {
+        action: 'special_delivery.resolve_dispute',
+        target_type: 'special_delivery',
+        target_id: String(previous._id),
+        target_label: previous.reference,
+        metadata: {
+          before: previous.status,
+          after: current.status,
+          resolution: req.body?.resolution || '',
+          fee_reduced_by_rwf: current.dispute?.fee_reduced_by_rwf || 0,
+          refund_rwf: current.dispute?.refund_rwf || 0,
+        },
+      },
+      req
+    );
+    res.json(current);
+  })
+);
 // Orders charged the standard delivery fee: distance, prices used, detours.
 router.get(
   '/settings/delivery-fees/records',
@@ -307,6 +375,14 @@ router.post(
   '/orders/:orderId/cancel',
   requirePermission('orders:write'),
   adminOrderController.cancel
+);
+// This order's commission percentage (instead of the commission rules), until settled.
+router.put(
+  '/orders/:orderId/commission',
+  requirePermission('commissions:write'),
+  asyncHandler(async (req, res) =>
+    res.json(await adminOrderService.setCommission(req.params.orderId, req.body || {}, req.admin, req))
+  )
 );
 // Delivery workers near the kitchen, for support to call before reassigning.
 router.get(

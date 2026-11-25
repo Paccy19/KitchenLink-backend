@@ -1,5 +1,3 @@
-const crypto = require('crypto');
-const mongoose = require('mongoose');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { revokeAllSessions } = require('../utils/sessions');
@@ -15,17 +13,15 @@ const {
   parseOperatingHours,
   parsePaymentInformation,
   bindPayoutToPhone,
-  parseFoodCategoryTokens,
   parseVerificationDocuments,
 } = require('../utils/vendorValidators');
 const { serializeVendorAccount } = require('../utils/serializers');
 const { hashPassword, comparePassword } = require('../utils/password');
 const { privateRef, resolveImageUrl } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
-const categoryRepository = require('../repositories/categoryRepository');
-const otpRepository = require('../repositories/otpRepository');
-const otpGuardService = require('./otpGuardService');
-const { sendCodeSms } = require('../utils/sms');
+const vendorCategoryService = require('./vendorCategoryService');
+const loginOtpService = require('./loginOtpService');
+const { identifierFrom } = require('../utils/identifier');
 const notificationService = require('./notificationService');
 const { assertVendorNotBlocked } = require('../utils/vendorAccess');
 
@@ -62,9 +58,9 @@ class VendorAuthService {
     const operatingHours = parseOperatingHours(body.operating_hours);
     // Mobile-money payouts must use the phone the kitchen registers with.
     const paymentInformation = bindPayoutToPhone(parsePaymentInformation(body.payment_information), phone);
-    const { ids: categoryIds, names: categoryNames } = await this.#resolveCategories(
-      parseFoodCategoryTokens(body.food_categories)
-    );
+    // Food categories come from the vendor type, never from the form: any
+    // food_categories an older client still sends are ignored.
+    const { food_category_ids: categoryIds, food_categories: categoryNames } = await vendorCategoryService.fieldsFor(vendorType);
     const documents = this.#buildDocuments(files, body);
 
     const bannerImageUrl = await resolveImageUrl({
@@ -132,102 +128,43 @@ class VendorAuthService {
     return { vendor: serializeVendorAccount(vendor), next: 'login' };
   }
 
-  async sendLoginOtp({ phone }) {
-    const normalizedPhone = normalizePhone(phone);
-    const vendor = await vendorRepository.findByPhone(normalizedPhone);
-    if (!vendor) {
-      throw ApiError.notFound(
-        'No vendor account is registered with this phone number.',
-        'VENDOR_NOT_FOUND'
-      );
-    }
+  /**
+   * Sign-in code to the kitchen's phone (SMS) or email address: the one
+   * sign-in field takes either, and the server tells which. Only a kitchen
+   * account is ever signed in here (the role comes from the account found).
+   */
+  async sendLoginOtp(body = {}) {
+    const identifier = identifierFrom(body, 'phone', 'email');
+    const vendor = await this.#findForLogin(identifier);
     this.#assertCanLogin(vendor);
-
-    const now = Date.now();
-    const lastSentAt = await otpRepository.lastSentAt(normalizedPhone);
-    if (lastSentAt && now - new Date(lastSentAt).getTime() < config.auth.otpResendCooldownSeconds * 1000) {
-      throw ApiError.tooMany(
-        'A code was just sent. Please wait before requesting another.',
-        'OTP_RESEND_TOO_SOON',
-        { retry_after_seconds: config.auth.otpResendCooldownSeconds }
-      );
-    }
-
-    const recentCount = await otpRepository.countRecent(
-      normalizedPhone,
-      new Date(now - config.auth.otpRateWindowMinutes * 60 * 1000)
-    );
-    if (recentCount >= config.auth.otpRateMaxSends) {
-      throw ApiError.tooMany(
-        'Too many code requests. Please try again later.',
-        'OTP_RATE_LIMITED',
-        { retry_after_minutes: config.auth.otpRateWindowMinutes }
-      );
-    }
-
-    // Locked-out phones get no codes; at most a set number a day.
-    await otpGuardService.beforeSend(normalizedPhone, 'vendor');
-
-    const code = String(crypto.randomInt(100000, 1000000));
-    const created = await otpRepository.create({
-      phoneNumber: normalizedPhone,
-      purpose: 'vendor',
-      code,
-      expiresAt: new Date(now + config.auth.otpTtlMinutes * 60 * 1000),
-    });
-
-    await sendCodeSms(
-      normalizedPhone,
-      `KitchenLink: your sign-in code is ${code}. It expires in ${config.auth.otpTtlMinutes} minutes. Never share it.`,
-      { onFail: () => otpRepository.remove(created._id) }
-    );
-
-    // Only a server whose .env explicitly says development/test shows the code
-    // (in the console and the response) so the flow can be tried without SMS.
-    const isDev = config.explicitDev;
-    if (isDev) console.log(`[vendor otp] ${normalizedPhone} -> ${code}`);
-
+    const sent = await loginOtpService.send({ identifier, purpose: 'vendor' });
     return {
-      phone_number: normalizedPhone,
-      expires_in_seconds: config.auth.otpTtlMinutes * 60,
-      ...(isDev ? { dev_otp: code } : {}),
+      identifier: identifier.value,
+      ...(identifier.type === 'phone' ? { phone_number: identifier.value } : { email: identifier.value }),
+      ...sent,
     };
   }
 
-  async verifyLoginOtp({ phone, code }) {
-    const normalizedPhone = normalizePhone(phone);
-    const rawCode = typeof code === 'string' ? code.trim() : String(code ?? '');
-    if (!/^\d{6}$/.test(rawCode)) {
-      throw ApiError.badRequest('code must be a 6-digit number.', {
-        code: 'expected 6 digits',
-      });
-    }
-
-    await otpGuardService.assertNotLocked(normalizedPhone, 'vendor');
-    const otp = await otpRepository.findLatestActive(normalizedPhone, 'vendor');
-    if (!otp) {
-      const latest = await otpRepository.findLatestAny(normalizedPhone, 'vendor');
-      throw ApiError.badRequest(
-        latest && latest.expires_at < new Date()
-          ? 'Code expired. Request a new one.'
-          : 'No active code for this phone number. Request a new one.',
-        latest && latest.expires_at < new Date() ? 'OTP_EXPIRED' : 'OTP_NOT_FOUND'
-      );
-    }
-
-    // Counts the try atomically, locks the phone out after too many wrong
-    // codes, and uses the code up when it is right.
-    await otpGuardService.check(otp, rawCode, normalizedPhone, 'vendor');
-    const vendor = await vendorRepository.findByPhone(normalizedPhone);
-    if (!vendor) {
-      throw ApiError.notFound(
-        'This vendor account is no longer available.',
-        'VENDOR_NOT_FOUND'
-      );
-    }
+  async verifyLoginOtp(body = {}) {
+    const identifier = identifierFrom(body, 'phone', 'email');
+    await loginOtpService.verify({ identifier, purpose: 'vendor', code: body.code });
+    const vendor = await this.#findForLogin(identifier, 'This vendor account is no longer available.');
     this.#assertCanLogin(vendor);
     await vendorRepository.touchLogin(vendor._id);
     return this.#issueSession(vendor);
+  }
+
+  async #findForLogin(identifier, missing = null) {
+    const vendor = identifier.type === 'phone'
+      ? await vendorRepository.findByPhone(identifier.value)
+      : await vendorRepository.findByEmail(identifier.value);
+    if (!vendor || vendor.deleted_at) {
+      throw ApiError.notFound(
+        missing || `No vendor account is registered with this ${identifier.type === 'phone' ? 'phone number' : 'email address'}.`,
+        'VENDOR_NOT_FOUND'
+      );
+    }
+    return vendor;
   }
 
   me(vendor) {
@@ -271,27 +208,6 @@ class VendorAuthService {
       expires_in: config.auth.jwtExpiresIn,
       vendor: serializeVendorAccount({ ...vendor, last_login_at: new Date() }),
     };
-  }
-
-  async #resolveCategories(tokens) {
-    const ids = [];
-    const names = [];
-    for (const token of tokens) {
-      let category = null;
-      if (mongoose.isValidObjectId(token)) {
-        category = await categoryRepository.findById(token);
-      }
-      if (!category) category = await categoryRepository.findByName(token);
-      if (!category) {
-        throw ApiError.badRequest(
-          'food_categories contains an unknown category.',
-          { food_categories: `"${token}" is not a known category` }
-        );
-      }
-      ids.push(String(category._id));
-      names.push(category.name);
-    }
-    return { ids: [...new Set(ids)], names: [...new Set(names)] };
   }
 
   #buildDocuments(files = {}, body = {}) {

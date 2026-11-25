@@ -110,6 +110,56 @@ const orderSchema = new mongoose.Schema(
       ),
       default: null,
     },
+    // Big-event delivery (the kitchen delivers an event order): how its
+    // delivery fee was set, kept apart from delivery_pricing (the standard
+    // fee). 'automatic' = the platform's big-event formula; 'negotiated' =
+    // the quotation the customer accepted. Fixed when the order is placed.
+    big_event_delivery: {
+      type: new mongoose.Schema(
+        {
+          mode: { type: String, enum: ['automatic', 'negotiated'], required: true },
+          fee_rwf: { type: Number, min: 0, required: true },
+          distance_m: { type: Number, min: 0, default: null },
+          distance_source: { type: String, default: null },
+          starting_fee_rwf: { type: Number, min: 0, default: null },
+          per_meter_rwf: { type: Number, min: 0, default: null },
+          min_fee_rwf: { type: Number, min: 0, default: null },
+          auto_ceiling_rwf: { type: Number, min: 0, default: null },
+          formula_fee_rwf: { type: Number, default: null },
+          in_coverage: { type: Boolean, default: null },
+          destination_district: { type: String, default: null },
+          special_delivery_reference: { type: String, default: null },
+          quotation_id: { type: mongoose.Schema.Types.ObjectId, ref: 'DeliveryQuotation', default: null },
+          quotation_reference: { type: String, default: null },
+          pickup: { latitude: Number, longitude: Number },
+          dropoff: { latitude: Number, longitude: Number },
+          priced_at: { type: Date, required: true },
+          // Support lowered the fee when resolving a dispute: fee_rwf stays
+          // the agreed price; the order's delivery_fee_rwf / total_rwf are
+          // what the customer finally pays. refund_rwf = sent back in cash
+          // (the rest came off the unpaid balance).
+          adjustments: [
+            {
+              _id: false,
+              reduced_by_rwf: { type: Number, min: 0, required: true },
+              refund_rwf: { type: Number, min: 0, default: 0 },
+              refund_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Refund', default: null },
+              reason: { type: String, default: '' },
+              by: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+              at: { type: Date, default: Date.now },
+            },
+          ],
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
+    // The special delivery agreement this order's delivery fee comes from.
+    special_delivery_request_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'SpecialDeliveryRequest',
+      default: null,
+    },
     total_rwf: { type: Number, required: true },
     // 'delivery': a delivery worker brings it. 'pickup': the customer collects
     // it at the kitchen — no delivery fee, no delivery worker, and the vendor
@@ -200,6 +250,33 @@ const orderSchema = new mongoose.Schema(
     // fee: the vendor receives subtotal - commission, the rider receives the
     // full delivery fee.
     commission_percent: { type: Number, min: 0, max: 100, default: 0 },
+    // An admin's commission for this one order, used instead of the
+    // commission rules (vendor > category > type > global). Can only change
+    // before the order is settled (the kitchen paid); every change is kept.
+    commission_override: {
+      type: new mongoose.Schema(
+        {
+          percent: { type: Number, min: 0, max: 100, required: true },
+          reason: { type: String, default: '' },
+          set_by: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+          set_at: { type: Date, required: true },
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
+    commission_history: [
+      {
+        _id: false,
+        from_percent: { type: Number, default: null },
+        to_percent: { type: Number, default: null }, // null = back to the commission rules
+        commission_rwf: { type: Number, default: null },
+        vendor_payout_rwf: { type: Number, default: null },
+        reason: { type: String, default: '' },
+        by: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+        at: { type: Date, default: Date.now },
+      },
+    ],
     commission_rwf: { type: Number, min: 0, default: 0 },
     vendor_payout_rwf: { type: Number, min: 0, default: 0 },
     rider_payout_rwf: { type: Number, min: 0, default: 0 },
@@ -226,5 +303,19 @@ orderSchema.index({ order_type: 1, scheduled_for: 1 });
 orderSchema.index({ settlement_status: 1, rider_payout_settled_at: 1 });
 // Admin: delivery fee records (orders priced with the standard delivery fee).
 orderSchema.index({ 'delivery_pricing.priced_at': -1 }, { sparse: true });
+
+orderSchema.index({ special_delivery_request_id: 1 }, { sparse: true });
+
+// An order with a special delivery agreement keeps the request in step when
+// it is delivered or cancelled, whichever service made the change.
+orderSchema.post('findOneAndUpdate', function syncSpecialDelivery(doc) {
+  if (!doc?.special_delivery_request_id) return;
+  if (!['delivered', 'completed', 'cancelled'].includes(doc.status)) return;
+  // Required here: the service needs the models (no import cycle at load time).
+  // eslint-disable-next-line global-require
+  require('../services/specialDeliveryService')
+    .syncWithOrder(doc)
+    .catch((error) => console.error('[special-delivery] could not follow the order:', error.message));
+});
 
 module.exports = mongoose.model('Order', orderSchema);

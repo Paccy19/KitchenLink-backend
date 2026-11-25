@@ -13,6 +13,7 @@ const adminActionLogService = require('./adminActionLogService');
 const settlementService = require('./settlementService');
 const orderNotifications = require('./orderNotifications');
 const notificationService = require('./notificationService');
+const vendorCategoryService = require('./vendorCategoryService');
 const {
   VENDOR_TYPES,
   parseVendorType,
@@ -225,10 +226,15 @@ class AdminVendorService {
     const nextType =
       decision === 'reject' ? vendor.vendor_type : decision === 'approve' ? requested : parseVendorType(body.vendor_type);
 
-    const updated = await vendorRepository.update(vendorId, {
+    let updated = await vendorRepository.update(vendorId, {
       vendor_type: nextType,
       vendor_type_request: { vendor_type: null, reason: '', requested_at: null },
     });
+    // Food categories follow the type: the new type's defaults replace the old.
+    if (nextType !== vendor.vendor_type) {
+      await vendorCategoryService.reassign(vendorId, nextType);
+      updated = await vendorRepository.findById(vendorId);
+    }
 
     const extra = note ? ` ${note}` : '';
     if (nextType !== vendor.vendor_type || decision) {

@@ -53,6 +53,16 @@ const CATEGORY_VENDOR_TYPES = {
   Cookies: ['bakery'],
 };
 
+// Vendor types' default categories (assigned automatically at registration).
+const { TYPE_CATEGORIES } = require('./ensureTypeCategories');
+const { DEFAULT_CATEGORY_ALIASES } = require('../config/vendorTypes');
+for (const entry of TYPE_CATEGORIES) {
+  const equivalent = (DEFAULT_CATEGORY_ALIASES[entry.name] || []).find((alias) => FOOD_CATEGORIES.includes(alias));
+  if (equivalent || FOOD_CATEGORIES.includes(entry.name)) continue;
+  FOOD_CATEGORIES.push(entry.name);
+  CATEGORY_VENDOR_TYPES[entry.name] = entry.vendor_types;
+}
+
 const DEMO_DRIVERS = [
   { name: 'Eric Uwimana', phone: '0788100001', vehicle_type: 'motorcycle', plate_number: 'RAD 101 A', latitude: -1.9441, longitude: 30.0619 },
   { name: 'Aline Mukamana', phone: '0788100002', vehicle_type: 'motorcycle', plate_number: 'RAD 102 B', latitude: -1.9536, longitude: 30.1135 },

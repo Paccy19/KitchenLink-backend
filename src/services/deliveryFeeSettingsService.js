@@ -1,6 +1,6 @@
 const config = require('../config');
 const { DeliveryFeeSettings } = require('../models');
-const { parseDistanceFeeRanges, rangeForDistance } = require('../utils/distanceFeeRanges');
+const { parseDistanceFeeRanges } = require('../utils/distanceFeeRanges');
 const { parsePerMeterSettings, perMeterFee } = require('../utils/perMeterPricing');
 
 // No delivery fee may ever be below this.
@@ -64,7 +64,8 @@ class DeliveryFeeSettingsService {
   current() {
     return {
       // 'per_meter' | 'ranges' | 'formula': what new orders are priced with.
-      mode: this.perMeter().enabled ? 'per_meter' : this.#ranges.length ? 'ranges' : 'formula',
+      // (Saved distance ranges are kept but no longer price anything.)
+      mode: this.perMeter().enabled ? 'per_meter' : 'formula',
       ranges: this.#ranges,
       per_meter: this.perMeter(),
       per_meter_saved: Boolean(this.#perMeter),
@@ -82,12 +83,6 @@ class DeliveryFeeSettingsService {
   perMeterFeeFor(distanceM) {
     const settings = this.perMeter();
     return settings.enabled ? { ...perMeterFee(distanceM, settings), settings } : null;
-  }
-
-  /** The admin's fee for this distance, or null when no ranges are set. */
-  feeFor(distanceKm) {
-    const range = rangeForDistance(this.#ranges, distanceKm);
-    return range ? Math.max(MIN_FEE_RWF, range.fee_rwf) : null;
   }
 
   /**

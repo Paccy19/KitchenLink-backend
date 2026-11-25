@@ -46,6 +46,13 @@ const adminSchema = new mongoose.Schema(
     invite_expires_at: { type: Date, default: null },
     invited_at: { type: Date, default: null },
     invited_by: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
+    // Phone step of accepting an invitation (kept on the server, never taken
+    // from the browser): the number the code was sent to, then the number the
+    // invitee proved with that code. Saved as `phone` only when the
+    // invitation is accepted; cleared by every new invitation.
+    invite_phone_pending: { type: String, select: false, default: '' },
+    invite_phone_verified: { type: String, select: false, default: '' },
+    invite_phone_verified_at: { type: Date, select: false, default: null },
     accepted_at: { type: Date, default: null },
     deactivated_at: { type: Date, default: null },
     last_login_at: { type: Date },

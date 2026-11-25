@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const parsePagination = require('../utils/pagination');
@@ -21,6 +20,7 @@ const orderRepository = require('../repositories/orderRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const customerRepository = require('../repositories/customerRepository');
 const notificationService = require('./notificationService');
+const deliveryCodeService = require('./deliveryCodeService');
 const settlementService = require('./settlementService');
 const deliveryPricingService = require('./deliveryPricingService');
 const orderNotifications = require('./orderNotifications');
@@ -112,7 +112,7 @@ class DeliveryService {
       payment_method: order.payment_method,
       status: ready ? 'ready_for_pickup' : 'pending',
       ready_at: ready ? new Date() : null,
-      otp_code: String(crypto.randomInt(100000, 1000000)),
+      // The customer's delivery code is issued when the food is ready (deliveryCodeService).
       status_history: [
         ready
           ? {
@@ -143,7 +143,7 @@ class DeliveryService {
     const isDev = config.explicitDev;
     if (isDev) {
       console.log(
-        `[delivery] order ${order.order_number} ${ready ? 'ready' : 'placed'} (otp ${delivery.otp_code}, ${distanceKm}km, ${fee} RWF)`
+        `[delivery] order ${order.order_number} ${ready ? 'ready' : 'placed'} (${distanceKm}km, ${fee} RWF)`
       );
     }
 
@@ -964,6 +964,13 @@ class DeliveryService {
     }
 
     assertTransition(delivery.status, nextStatus);
+    // Delivered only through the customer's code (confirm-delivery).
+    if (nextStatus === 'delivered') {
+      throw ApiError.conflict(
+        "Enter the customer's delivery code to confirm the delivery.",
+        'DELIVERY_CODE_REQUIRED'
+      );
+    }
     if (nextStatus === 'picked_up' && !isKitchenReady(delivery)) {
       throw ApiError.conflict(
         "The kitchen hasn't marked this order ready yet. Wait nearby — you'll be notified the moment it's ready.",
@@ -1050,31 +1057,18 @@ class DeliveryService {
     }
 
     const code = parseOtpCode(body?.otp_code);
-    if (delivery.otp_code) {
-      // Each try is counted atomically, so the customer's code can't be guessed.
-      const maxTries = config.auth.otpMaxAttempts;
-      const claimed = await Delivery.findOneAndUpdate(
-        { _id: id, otp_attempts: { $lt: maxTries } },
-        { $inc: { otp_attempts: 1 } },
-        { returnDocument: 'after' }
-      ).lean();
-      if (!claimed) {
-        throw ApiError.tooMany(
-          'Too many wrong delivery codes for this order. Contact support to complete it.',
-          'DELIVERY_CODE_LOCKED'
-        );
-      }
-      if (code !== delivery.otp_code) {
-        const left = Math.max(maxTries - claimed.otp_attempts, 0);
-        throw new ApiError(
-          400,
-          'OTP_INVALID',
-          left > 0
-            ? `Incorrect delivery code. ${left} attempt${left === 1 ? '' : 's'} left.`
-            : 'Incorrect delivery code. This delivery is now locked; contact support to complete it.',
-          { otp_code: 'incorrect code', attempts_remaining: left }
-        );
-      }
+    // Always required: this delivery's code, which only the customer has
+    // (tries counted atomically, expiry, lock after 5 wrong codes).
+    await deliveryCodeService.check(delivery, code);
+    // Used once: only the first confirmation completes the delivery (two
+    // requests with the right code can't both pay the worker).
+    const used = await Delivery.findOneAndUpdate(
+      { _id: id, driver_id: driver._id, otp_verified_at: null, status: { $in: ['out_for_delivery', 'delivered'] } },
+      { $set: { otp_verified_at: new Date(), otp_code_hash: '', otp_code: '' } },
+      { returnDocument: 'after' }
+    ).lean();
+    if (!used) {
+      throw ApiError.conflict('This delivery is already closed.', 'DELIVERY_ALREADY_CLOSED');
     }
 
     // Taken at the customer's door: kept private (admins open it for disputes).
@@ -1270,16 +1264,12 @@ class DeliveryService {
    * must never roll back the delivery itself.
    */
   async #notifyCustomerDeliveryCode(order, delivery, { reminder = false } = {}) {
-    const customerId = order?.customer_id || delivery?.customer_id;
-    const code = delivery?.otp_code;
-    if (!customerId || !code) return;
+    if (!delivery?._id) return;
     try {
-      await notificationService.notifyDeliveryCode(customerId, {
-        orderNumber: order?.order_number || delivery?.order_number,
-        orderId: order?._id || delivery?._id,
-        code,
-        reminder,
-      });
+      // The food is ready: the customer's code is issued and sent to them
+      // (email/SMS). On the way: a reminder (the code itself isn't resent).
+      if (reminder) await deliveryCodeService.remind(delivery);
+      else await deliveryCodeService.issueIfMissing(delivery);
     } catch (error) {
       console.log(`[delivery] could not notify customer of delivery code: ${error?.message}`);
     }
@@ -1517,10 +1507,8 @@ class DeliveryService {
       ...options,
     });
 
-    // Development convenience: surface the pickup OTP so the flow is testable.
-    if (config.explicitDev && delivery.otp_code) {
-      serialized.dev_otp = delivery.otp_code;
-    }
+    // The customer's delivery code is never sent to the worker, not even on
+    // a development server.
     return serialized;
   }
 }

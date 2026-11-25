@@ -5,6 +5,7 @@ const { Customer } = require('../models');
 const authController = require('../controllers/authController');
 const requireAuth = require('../middleware/requireAuth');
 const upload = require('../middleware/upload');
+const asyncHandler = require('../utils/asyncHandler');
 
 const router = Router();
 
@@ -17,6 +18,8 @@ const authLimit = rateLimit({
 });
 router.post('/auth/send-otp', authLimit, authController.sendOtp);
 router.post('/auth/verify-otp', authLimit, authController.verifyOtp);
+router.post('/auth/login/send-otp', authLimit, authController.sendUnifiedLoginOtp);
+router.post('/auth/login/verify-otp', authLimit, authController.verifyUnifiedLoginOtp);
 router.get('/auth/me', requireAuth, authController.me);
 // Sign out: this device, or every device (the token stops working at once).
 const customerSessions = sessionHandlers(Customer, 'customer');
@@ -29,5 +32,13 @@ router.patch(
   authController.updateProfile
 );
 router.put('/auth/me/location', requireAuth, authController.updateLocation);
+
+// A new phone or email only counts once its code is verified (the current
+// one stays until then). Same per-IP limit as sign-in.
+const authService = require('../services/authService');
+router.post('/auth/me/phone/send-code', authLimit, requireAuth, asyncHandler(async (req, res) => res.json(await authService.startPhoneChange(req.customer, req.body || {}))));
+router.post('/auth/me/phone/verify', authLimit, requireAuth, asyncHandler(async (req, res) => res.json(await authService.confirmPhoneChange(req.customer, req.body || {}))));
+router.post('/auth/me/email/send-code', authLimit, requireAuth, asyncHandler(async (req, res) => res.json(await authService.startEmailVerification(req.customer, req.body || {}))));
+router.post('/auth/me/email/verify', authLimit, requireAuth, asyncHandler(async (req, res) => res.json(await authService.confirmEmailVerification(req.customer, req.body || {}))));
 
 module.exports = router;

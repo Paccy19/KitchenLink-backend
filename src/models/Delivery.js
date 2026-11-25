@@ -68,8 +68,18 @@ const deliverySchema = new mongoose.Schema(
       default: 'pending',
     },
 
-    // Proof-of-delivery OTP shared with the customer at dispatch time.
+    // Proof-of-delivery code (deliveryCodeService): only its hash, bound to
+    // this delivery, is stored; the code goes only to the customer. `otp_code`
+    // is the plaintext code of deliveries created before that (still accepted).
+    otp_code_hash: { type: String, default: '' },
     otp_code: { type: String, default: '' },
+    otp_issued_at: { type: Date, default: null },
+    otp_expires_at: { type: Date, default: null },
+    // How it reached the customer: 'email', 'sms', or 'none' (no verified
+    // email and no SMS: support must step in), with the masked address.
+    otp_channel: { type: String, default: '' },
+    otp_sent_to: { type: String, default: '' },
+    otp_send_count: { type: Number, default: 0 },
     // Wrong delivery codes entered by the worker; at the limit the delivery
     // locks and only support can complete it (no guessing the customer's code).
     otp_attempts: { type: Number, default: 0 },

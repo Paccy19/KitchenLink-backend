@@ -7,7 +7,11 @@ const {
   parseDateRange,
   parseOptionalText,
   parseObjectId,
+  parsePercentage,
 } = require('../utils/adminValidators');
+const { Order } = require('../models');
+const commissionService = require('./commissionService');
+const notificationService = require('./notificationService');
 const { serializeAdminOrder, serializeAdminPayment, serializeDelivery } = require('../utils/serializers');
 const orderRepository = require('../repositories/orderRepository');
 const paymentRepository = require('../repositories/paymentRepository');
@@ -125,6 +129,110 @@ class AdminOrderService {
 
     const updated = await orderRepository.findDetailedById(orderId);
     return { order: serializeAdminOrder(updated) };
+  }
+
+  /**
+   * The admin sets the platform commission for this one order (instead of the
+   * commission rules), or `percent: null` to go back to the rules. Allowed
+   * until the order is settled: before payment it is used when the customer
+   * pays; while the money is held the commission and the kitchen's payout are
+   * recalculated now. Once the kitchen has been paid (settled) or the order
+   * refunded it can't change. A reason is required and every change is kept
+   * on the order and in the audit log.
+   */
+  async setCommission(orderId, body = {}, admin, req) {
+    parseObjectId(orderId, 'order_id');
+    const clearing = body.percent === null || body.percent === '';
+    const percent = clearing ? null : parsePercentage(body.percent, 'percent', { required: true });
+    const reason = parseOptionalText(body.reason, { field: 'reason', max: 300 }) || '';
+    if (!reason) {
+      throw ApiError.badRequest('Say why this order gets a different commission.', { reason: 'required' });
+    }
+
+    const order = await orderRepository.findById(orderId);
+    if (!order) throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
+    const state = order.settlement_status || 'unpaid';
+    if (!['unpaid', 'held'].includes(state)) {
+      throw ApiError.conflict(
+        state === 'settled'
+          ? 'The kitchen has already been paid for this order, so its commission can no longer change.'
+          : 'This order was refunded, so it has no commission to change.',
+        'COMMISSION_LOCKED'
+      );
+    }
+
+    const previousPercent =
+      order.commission_override?.percent ??
+      (state === 'held' ? order.commission_percent : await commissionService.resolvePercent({ vendorId: order.vendor_id }));
+    const effective = percent ?? (await commissionService.resolvePercent({ vendorId: order.vendor_id }));
+    const split = settlementService.splitForPercent(order, effective);
+    const now = new Date();
+
+    const set = {
+      commission_override: percent == null ? null : { percent, reason, set_by: admin?._id ?? null, set_at: now },
+      // Held money: the new split applies now. Unpaid: it is applied at payment.
+      ...(state === 'held'
+        ? { commission_percent: split.percent, commission_rwf: split.commissionRwf, vendor_payout_rwf: split.vendorPayout }
+        : {}),
+    };
+    const updated = await Order.findOneAndUpdate(
+      // Only if the money didn't move meanwhile (payment or settlement).
+      { _id: order._id, settlement_status: order.settlement_status ?? 'unpaid' },
+      {
+        $set: set,
+        $push: {
+          commission_history: {
+            from_percent: previousPercent,
+            to_percent: percent,
+            commission_rwf: split.commissionRwf,
+            vendor_payout_rwf: split.vendorPayout,
+            reason,
+            by: admin?._id ?? null,
+            at: now,
+          },
+          status_history: {
+            status: order.status,
+            at: now,
+            note: `Commission set to ${effective}%${percent == null ? ' (commission rules)' : ''} by support: ${reason}`,
+          },
+        },
+      },
+      { returnDocument: 'after' }
+    ).lean();
+    if (!updated) {
+      throw ApiError.conflict('The order was just paid or settled. Refresh and try again.', 'ORDER_CHANGED');
+    }
+
+    await adminActionLogService.record(
+      admin,
+      {
+        action: 'order.commission',
+        target_type: 'order',
+        target_id: orderId,
+        target_label: order.order_number,
+        metadata: {
+          before: { percent: previousPercent, commission_rwf: order.commission_rwf ?? null, vendor_payout_rwf: order.vendor_payout_rwf ?? null },
+          after: { percent: effective, override: percent != null, commission_rwf: split.commissionRwf, vendor_payout_rwf: split.vendorPayout },
+          reason,
+        },
+      },
+      req
+    );
+    // The kitchen sees why its payout for this order changed.
+    notificationService
+      .notifyVendor(order.vendor_id, {
+        type: 'order_update',
+        title: `Commission for ${order.order_number}: ${effective}%`,
+        body: `KitchenLink set the commission for this order to ${effective}%${
+          state === 'held' ? `; you will receive ${split.vendorPayout.toLocaleString('en-US')} RWF` : ''
+        }. ${reason}`.slice(0, 200),
+        orderId: order._id,
+        link: `/vendor-dashboard/orders?order=${order._id}`,
+      })
+      .catch(() => null);
+
+    const detail = await orderRepository.findDetailedById(orderId);
+    return { order: serializeAdminOrder(detail), commission: { percent: effective, override: percent != null, ...split } };
   }
 
   async cancel(orderId, { reason }, admin, req) {

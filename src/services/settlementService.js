@@ -40,8 +40,11 @@ class SettlementService {
     // before that it is the schema default (0) and must not be trusted.
     const snapshotPercent =
       order.settlement_status !== 'unpaid' ? order.commission_percent : null;
+    // An admin's commission for this order beats the snapshot and the rules.
+    const adminPercent = order.commission_override?.percent ?? null;
     const percent =
       percentOverride ??
+      adminPercent ??
       snapshotPercent ??
       (await commissionService.resolvePercent({ vendorId: order.vendor_id }));
 
@@ -67,6 +70,22 @@ class SettlementService {
       riderPayout: Math.max(0, riderPayout),
       kitchenTravelFee,
       total: roundRwf(order.total_rwf) || subtotal + deliveryFee,
+    };
+  }
+
+  /**
+   * The order's commission and kitchen payout at `percent` (same rule as at
+   * payment: commission on the food subtotal only; a kitchen that delivers
+   * itself keeps the delivery fee). The rider's share never changes.
+   */
+  splitForPercent(order, percent) {
+    const subtotal = roundRwf(order.subtotal_rwf);
+    const kitchenTravelFee = isKitchenDelivered(order) ? roundRwf(order.delivery_fee_rwf) : 0;
+    const commissionRwf = roundRwf((subtotal * percent) / 100);
+    return {
+      percent,
+      commissionRwf,
+      vendorPayout: Math.max(0, subtotal - commissionRwf + kitchenTravelFee),
     };
   }
 
@@ -175,6 +194,14 @@ class SettlementService {
     const order = await orderRepository.findById(orderId);
     if (!order) return null;
     if (order.settlement_status !== 'held') return order;
+    // A special delivery in dispute: the money stays held until support
+    // resolves it (resolveDispute releases it, maybe with part refunded).
+    if (order.special_delivery_request_id) {
+      // eslint-disable-next-line global-require
+      const { SpecialDeliveryRequest } = require('../models');
+      const disputed = await SpecialDeliveryRequest.exists({ _id: order.special_delivery_request_id, status: 'disputed' });
+      if (disputed) return order;
+    }
 
     const split = await this.#computeSplit(order, null);
     const claimed = await orderRepository.claimSettlement(order._id, 'held', 'settled', {

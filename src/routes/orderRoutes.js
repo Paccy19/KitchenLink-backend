@@ -33,6 +33,12 @@ router.get(
   })
 );
 router.post('/:order_id/cancel', requireAuth, orderController.cancelOrder);
+// The customer's delivery code, sent again to their verified email (never returned here).
+router.post(
+  '/:order_id/delivery-code/resend',
+  requireAuth,
+  asyncHandler(async (req, res) => res.json(await orderService.resendDeliveryCode(req.customer._id, req.params.order_id)))
+);
 router.post('/:order_id/pay', requireAuth, orderController.payOrder);
 router.post('/:order_id/payment/check', requireAuth, orderController.checkPayment);
 // Big events: pay the second half (due a day before the event).

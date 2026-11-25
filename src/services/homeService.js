@@ -11,7 +11,11 @@ const {
   serializeVendorCard,
   serializeNearbyVendor,
   serializePopularDish,
+  serializeDishListing,
 } = require('../utils/serializers');
+const { nextOpening } = require('../utils/vendorHours');
+
+const DISH_SORTS = ['recommended', 'price_asc', 'price_desc', 'rating', 'delivery_time'];
 
 const assertCategoryId = (categoryId) => {
   if (!mongoose.isValidObjectId(categoryId)) {
@@ -26,9 +30,7 @@ class HomeService {
     const locationUsed = Boolean(coords);
     const radiusKm = locationUsed ? config.geo.feedRadiusKm : null;
 
-    const categories = (await categoryRepository.findAll(config.limits.categories)).map(
-      serializeCategory
-    );
+    const { categories } = await this.getCategories();
 
     let vendorRows;
     if (locationUsed) {
@@ -76,9 +78,51 @@ class HomeService {
     };
   }
 
+  /**
+   * Every available dish from every active kitchen, paginated, for the
+   * homepage "All Dishes" grid. `?category=` (or category_id) filters,
+   * `?sort=` orders (see DISH_SORTS).
+   */
+  async getDishes({ query = {} } = {}) {
+    const { limit, page, offset } = parsePagination(query, {
+      defaultLimit: config.limits.dishesDefault,
+      maxLimit: config.limits.dishesMax,
+    });
+    const sort = DISH_SORTS.includes(query.sort) ? query.sort : 'recommended';
+    const categoryId = query.category || query.category_id || null;
+    if (categoryId) assertCategoryId(categoryId);
+
+    const { items, total } = await menuItemRepository.listForCustomers({ categoryId, sort, limit, offset });
+    const now = new Date();
+    const offsetHours = config.vendor.timezoneOffsetHours;
+    return {
+      dishes: items.map((dish) =>
+        serializeDishListing(dish, {
+          nextOpening: nextOpening(dish.vendor?.operating_hours, { now, offsetHours }),
+        })
+      ),
+      meta: {
+        page,
+        limit,
+        total,
+        has_more: offset + items.length < total,
+        sort,
+        category_id: categoryId,
+      },
+    };
+  }
+
   async getCategories() {
-    const categories = await categoryRepository.findAll(config.limits.categories);
-    return { categories: categories.map(serializeCategory) };
+    const [categories, availableCategoryIds] = await Promise.all([
+      categoryRepository.findAllActive(config.limits.categories),
+      menuItemRepository.findCategoryIdsWithAvailableItems(),
+    ]);
+    const availableIds = new Set(availableCategoryIds);
+    return {
+      categories: categories
+        .filter((category) => availableIds.has(String(category._id)))
+        .map(serializeCategory),
+    };
   }
 
   /** All kitchens in the system; nearby ones first when coordinates are given. */
