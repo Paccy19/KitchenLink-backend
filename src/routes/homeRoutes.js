@@ -8,6 +8,7 @@ router.get('/home/categories', homeController.categories);
 router.get('/home/vendors/nearby', homeController.nearbyVendors);
 router.get('/home/vendors/map', homeController.mapVendors);
 router.get('/home/vendors', homeController.allVendors);
+router.get('/home/dishes', homeController.dishes);
 router.get('/home/search', homeController.search);
 
 module.exports = router;
