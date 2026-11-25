@@ -3,6 +3,7 @@ const { identifierFrom } = require('../utils/identifier');
 const customerRepository = require('../repositories/customerRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const driverRepository = require('../repositories/driverRepository');
+const adminRepository = require('../repositories/adminRepository');
 const authService = require('./authService');
 const vendorAuthService = require('./vendorAuthService');
 const driverAuthService = require('./driverAuthService');
@@ -27,6 +28,12 @@ class UnifiedLoginService {
       vendor && !vendor.deleted_at && { role: 'vendor', account: vendor },
       driver && !driver.deleted_at && { role: 'driver', account: driver },
     ].filter(Boolean);
+  }
+
+  async #adminAccount(identifier) {
+    return identifier.type === 'phone'
+      ? adminRepository.findByPhone(identifier.value)
+      : adminRepository.findByEmail(identifier.value);
   }
 
   async #resolve(identifier, requestedRole) {
@@ -55,6 +62,15 @@ class UnifiedLoginService {
 
   async sendOtp(body = {}) {
     const identifier = identifierFrom(body, 'phone', 'email');
+    if (await this.#adminAccount(identifier)) {
+      return {
+        role: 'admin',
+        requires_password: true,
+        identifier: identifier.value,
+        identifier_type: identifier.type,
+      };
+    }
+
     const { accounts, roles, role } = await this.#resolve(identifier, body.role);
     if (!role) {
       return {
@@ -77,6 +93,13 @@ class UnifiedLoginService {
 
   async verifyOtp(body = {}) {
     const identifier = identifierFrom(body, 'phone', 'email');
+    if (await this.#adminAccount(identifier)) {
+      throw new ApiError(
+        400,
+        'PASSWORD_REQUIRED',
+        'Administrator accounts sign in with their password.',
+      );
+    }
     const role = String(body.role || '');
     if (!ROLE_ORDER.includes(role)) {
       throw ApiError.badRequest('Choose the account type you want to sign in to.', { role: 'required' });

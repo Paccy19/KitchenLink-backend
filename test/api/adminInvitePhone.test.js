@@ -10,7 +10,6 @@ const h = require('../helpers/testServer');
 let models;
 let teamService;
 let authService;
-let adminPhoneLoginService;
 let hashPassword;
 let comparePassword;
 let normalizePhone;
@@ -54,7 +53,6 @@ before(async () => {
   models = require('../../src/models');
   teamService = require('../../src/services/teamService');
   authService = require('../../src/services/authService');
-  adminPhoneLoginService = require('../../src/services/adminPhoneLoginService');
   ({ hashPassword, comparePassword } = require('../../src/utils/password'));
   ({ normalizePhone } = require('../../src/utils/validators'));
   ({ TEAM_ROLES } = require('../../src/config/adminAccess'));
@@ -69,7 +67,7 @@ before(async () => {
 });
 after(() => h.stop());
 
-test('full journey: phone, code, password, then the account is active and can use the hidden admin sign-in', async () => {
+test('full invite journey activates the account and normal admin sign-in requires only its password', async () => {
   const { member, token } = await invite('Aline Uwase');
   const path = `/admin/auth/invitations/${token}`;
   const phone = freshPhone();
@@ -133,15 +131,18 @@ test('full journey: phone, code, password, then the account is active and can us
   const logText = JSON.stringify(await models.AdminActionLog.find({ target_id: String(member.id) }).lean());
   assert.ok(!logText.includes(PASSWORD) && !logText.includes(sent.body.dev_otp));
 
-  // The new admin can now use the hidden sign-in: customer code, then email + password.
-  // (Customer codes keep a 60 s gap after any code to the phone; a real person
-  // takes longer than that to create a password.)
-  await models.OtpCode.collection.updateMany({ phone_number: normalizePhone(phone) }, { $set: { created_at: new Date(Date.now() - 5 * 60 * 1000) } });
-  const code = await authService.sendOtp({ phone_number: phone, name: 'Aline' });
-  const stage1 = await authService.verifyOtp({ phone_number: phone, code: code.dev_otp, name: 'Aline' });
-  assert.equal(stage1.admin_verification_required, true);
-  const session = await adminPhoneLoginService.complete({ challenge_token: stage1.challenge_token, email: saved.email, password: PASSWORD });
-  assert.ok(session.token);
+  // Invitation phone verification is separate from normal sign-in. Once
+  // active, this admin signs in with the password alone, even with 2FA enabled.
+  await assert.rejects(
+    authService.sendOtp({ phone_number: phone, name: 'Aline' }),
+    (error) => error.code === 'PASSWORD_REQUIRED'
+  );
+  const session = await h.api('POST', '/admin/auth/login', {
+    body: { identifier: saved.email, password: PASSWORD },
+  });
+  assert.equal(session.status, 200, JSON.stringify(session.body));
+  assert.ok(session.body.token);
+  assert.equal(session.body.two_factor_required, undefined);
 });
 
 test('a phone the browser sends is never trusted: only the number the code went to can be verified', async () => {

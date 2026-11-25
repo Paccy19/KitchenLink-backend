@@ -6,7 +6,6 @@ const requireAdminAuth = require('../middleware/requireAdminAuth');
 const adminAuthController = require('../controllers/adminAuthController');
 const asyncHandler = require('../utils/asyncHandler');
 const teamService = require('../services/teamService');
-const adminPhoneLoginService = require('../services/adminPhoneLoginService');
 
 const router = Router();
 
@@ -43,13 +42,6 @@ router.post(
 );
 // Second sign-in step when SMS codes are on.
 router.post('/verify-2fa', authLimit, adminAuthController.verifyTwoFactor);
-// Stage 2 of the sign-in through the customer phone login: the admin's own
-// email + password, with the challenge the verified phone produced.
-router.post(
-  '/phone-login',
-  authLimit,
-  asyncHandler(async (req, res) => res.json(await adminPhoneLoginService.complete(req.body || {}, req)))
-);
 router.get('/me', requireAdminAuth, adminAuthController.me);
 // Sign out: this device, or every device (the token stops working at once).
 const adminSessions = sessionHandlers(Admin, 'admin');

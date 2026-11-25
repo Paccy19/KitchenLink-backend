@@ -9,8 +9,8 @@ const { Customer } = require('../models');
 const customerRepository = require('../repositories/customerRepository');
 const vendorRepository = require('../repositories/vendorRepository');
 const driverRepository = require('../repositories/driverRepository');
+const adminRepository = require('../repositories/adminRepository');
 const loginOtpService = require('./loginOtpService');
-const adminPhoneLoginService = require('./adminPhoneLoginService');
 
 const serializeCustomer = (customer) => ({
   id: String(customer._id),
@@ -115,6 +115,13 @@ class AuthService {
 
   async #sendPhoneCode(identifier, name) {
     const phone = identifier.value;
+    if (await adminRepository.findByPhone(phone)) {
+      throw new ApiError(
+        400,
+        'PASSWORD_REQUIRED',
+        'Administrator accounts sign in with their password on the unified sign-in page.'
+      );
+    }
     // Checked before any code is sent: a wrong name gets no SMS.
     const registeredName = await assertLinkedName(phone, name);
     const existing = await customerRepository.findByPhone(phone);
@@ -127,6 +134,13 @@ class AuthService {
 
   async #sendEmailCode(identifier, body) {
     const email = identifier.value;
+    if (await adminRepository.findByEmail(email)) {
+      throw new ApiError(
+        400,
+        'PASSWORD_REQUIRED',
+        'Administrator accounts sign in with their password on the unified sign-in page.'
+      );
+    }
     const existing = await customerRepository.findByEmail(email);
     if (existing) {
       if (!existing.email_verified_at) throw emailNotVerified();
@@ -171,6 +185,16 @@ class AuthService {
 
   async verifyOtp(body = {}) {
     const identifier = identifierFrom(body, 'phone_number', 'email');
+    const admin = identifier.type === 'phone'
+      ? await adminRepository.findByPhone(identifier.value)
+      : await adminRepository.findByEmail(identifier.value);
+    if (admin) {
+      throw new ApiError(
+        400,
+        'PASSWORD_REQUIRED',
+        'Administrator accounts sign in with their password on the unified sign-in page.'
+      );
+    }
     if (identifier.type === 'email') {
       const otp = await loginOtpService.verify({ identifier, purpose: 'customer', code: body.code });
       return this.#emailSession(identifier.value, otp, body.name);
@@ -180,14 +204,6 @@ class AuthService {
     // Before the code is used up: a different person's name is refused.
     assertSameCustomer(await customerRepository.findByPhone(phone), body.name);
     const otp = await loginOtpService.verify({ identifier, purpose: 'customer', code: body.code });
-
-    // The verified phone is an active admin's: no session yet, only a
-    // short-lived challenge for the admin email + password step (or to
-    // continue as a customer). Known only now, after the code was verified.
-    const challenge = await adminPhoneLoginService.challengeFor(phone, { name: body.name ?? otp.name ?? '' });
-    if (challenge) {
-      return { admin_verification_required: true, ...challenge };
-    }
 
     return this.customerSession(phone, { name: body.name, otpName: otp.name });
   }

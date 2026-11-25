@@ -1,5 +1,5 @@
 // One sign-in field for an email or a phone, for customers, kitchens and
-// delivery workers (admins: phone, then their extra step); email codes are
+// delivery workers (admins use passwords); email codes are
 // never exposed, SMS codes only on an explicit development server; one
 // customer per phone, enforced by the server and the database.
 const http = require('node:http');
@@ -12,7 +12,6 @@ let config;
 let authService;
 let vendorAuthService;
 let driverAuthService;
-let adminPhoneLoginService;
 let normalizePhone;
 let hashPassword;
 let setTestTransport;
@@ -52,7 +51,6 @@ before(async () => {
   ({ PHONE_TAKEN_MESSAGE } = authService);
   vendorAuthService = require('../../src/services/vendorAuthService');
   driverAuthService = require('../../src/services/driverAuthService');
-  adminPhoneLoginService = require('../../src/services/adminPhoneLoginService');
   ({ normalizePhone } = require('../../src/utils/validators'));
   ({ hashPassword } = require('../../src/utils/password'));
   ({ setTestTransport } = require('../../src/utils/email'));
@@ -146,26 +144,47 @@ test('vendor and delivery worker sign in with their phone or their email; the ac
   await rejects(vendorAuthService.sendLoginOtp({ identifier: freshEmail('nobody') }), 'VENDOR_NOT_FOUND');
 });
 
-test('admin: phone code, then the admin email + password step; an admin email in the customer form is not a way in', async () => {
+test('admin identifiers use password-only login and never enter the OTP flow', async () => {
   const phone = normalizePhone(freshPhone());
   const email = freshEmail('admin');
   await models.Admin.create({
     name: 'Grace Admin', email, password_hash: await hashPassword('Admin-Password-2026!'),
     role: 'super_admin', status: 'active', is_active: true, phone, two_factor_enabled: true,
   });
-  const sent = await authService.sendOtp({ identifier: phone, name: 'Grace Admin' });
-  const stage1 = await authService.verifyOtp({ identifier: phone, code: sent.dev_otp, name: 'Grace Admin' });
-  assert.equal(stage1.admin_verification_required, true);
-  assert.equal(stage1.token, undefined);
-  const session = await adminPhoneLoginService.complete({ challenge_token: stage1.challenge_token, email, password: 'Admin-Password-2026!' });
-  assert.ok(session.token);
+  for (const identifier of [phone, email]) {
+    const start = await h.api('POST', '/auth/login/send-otp', { body: { identifier, role: 'customer' } });
+    assert.equal(start.status, 200, JSON.stringify(start.body));
+    assert.equal(start.body.role, 'admin');
+    assert.equal(start.body.requires_password, true);
+    assert.equal(start.body.dev_otp, undefined);
+  }
+  assert.equal(await models.OtpCode.countDocuments({ phone_number: { $in: [phone, email] } }), 0);
 
-  // The admin's email in the customer form only ever means a customer account.
-  const asCustomer = await authService.sendOtp({ identifier: email, name: 'Grace Admin' });
-  const result = await authService.verifyOtp({ identifier: email, code: codeFromMail(email) });
-  assert.equal(result.admin_verification_required, undefined);
-  assert.ok(result.customer, 'a customer account, never an admin session');
-  assert.equal(asCustomer.dev_otp, undefined);
+  const legacySend = await h.api('POST', '/auth/send-otp', { body: { identifier: phone, name: 'Grace Admin' } });
+  assert.equal(legacySend.status, 400);
+  assert.equal(legacySend.body.error.code, 'PASSWORD_REQUIRED');
+  const legacyVerify = await h.api('POST', '/auth/login/verify-otp', {
+    body: { identifier: phone, role: 'customer', code: '123456' },
+  });
+  assert.equal(legacyVerify.status, 400);
+  assert.equal(legacyVerify.body.error.code, 'PASSWORD_REQUIRED');
+
+  const wrongPassword = await h.api('POST', '/admin/auth/login', {
+    body: { identifier: phone, password: 'wrong-password' },
+  });
+  assert.equal(wrongPassword.status, 401);
+  assert.equal(wrongPassword.body.token, undefined);
+  const session = await h.api('POST', '/admin/auth/login', {
+    body: { identifier: phone, password: 'Admin-Password-2026!' },
+  });
+  assert.equal(session.status, 200, JSON.stringify(session.body));
+  assert.ok(session.body.token);
+  assert.equal(session.body.admin.email, email);
+  assert.equal(await models.OtpCode.countDocuments({ phone_number: { $in: [phone, email] } }), 0);
+
+  const asCustomer = await h.api('POST', '/auth/send-otp', { body: { identifier: email, name: 'Grace Admin' } });
+  assert.equal(asCustomer.status, 400);
+  assert.equal(asCustomer.body.error.code, 'PASSWORD_REQUIRED');
 });
 
 test('codes: wrong, expired, reused and too many tries are all refused', async () => {
