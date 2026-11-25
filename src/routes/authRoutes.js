@@ -19,6 +19,8 @@ const authLimit = rateLimit({
 });
 router.post('/auth/send-otp', authLimit, authController.sendOtp);
 router.post('/auth/verify-otp', authLimit, authController.verifyOtp);
+router.post('/auth/login/send-otp', authLimit, authController.sendUnifiedLoginOtp);
+router.post('/auth/login/verify-otp', authLimit, authController.verifyUnifiedLoginOtp);
 // A verified phone that is also an admin's: sign in as the customer instead
 // of finishing the admin step (uses the one-time challenge up).
 router.post(
