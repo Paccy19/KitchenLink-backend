@@ -61,9 +61,14 @@ const allVendors = asyncHandler(async (req, res) => {
   );
 });
 
+/** GET /home/dishes?page&limit&category&sort — every dish, one page at a time. */
+const dishes = asyncHandler(async (req, res) => {
+  res.json(await homeService.getDishes({ query: req.query }));
+});
+
 const search = asyncHandler(async (req, res) => {
   const coords = parseOptionalCoords(req.query);
   res.json(await searchService.search({ q: req.query.q, coords, vendorTypes: parseVendorTypeFilter(req.query) }));
 });
 
-module.exports = { feed, categories, nearbyVendors, mapVendors, allVendors, search };
+module.exports = { feed, categories, nearbyVendors, mapVendors, allVendors, dishes, search };

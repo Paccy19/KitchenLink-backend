@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const ApiError = require('../utils/ApiError');
 const vendorRepository = require('../repositories/vendorRepository');
 const menuItemRepository = require('../repositories/menuItemRepository');
+const menuItemOptionRepository = require('../repositories/menuItemOptionRepository');
 const deliveryPricingService = require('./deliveryPricingService');
 const vendorOrderingService = require('./vendorOrderingService');
 const { distanceFromCoords } = require('../utils/geo');
@@ -25,6 +26,14 @@ class VendorService {
     }
 
     const items = await menuItemRepository.findByVendor(vendorId);
+    const options = await menuItemOptionRepository.findByMenuItemIds(items.map((item) => item._id));
+    const optionsByItem = new Map();
+    for (const option of options) {
+      if (option.is_available === false) continue;
+      const key = String(option.menu_item_id);
+      if (!optionsByItem.has(key)) optionsByItem.set(key, []);
+      optionsByItem.get(key).push(option);
+    }
 
     const groups = new Map();
     for (const item of items) {
@@ -49,7 +58,7 @@ class VendorService {
         category: group.category?.name ?? 'Other',
         items: [...group.items]
           .sort((a, b) => a.name.localeCompare(b.name))
-          .map(serializeMenuItem),
+          .map((item) => serializeMenuItem(item, optionsByItem.get(String(item._id)) || [])),
       }));
 
     const distanceKm = coords

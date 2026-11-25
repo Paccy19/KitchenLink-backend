@@ -87,6 +87,9 @@ const config = {
   limits: {
     feedVendors: 10,
     feedDishes: 12,
+    // Homepage "All Dishes" grid (GET /home/dishes).
+    dishesDefault: 8,
+    dishesMax: 48,
     categories: 50,
     nearbyDefault: 20,
     nearbyMax: 50,
