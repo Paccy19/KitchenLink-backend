@@ -64,6 +64,16 @@ async function expireSeatSession(tableSession, customerSession, vendorId, now) {
     },
     { $set: { 'customer_sessions.$.status': 'expired' } }
   );
+  await TableSession.updateOne(
+    { _id: tableSession._id },
+    {
+      $set: {
+        'payment_authorizations.$[grant].status': 'expired',
+        'payment_authorizations.$[grant].token_hash': null,
+      },
+    },
+    { arrayFilters: [{ 'grant.beneficiary_customer_session_id': customerSession._id, 'grant.status': { $in: ['pending', 'authorized'] } }] }
+  );
 }
 
 function serializedSession(tableSession, customerSession, sessionKey = null) {

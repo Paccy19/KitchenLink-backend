@@ -47,6 +47,15 @@ const invoiceSchema = new mongoose.Schema(
     subtotal_rwf: { type: Number, default: 0, min: 0 },
     delivery_fee_rwf: { type: Number, default: 0, min: 0 },
     discount_rwf: { type: Number, default: 0, min: 0 },
+    // A table discount is fixed against the orders that existed when staff
+    // set it, so a later seat order cannot change another customer's balance.
+    discount_allocations: [
+      {
+        order_id: { type: ObjectId, ref: 'Order', required: true },
+        customer_session_id: { type: ObjectId, default: null },
+        amount_rwf: { type: Number, min: 0, required: true },
+      },
+    ],
     total_rwf: { type: Number, default: 0, min: 0 },
     amount_paid_rwf: { type: Number, default: 0, min: 0 },
     refunded_rwf: { type: Number, default: 0, min: 0 },
@@ -59,6 +68,9 @@ const invoiceSchema = new mongoose.Schema(
         // 'in_person' = taken by the kitchen; 'online' = paid in the app (platform holds it).
         channel: { type: String, enum: ['in_person', 'online'], default: 'in_person' },
         received_by: actor,
+        idempotency_key: { type: String, default: null },
+        request_hash: { type: String, default: null },
+        payment_id: { type: ObjectId, ref: 'Payment', default: null },
         at: { type: Date, default: Date.now },
       },
     ],

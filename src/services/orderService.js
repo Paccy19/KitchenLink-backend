@@ -1306,6 +1306,9 @@ class OrderService {
   async cancel(customerId, orderId, body) {
     const order = await this.#loadOrder(customerId, orderId);
 
+    if (order.payment_lock_id) {
+      throw ApiError.conflict('A seat payment is being processed for this order.', 'SEAT_PAYMENT_PENDING');
+    }
     if (order.status === 'cancelled') {
       throw ApiError.conflict('Order is already cancelled.', 'ALREADY_CANCELLED');
     }
@@ -1333,6 +1336,7 @@ class OrderService {
       cancelled_at: cancelledAt,
       cancel_reason: reason,
     });
+    if (!updated) throw ApiError.conflict('A seat payment started while this order was being cancelled.', 'SEAT_PAYMENT_PENDING');
     await orderRepository.pushHistory(order._id, {
       status: 'cancelled',
       at: cancelledAt,
@@ -1509,6 +1513,9 @@ class OrderService {
         `Cannot move order from "${from}" to "${nextStatus}".`
       );
     }
+    if (nextStatus === 'cancelled' && order.payment_lock_id) {
+      throw ApiError.conflict('A seat payment is being processed for this order.', 'SEAT_PAYMENT_PENDING');
+    }
 
     const now = new Date();
     const update = { status: nextStatus };
@@ -1534,6 +1541,9 @@ class OrderService {
     const payment = await paymentRepository.findLatestByOrder(order._id);
 
     const updated = await orderRepository.update(order._id, update);
+    if (!updated && nextStatus === 'cancelled') {
+      throw ApiError.conflict('A seat payment started while this order was being cancelled.', 'SEAT_PAYMENT_PENDING');
+    }
     await orderRepository.pushHistory(order._id, {
       status: nextStatus,
       at: now,

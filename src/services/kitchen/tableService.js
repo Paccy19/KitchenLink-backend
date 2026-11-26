@@ -175,9 +175,17 @@ class TableService {
           closed_at: closedAt,
           'customer_sessions.$[customer].status': 'closed',
           'customer_sessions.$[customer].closed_at': closedAt,
+          'payment_authorizations.$[grant].status': 'expired',
+          'payment_authorizations.$[grant].token_hash': null,
         },
       },
-      { arrayFilters: [{ 'customer.status': 'active' }], returnDocument: 'after' }
+      {
+        arrayFilters: [
+          { 'customer.status': 'active' },
+          { 'grant.status': { $in: ['pending', 'authorized'] } },
+        ],
+        returnDocument: 'after',
+      }
     ).lean();
     if (!closed) return { table_id: String(table._id), status: 'closed', already_closed: true };
 
@@ -193,6 +201,90 @@ class TableService {
       status: closed.status,
       closed_at: closed.closed_at,
       already_closed: false,
+    };
+  }
+
+  async releaseSeat(kitchen, tableId, rawSeatNumber, body = {}) {
+    const table = await this.#load(kitchen.vendorId, tableId);
+    const seatNumber = Number(rawSeatNumber);
+    if (!Number.isInteger(seatNumber) || seatNumber < 1) {
+      throw ApiError.badRequest('Choose a valid seat number.', { seat_number: 'expected a positive integer' });
+    }
+    const tableSession = await TableSession.findOne({
+      vendor_id: kitchen.vendorId,
+      table_id: table._id,
+      status: 'active',
+    }).lean();
+    const customerSession = (tableSession?.customer_sessions || []).find(
+      (entry) => entry.seat_number === seatNumber && entry.status === 'active' && entry.expires_at > new Date()
+    );
+    if (!tableSession || !customerSession) {
+      throw ApiError.notFound('There is no active customer session in that seat.', 'SEAT_SESSION_NOT_FOUND');
+    }
+    const [orders, lockedOrder] = await Promise.all([
+      Order.find({
+        table_session_id: tableSession._id,
+        customer_session_id: customerSession._id,
+        status: { $ne: 'cancelled' },
+      }).select('payment_status status').lean(),
+      Order.exists({
+        table_session_id: tableSession._id,
+        customer_session_id: customerSession._id,
+        payment_lock_id: { $ne: null },
+      }),
+    ]);
+    if (lockedOrder) throw ApiError.conflict('A payment is being processed for this seat.', 'SEAT_PAYMENT_PENDING');
+    const hasActiveOrder = orders.some((order) => !['completed', 'cancelled'].includes(order.status));
+    if (hasActiveOrder) {
+      throw ApiError.conflict("Finish preparing and serving this seat's orders before releasing it.", 'SEAT_HAS_ACTIVE_ORDERS');
+    }
+    const hasUnpaidOrder = orders.some((order) => order.payment_status !== 'paid');
+    const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
+    if (hasUnpaidOrder && (!reason || !kitchen.can('invoices.edit'))) {
+      throw ApiError.conflict(
+        'This seat still has an unpaid balance. Settle it first or provide a reason with invoice-edit permission for an exceptional release.',
+        'SEAT_HAS_UNPAID_ORDERS'
+      );
+    }
+    const closedAt = new Date();
+    const closed = await TableSession.findOneAndUpdate(
+      {
+        _id: tableSession._id,
+        status: 'active',
+        customer_sessions: {
+          $elemMatch: { _id: customerSession._id, status: 'active', expires_at: { $gt: closedAt } },
+        },
+      },
+      {
+        $set: {
+          'customer_sessions.$.status': 'closed',
+          'customer_sessions.$.closed_at': closedAt,
+          'payment_authorizations.$[grant].status': 'expired',
+          'payment_authorizations.$[grant].token_hash': null,
+        },
+      },
+      {
+        arrayFilters: [
+          { 'grant.status': { $in: ['pending', 'authorized'] }, 'grant.beneficiary_customer_session_id': customerSession._id },
+        ],
+        returnDocument: 'after',
+      }
+    ).lean();
+    if (!closed) throw ApiError.conflict('This seat changed while it was being released. Refresh and try again.', 'SEAT_SESSION_CHANGED');
+    await activity.record(kitchen, {
+      action: 'table.seat_released',
+      target_type: 'table_session',
+      target_id: tableSession._id,
+      summary: `Released seat ${seatNumber} at ${table.label}`,
+      details: { seat_number: seatNumber, exceptional: hasUnpaidOrder, reason: hasUnpaidOrder ? reason : '' },
+    });
+    return {
+      table_id: String(table._id),
+      table_session_id: String(tableSession._id),
+      customer_session_id: String(customerSession._id),
+      seat_number: seatNumber,
+      status: 'released',
+      exceptional: hasUnpaidOrder,
     };
   }
 

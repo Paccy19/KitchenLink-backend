@@ -90,6 +90,24 @@ test('seat QR codes create independent sessions and attribute orders to each sea
   const crossSeat = await place(firstSeatToken, second.session_key);
   assert.equal(crossSeat.status, 401);
   assert.equal(crossSeat.body.error.code, 'DINING_SESSION_INVALID');
+
+  const legacyOrder = ok(await api('POST', `/tables/${table.token}/orders`, {
+    body: { items: [{ menu_item_id: String(kitchen.items[0]._id), quantity: 1 }] },
+  }), 201);
+  const [savedLegacy, savedSeat] = await Promise.all([
+    Order.findById(legacyOrder.order.id).lean(),
+    Order.findById(firstOrder.order.id).lean(),
+  ]);
+  assert.equal(String(savedLegacy.invoice_id), String(savedSeat.invoice_id));
+  const legacyView = ok(await api('GET', `/tables/${table.token}/orders/${legacyOrder.order.id}`, {
+    headers: { 'x-guest-key': legacyOrder.guest_key },
+  }));
+  assert.deepEqual(legacyView.order.bill.lines.map((line) => line.name), ['Rice bowl']);
+  assert.equal(legacyView.order.bill.total_rwf, 3500);
+  const refreshedSeatView = ok(await api('GET', `/tables/${firstSeatToken}/orders/${firstOrder.order.id}`, {
+    headers: { 'x-guest-key': firstOrder.guest_key },
+  }));
+  assert.equal(refreshedSeatView.order.bill.total_rwf, 3500);
 });
 
 test('seat QR rotation preserves active session recovery but stops new sessions from the old code', async () => {
@@ -162,7 +180,7 @@ test('a table session cannot close with active or unpaid orders, then closes its
   const order = await Order.findById(placed.order.id).lean();
   ok(await api('POST', `/vendor/invoices/${order.invoice_id}/payments`, {
     token: ownerToken,
-    body: { amount_rwf: order.total_rwf, method: 'cash' },
+    body: { amount_rwf: order.total_rwf, method: 'cash', idempotency_key: 'close-session-payment-01' },
   }));
   const result = ok(await api('POST', `/vendor/tables/${closeTable.id}/session/close`, { token: ownerToken }));
   assert.equal(result.status, 'closed');

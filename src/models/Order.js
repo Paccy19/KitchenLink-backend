@@ -275,6 +275,8 @@ const orderSchema = new mongoose.Schema(
       enum: ['pending', 'paid', 'failed', 'refunded'],
       default: 'pending',
     },
+    payment_lock_id: { type: ObjectId, ref: 'Payment', default: null },
+    payment_lock_expires_at: { type: Date, default: null },
     // Payer details captured at checkout: phone for mobile wallets, card for cards.
     payment_details: {
       phone: { type: String, default: '' },
@@ -387,6 +389,14 @@ orderSchema.index({ settlement_status: 1, rider_payout_settled_at: 1 });
 orderSchema.index({ 'delivery_pricing.priced_at': -1 }, { sparse: true });
 
 orderSchema.index({ special_delivery_request_id: 1 }, { sparse: true });
+
+orderSchema.pre('findOneAndUpdate', function preventCancellingLockedSeat() {
+  const update = this.getUpdate() || {};
+  const status = update.status ?? update.$set?.status;
+  if (status === 'cancelled') {
+    this.setQuery({ ...this.getQuery(), payment_lock_id: null });
+  }
+});
 // Preparation queues and table activity.
 orderSchema.index({ vendor_id: 1, 'tickets.department_id': 1, 'tickets.status': 1 });
 orderSchema.index({ 'table.table_id': 1, status: 1 }, { sparse: true });

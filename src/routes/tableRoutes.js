@@ -6,6 +6,7 @@ const { verifyToken } = require('../utils/jwt');
 const { assertSessionActive } = require('../utils/sessions');
 const customerRepository = require('../repositories/customerRepository');
 const tableOrderService = require('../services/kitchen/tableOrderService');
+const tablePaymentService = require('../services/kitchen/tablePaymentService');
 
 /**
  * Public: what a table's QR code opens (/menu/<token> on the website).
@@ -45,6 +46,12 @@ const sessionLimit = rateLimit({
   code: 'DINING_SESSION_RATE_LIMITED',
   message: 'Too many seat sessions were started from this network. Please wait a moment.',
 });
+const paymentLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  code: 'TABLE_PAYMENT_RATE_LIMITED',
+  message: 'Too many payment attempts. Please wait a moment before trying again.',
+});
 const readLimit = rateLimit({ windowMs: 60 * 1000, max: 120, code: 'RATE_LIMITED', message: 'Too many requests. Please slow down.' });
 
 router.get('/:token', readLimit, asyncHandler(async (req, res) => res.json(await tableOrderService.menu(req.params.token))));
@@ -64,6 +71,88 @@ router.post(
   asyncHandler(async (req, res) => {
     const key = req.headers['x-dining-session-key'];
     res.status(201).json(await tableOrderService.placeOrder(req.params.token, req.body, req.customer || null, key));
+  })
+);
+router.get(
+  '/:token/payment-seats',
+  readLimit,
+  optionalCustomer,
+  asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    res.json(await tablePaymentService.payableSeats(
+      req.params.token,
+      req.customer || null,
+      req.headers['x-dining-session-key']
+    ));
+  })
+);
+router.post(
+  '/:token/payment-authorizations',
+  paymentLimit,
+  optionalCustomer,
+  asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    res.status(201).json(await tablePaymentService.createAuthorization(
+      req.params.token,
+      req.customer || null,
+      req.headers['x-dining-session-key']
+    ));
+  })
+);
+router.post(
+  '/:token/payment-authorizations/join',
+  paymentLimit,
+  optionalCustomer,
+  asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    res.json(await tablePaymentService.acceptAuthorization(
+      req.params.token,
+      req.customer || null,
+      req.headers['x-dining-session-key'],
+      req.body?.code
+    ));
+  })
+);
+router.delete(
+  '/:token/payment-authorizations/:authorization_id',
+  paymentLimit,
+  optionalCustomer,
+  asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    res.json(await tablePaymentService.revokeAuthorization(
+      req.params.token,
+      req.customer || null,
+      req.headers['x-dining-session-key'],
+      req.params.authorization_id
+    ));
+  })
+);
+router.post(
+  '/:token/payments',
+  paymentLimit,
+  optionalCustomer,
+  asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    res.status(201).json(await tablePaymentService.initiatePayment(
+      req.params.token,
+      req.customer || null,
+      req.headers['x-dining-session-key'],
+      req.body
+    ));
+  })
+);
+router.post(
+  '/:token/payments/:payment_id/check',
+  readLimit,
+  optionalCustomer,
+  asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    res.json(await tablePaymentService.checkPayment(
+      req.params.token,
+      req.customer || null,
+      req.headers['x-dining-session-key'],
+      req.params.payment_id
+    ));
   })
 );
 router.get(

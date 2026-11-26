@@ -102,7 +102,18 @@ class TableOrderService {
   async openSession(token, body = {}, customer = null, sessionKey = null) {
     const { table, vendor } = await resolveTable(token);
     const state = orderingState(table, vendor);
-    if (!state.can_order) throw ApiError.conflict(state.reason, 'TABLE_ORDERING_UNAVAILABLE');
+    if (!state.can_order) {
+      const { tableSession, customerSession } = await diningSessionService.requireOwned(table, customer, sessionKey);
+      return {
+        table_session_id: String(tableSession._id),
+        customer_session_id: String(customerSession._id),
+        seat_number: customerSession.seat_number,
+        guest_name: customerSession.guest_name || '',
+        status: customerSession.status,
+        expires_at: customerSession.expires_at,
+        session_key: sessionKey || null,
+      };
+    }
     return diningSessionService.open(table, vendor, body, customer, sessionKey);
   }
 
@@ -138,6 +149,14 @@ class TableOrderService {
     const state = orderingState(table, vendor);
     if (!state.can_order) throw ApiError.conflict(state.reason, 'TABLE_ORDERING_UNAVAILABLE');
     const diningSession = await diningSessionService.requireOwned(table, customer, sessionKey);
+    if (diningSession && await Order.exists({
+      table_session_id: diningSession.tableSession._id,
+      customer_session_id: diningSession.customerSession._id,
+      status: { $ne: 'cancelled' },
+      payment_lock_id: { $ne: null },
+    })) {
+      throw ApiError.conflict('A payment is being processed for this seat. Wait for its result before adding another order.', 'SEAT_PAYMENT_PENDING');
+    }
     const lines = this.#parseLines(body);
     const requestedName = parseOptionalText(body.guest_name, { field: 'guest_name', max: 40 }) || '';
     const guestName = diningSession?.customerSession.guest_name || requestedName || customer?.name || '';
