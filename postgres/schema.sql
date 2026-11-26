@@ -37,7 +37,9 @@ DROP TABLE IF EXISTS
   cartitems, categories, adminactionlogs, admins, payments,
   payoutdestinations, departments, kitchenroles, kitchenstaffs, diningtables,
   invoices, inventoryitems, stockmovements, suppliers, kitchenactivities,
-  kitchenreports
+  kitchenreports, staffnotifications, servicerequests, cashiersessions, expenses,
+  purchaseorders, kitchencustomers, feedbacks, reservations, promotions,
+  staffshifts, staffattendances
 CASCADE;
 
 -- ============================================================================
@@ -330,6 +332,12 @@ CREATE TABLE orders (
   guest_name                TEXT        NOT NULL DEFAULT '',
   invoice_id                CHAR(24),
   payment_gate              TEXT        CHECK (payment_gate IS NULL OR payment_gate IN ('preparation','collection','none')),
+  priority                  TEXT        NOT NULL DEFAULT 'normal' CHECK (priority IN ('normal','high','urgent')),
+  assigned_staff            JSONB,
+  collector                 JSONB,
+  kitchen_courier           JSONB,
+  kitchen_customer_id       CHAR(24),
+  reopened_at               TIMESTAMPTZ,
   subtotal_rwf              NUMERIC     NOT NULL,
   delivery_fee_rwf          NUMERIC     NOT NULL,
   delivery_distance_km      NUMERIC     CHECK (delivery_distance_km >= 0),
@@ -857,6 +865,7 @@ CREATE TABLE kitchenstaffs (
   email                TEXT,
   username             TEXT,
   password_hash        TEXT,
+  notification_prefs   JSONB,
   password_set_at      TIMESTAMPTZ,
   job_title            TEXT        NOT NULL DEFAULT '',
   role_ids             TEXT[]      NOT NULL DEFAULT '{}',
@@ -907,6 +916,15 @@ CREATE TABLE invoices (
   subtotal_rwf     NUMERIC     NOT NULL DEFAULT 0 CHECK (subtotal_rwf >= 0),
   delivery_fee_rwf NUMERIC     NOT NULL DEFAULT 0 CHECK (delivery_fee_rwf >= 0),
   discount_rwf     NUMERIC     NOT NULL DEFAULT 0 CHECK (discount_rwf >= 0),
+  promo_discount_rwf NUMERIC   NOT NULL DEFAULT 0,
+  promotions       JSONB       NOT NULL DEFAULT '[]',
+  kitchen_customer_id CHAR(24),
+  loyalty_points_redeemed NUMERIC NOT NULL DEFAULT 0,
+  loyalty_discount_rwf NUMERIC NOT NULL DEFAULT 0,
+  loyalty_points_earned NUMERIC NOT NULL DEFAULT 0,
+  split_from       CHAR(24),
+  merged_into      CHAR(24),
+  cancel_reason    TEXT        NOT NULL DEFAULT '',
   total_rwf        NUMERIC     NOT NULL DEFAULT 0 CHECK (total_rwf >= 0),
   amount_paid_rwf  NUMERIC     NOT NULL DEFAULT 0 CHECK (amount_paid_rwf >= 0),
   refunded_rwf     NUMERIC     NOT NULL DEFAULT 0 CHECK (refunded_rwf >= 0),
@@ -945,6 +963,8 @@ CREATE TABLE inventoryitems (
   name                 TEXT        NOT NULL,
   unit                 TEXT        NOT NULL DEFAULT 'pcs',
   sku                  TEXT        NOT NULL DEFAULT '',
+  category             TEXT        NOT NULL DEFAULT '',
+  kind                 TEXT        NOT NULL DEFAULT 'ingredient',
   quantity             NUMERIC     NOT NULL DEFAULT 0,
   low_stock_threshold  NUMERIC     NOT NULL DEFAULT 0 CHECK (low_stock_threshold >= 0),
   cost_per_unit_rwf    NUMERIC     NOT NULL DEFAULT 0 CHECK (cost_per_unit_rwf >= 0),
@@ -964,7 +984,8 @@ CREATE TABLE stockmovements (
   delta           NUMERIC     NOT NULL,
   quantity_after  NUMERIC     NOT NULL,
   reason          TEXT        NOT NULL
-                  CHECK (reason IN ('purchase','adjustment','waste','usage','order','initial','return')),
+                  CHECK (reason IN ('purchase','adjustment','waste','usage','order','initial','return','transfer_in','transfer_out')),
+  purchase_order_id CHAR(24),
   note            TEXT        NOT NULL DEFAULT '',
   order_id        CHAR(24),
   order_number    TEXT        NOT NULL DEFAULT '',
@@ -1007,6 +1028,99 @@ CREATE TABLE kitchenreports (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (vendor_id, period, start)
 );
+
+
+-- Kitchen operations (second part). Each row keeps the whole MongoDB
+-- document in `doc` (same structure), with the kitchen and timestamps as
+-- columns for querying.
+CREATE TABLE staffnotifications (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX staffnotifications_vendor_idx ON staffnotifications (vendor_id, created_at DESC);
+CREATE TABLE servicerequests (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX servicerequests_vendor_idx ON servicerequests (vendor_id, created_at DESC);
+CREATE TABLE cashiersessions (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX cashiersessions_vendor_idx ON cashiersessions (vendor_id, created_at DESC);
+CREATE TABLE expenses (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX expenses_vendor_idx ON expenses (vendor_id, created_at DESC);
+CREATE TABLE purchaseorders (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX purchaseorders_vendor_idx ON purchaseorders (vendor_id, created_at DESC);
+CREATE TABLE kitchencustomers (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX kitchencustomers_vendor_idx ON kitchencustomers (vendor_id, created_at DESC);
+CREATE TABLE feedbacks (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX feedbacks_vendor_idx ON feedbacks (vendor_id, created_at DESC);
+CREATE TABLE reservations (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX reservations_vendor_idx ON reservations (vendor_id, created_at DESC);
+CREATE TABLE promotions (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX promotions_vendor_idx ON promotions (vendor_id, created_at DESC);
+CREATE TABLE staffshifts (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX staffshifts_vendor_idx ON staffshifts (vendor_id, created_at DESC);
+CREATE TABLE staffattendances (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX staffattendances_vendor_idx ON staffattendances (vendor_id, created_at DESC);
 
 -- ============================================================================
 -- FOREIGN KEYS (all deferred -> any insert order works)

@@ -95,7 +95,7 @@ async function build(vendorId, period, { scope = null, financial = true, withCom
 
   const [orders, departments, invoices, movements, inventory, menu, staff, activityCount, refunds] = await Promise.all([
     Order.find({ vendor_id: vid, created_at: range })
-      .select('order_number status fulfillment source payment_method payment_status subtotal_rwf delivery_fee_rwf total_rwf commission_rwf vendor_payout_rwf items tickets table created_at completed_at cancelled_at status_history')
+      .select('customer_id order_number status fulfillment source payment_method payment_status subtotal_rwf delivery_fee_rwf total_rwf commission_rwf vendor_payout_rwf items tickets table created_at completed_at cancelled_at status_history')
       .lean(),
     departmentService.listForVendor(vid),
     financial ? Invoice.find({ vendor_id: vid, $or: [{ created_at: range }, { 'payments.at': range }, { 'refunds.at': range }] }).lean() : [],
@@ -288,6 +288,32 @@ async function build(vendorId, period, { scope = null, financial = true, withCom
     stock_value_rwf: inventory.reduce((s, i) => s + Math.max(0, i.quantity) * (i.cost_per_unit_rwf || 0), 0),
   };
 
+  // Customers: app customers who ordered, new to the kitchen or returning, and the biggest spenders.
+  const customerSpend = new Map();
+  for (const order of orders) {
+    if (!order.customer_id || order.status === 'cancelled' || !isSale(order)) continue;
+    const key = String(order.customer_id);
+    const row = customerSpend.get(key) || { customer_id: key, orders: 0, spent_rwf: 0 };
+    row.orders += 1;
+    row.spent_rwf += order.total_rwf;
+    customerSpend.set(key, row);
+  }
+  let customersReport = null;
+  if (customerSpend.size) {
+    const ids = [...customerSpend.keys()].map((id) => new ObjectId(id));
+    const before = new Set((await Order.distinct('customer_id', { vendor_id: vid, customer_id: { $in: ids }, created_at: { $lt: period.start } })).map(String));
+    const names = new Map((await require('../../models').Customer.find({ _id: { $in: ids } }).select('name').lean()).map((c) => [String(c._id), c.name]));
+    customersReport = {
+      customers: customerSpend.size,
+      new_customers: [...customerSpend.keys()].filter((id) => !before.has(id)).length,
+      returning_customers: [...customerSpend.keys()].filter((id) => before.has(id)).length,
+      table_guests: orders.filter((o) => o.fulfillment === 'dine_in' && !o.customer_id && o.status !== 'cancelled').length,
+      top: [...customerSpend.values()].sort((a, b) => b.spent_rwf - a.spent_rwf).slice(0, 10).map((r) => ({ ...r, name: names.get(r.customer_id) || 'Customer' })),
+    };
+  } else {
+    customersReport = { customers: 0, new_customers: 0, returning_customers: 0, table_guests: orders.filter((o) => o.fulfillment === 'dine_in' && o.status !== 'cancelled').length, top: [] };
+  }
+
   const busiest = byHour.reduce((best, h) => (h.orders > best.orders ? h : best), byHour[0]);
   const report = {
     period: { type: period.type, label: period.label, start: period.start, end: period.end },
@@ -316,6 +342,7 @@ async function build(vendorId, period, { scope = null, financial = true, withCom
     tables: [...tables.values()].sort((a, b) => b.sales_rwf - a.sales_rwf).slice(0, 15),
     payments,
     staff: staffReport,
+    customers: scope === null ? customersReport : null,
     inventory: inventoryReport,
     activity_entries: activityCount,
     definitions: {
@@ -343,19 +370,22 @@ function highlights(r) {
     out.push('No orders in this period.');
     return out;
   }
-  let line = `You sold ${rwf(s.sales_rwf)} across ${s.orders_placed - s.orders_cancelled} order${s.orders_placed - s.orders_cancelled === 1 ? '' : 's'}`;
-  if (r.change?.sales_percent !== null && r.change?.sales_percent !== undefined) {
+  const count = s.orders_placed - s.orders_cancelled;
+  let line = s.sales_rwf == null
+    ? `${count} order${count === 1 ? '' : 's'} went through`
+    : `You sold ${rwf(s.sales_rwf)} across ${count} order${count === 1 ? '' : 's'}`;
+  if (s.sales_rwf != null && r.change?.sales_percent !== null && r.change?.sales_percent !== undefined) {
     const c = r.change.sales_percent;
     line += c === 0 ? `, the same as ${label}` : `, ${c > 0 ? 'up' : 'down'} ${Math.abs(c)}% on ${label}`;
   }
   out.push(`${line}.`);
-  if (r.departments.length > 1) out.push(`${r.departments[0].name} brought in the most: ${rwf(r.departments[0].sales_rwf)} (${r.departments[0].items_sold} items).`);
-  if (r.top_products[0]) out.push(`Best seller: ${r.top_products[0].name} (${r.top_products[0].quantity} sold).`);
-  if (s.orders_cancelled) out.push(`${s.orders_cancelled} order${s.orders_cancelled === 1 ? ' was' : 's were'} cancelled (${rwf(s.cancelled_value_rwf)}).`);
+  if ((r.departments || []).length > 1) out.push(`${r.departments[0].name} brought in the most: ${rwf(r.departments[0].sales_rwf)} (${r.departments[0].items_sold} items).`);
+  if (r.top_products?.[0]) out.push(`Best seller: ${r.top_products[0].name} (${r.top_products[0].quantity} sold).`);
+  if (s.orders_cancelled) out.push(`${s.orders_cancelled} order${s.orders_cancelled === 1 ? ' was' : 's were'} cancelled${s.cancelled_value_rwf != null ? ` (${rwf(s.cancelled_value_rwf)})` : ''}.`);
   if (s.busiest_hour) out.push(`Busiest time: ${s.busiest_hour}.`);
   if (s.avg_prep_minutes !== null) out.push(`Food was ready on average ${s.avg_prep_minutes} minutes after ordering.`);
   if (r.payments?.outstanding_rwf) out.push(`${rwf(r.payments.outstanding_rwf)} is still unpaid on ${r.payments.unpaid_invoices.length} bill${r.payments.unpaid_invoices.length === 1 ? '' : 's'}.`);
-  if (r.inventory.low_stock.length) out.push(`${r.inventory.low_stock.length} stock item${r.inventory.low_stock.length === 1 ? ' is' : 's are'} low: ${r.inventory.low_stock.slice(0, 3).map((i) => i.name).join(', ')}.`);
+  if (r.inventory?.low_stock?.length) out.push(`${r.inventory.low_stock.length} stock item${r.inventory.low_stock.length === 1 ? ' is' : 's are'} low: ${r.inventory.low_stock.slice(0, 3).map((i) => i.name).join(', ')}.`);
   return out;
 }
 
@@ -369,7 +399,8 @@ const csvCell = (v) => {
 };
 const csvRows = (rows) => rows.map((row) => row.map(csvCell).join(',')).join('\n');
 
-function toCsv(report) {
+function toCsv(input) {
+  let report = input;
   const parts = [];
   const section = (title, header, rows) => {
     parts.push(csvRows([[title], header, ...rows]));
@@ -379,6 +410,7 @@ function toCsv(report) {
     ...Object.entries(report.sales || {}).map(([k, v]) => [k.replace(/_/g, ' '), v]),
   ]);
   section('Highlights', ['Note'], report.highlights.map((h) => [h]));
+  report = { ...report, departments: report.departments || [], top_products: report.top_products || [], series: report.series || [], inventory: report.inventory || { most_used: [], low_stock: [] } };
   section('Departments', ['Department', 'Sales (RWF)', 'Items sold', 'Orders', 'Tickets', 'Avg prep (min)'], report.departments.map((d) => [d.name, d.sales_rwf, d.items_sold, d.orders, d.tickets, d.avg_prep_minutes]));
   section('Products', ['Product', 'Department', 'Quantity', 'Sales (RWF)'], report.top_products.map((p) => [p.name, p.department, p.quantity, p.sales_rwf]));
   section('Over time', ['When', 'Orders', 'Sales (RWF)'], report.series.map((p) => [p.key, p.orders, p.sales_rwf]));
@@ -401,17 +433,65 @@ function toCsv(report) {
 // ------------------------------------------------------------ service
 
 class ReportService {
-  /** What this person may see: the whole kitchen, or their departments without kitchen-wide money. */
+  /**
+   * What this person may see. Kitchen-wide money needs a sales / financial
+   * permission; otherwise only the departments their role covers. Each
+   * section of the report then needs its own permission (#keepAllowed).
+   */
   #scopeFor(kitchen, query) {
-    const financial = kitchen.can('reports.sales');
-    let scope = financial ? null : kitchen.scope('reports.departments');
-    if (!financial && scope !== null && !scope.length) kitchen.assert('reports.departments');
+    const wide = ['reports.sales', 'reports.financial', 'finance.revenue', 'overview.financial_summary'].some((p) => kitchen.can(p));
+    const departmentPermissions = ['reports.departments', 'finance.department_revenue', 'overview.department_performance', 'departments.performance'];
+    let scope = null;
+    if (!wide) {
+      const ids = new Set();
+      let all = false;
+      for (const permission of departmentPermissions) {
+        const s = kitchen.scope(permission);
+        if (s === null) all = true;
+        else s.forEach((id) => ids.add(id));
+      }
+      scope = all ? null : [...ids];
+    }
     if (query.department_id && query.department_id !== 'all') {
       if (!mongoose.isValidObjectId(query.department_id)) throw ApiError.badRequest('department_id must be a valid id.', { department_id: 'invalid' });
-      kitchen.assert(financial ? 'reports.sales' : 'reports.departments', String(query.department_id));
-      scope = [String(query.department_id)];
+      const id = String(query.department_id);
+      if (!wide && !departmentPermissions.some((p) => kitchen.can(p, id))) kitchen.assert('reports.departments', id);
+      scope = [id];
     }
-    return { scope, financial: financial && scope === null };
+    // Kitchen-wide reports are built in full; #keepAllowed then removes what the role doesn't show.
+    return { scope, financial: scope === null };
+  }
+
+  /** Removes the sections of a report this person's role doesn't show. */
+  #keepAllowed(kitchen, report) {
+    if (kitchen.isAdmin) return report;
+    const any = (...permissions) => permissions.some((p) => kitchen.can(p));
+    const out = { ...report };
+    const money = any('reports.sales', 'reports.financial', 'finance.revenue', 'overview.financial_summary', 'overview.sales');
+    if (!money) {
+      out.sales = null;
+      out.summary = { ...out.summary, sales_rwf: null, average_order_rwf: null, cancelled_value_rwf: null };
+      out.series = out.series.map(({ sales_rwf: _s, ...rest }) => rest);
+      out.by_fulfillment = Object.fromEntries(Object.entries(out.by_fulfillment || {}).map(([k, v]) => [k, { orders: v.orders }]));
+      out.tables = (out.tables || []).map(({ sales_rwf: _s, ...rest }) => rest);
+      out.previous = out.previous ? { ...out.previous, sales_rwf: null } : out.previous;
+      out.change = out.change ? { ...out.change, sales_percent: null } : out.change;
+    }
+    if (!any('reports.orders', 'overview.orders', 'overview.statistics', 'reports.sales')) {
+      out.by_hour = [];
+      out.by_source = {};
+    }
+    if (!any('reports.products', 'reports.sales')) {
+      out.top_products = [];
+      out.not_sold = [];
+    }
+    if (!any('reports.departments', 'finance.department_revenue', 'overview.department_performance', 'departments.performance', 'reports.sales')) out.departments = [];
+    if (!any('reports.employees', 'staff.view_performance')) out.staff = null;
+    if (!any('reports.customers')) out.customers = null;
+    if (!any('reports.inventory', 'inventory.reports')) out.inventory = { movements: 0, movements_by_reason: {}, most_used: [], low_stock: [], stock_value_rwf: null, hidden: true };
+    if (!any('reports.payments', 'reports.financial', 'finance.payment_summaries', 'invoices.cashier_reports')) out.payments = null;
+    out.highlights = highlights(out);
+    return out;
   }
 
   /**
@@ -422,18 +502,17 @@ class ReportService {
     const period = parsePeriod(query);
     const { scope, financial } = this.#scopeFor(kitchen, query);
     const closed = period.end <= new Date();
-    if (closed && scope === null && period.type !== 'custom') {
+    if (closed && scope === null && financial && period.type !== 'custom') {
       const stored = await KitchenReport.findOne({ vendor_id: kitchen.vendorId, period: period.type, start: period.start }).lean();
-      if (stored) return { ...stored.data, stored: true, generated_at: stored.generated_at };
+      if (stored) return { ...this.#keepAllowed(kitchen, stored.data), stored: true, generated_at: stored.generated_at };
     }
     const report = await build(kitchen.vendorId, period, { scope, financial });
-    if (closed && scope === null && period.type !== 'custom') await this.#store(kitchen.vendorId, period, report, 'manual');
-    return { ...report, stored: false, live: !closed };
+    if (closed && scope === null && financial && period.type !== 'custom') await this.#store(kitchen.vendorId, period, report, 'manual');
+    return { ...this.#keepAllowed(kitchen, report), stored: false, live: !closed };
   }
 
   /** The kitchen's saved reports, newest first. */
   async history(kitchen, query = {}) {
-    if (!kitchen.can('reports.sales')) kitchen.assert('reports.sales');
     const period = PERIODS.includes(query.period) ? query.period : 'monthly';
     const rows = await KitchenReport.find({ vendor_id: kitchen.vendorId, period }).sort({ start: -1 }).limit(60).lean();
     return {
@@ -511,7 +590,7 @@ class ReportService {
   /** A short live summary for the dashboard: today so far. */
   async today(kitchen) {
     const { scope, financial } = this.#scopeFor(kitchen, {});
-    const report = await build(kitchen.vendorId, periodContaining('daily'), { scope, financial });
+    const report = this.#keepAllowed(kitchen, await build(kitchen.vendorId, periodContaining('daily'), { scope, financial }));
     return { period: report.period, summary: report.summary, highlights: report.highlights, departments: report.departments, change: report.change || null };
   }
 }

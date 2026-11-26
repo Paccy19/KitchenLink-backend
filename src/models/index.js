@@ -48,6 +48,17 @@ const StockMovement = require('./StockMovement');
 const Supplier = require('./Supplier');
 const KitchenActivity = require('./KitchenActivity');
 const KitchenReport = require('./KitchenReport');
+const StaffNotification = require('./StaffNotification');
+const ServiceRequest = require('./ServiceRequest');
+const CashierSession = require('./CashierSession');
+const Expense = require('./Expense');
+const PurchaseOrder = require('./PurchaseOrder');
+const KitchenCustomer = require('./KitchenCustomer');
+const Feedback = require('./Feedback');
+const Reservation = require('./Reservation');
+const Promotion = require('./Promotion');
+const StaffShift = require('./StaffShift');
+const StaffAttendance = require('./StaffAttendance');
 
 module.exports = {
   Department,
@@ -60,6 +71,17 @@ module.exports = {
   Supplier,
   KitchenActivity,
   KitchenReport,
+  StaffNotification,
+  ServiceRequest,
+  CashierSession,
+  Expense,
+  PurchaseOrder,
+  KitchenCustomer,
+  Feedback,
+  Reservation,
+  Promotion,
+  StaffShift,
+  StaffAttendance,
   AdminLoginChallenge,
   BigEventDeliverySettings,
   SpecialDeliveryRequest,

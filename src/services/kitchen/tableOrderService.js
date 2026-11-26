@@ -85,6 +85,7 @@ class TableOrderService {
       table: { label: table.label, area: table.area || '' },
       kitchen: storefront,
       departments: departments.map(departmentService.serializePublic),
+      promotions: await require('./promotionService').publicCampaigns(vendor._id),
       ordering: {
         ...orderingState(table, vendor),
         payment_timing: timing,
@@ -207,6 +208,23 @@ class TableOrderService {
     const order = await Order.findById(orderId).lean();
     const departments = new Map((await departmentService.listForVendor(order.vendor_id)).map((d) => [String(d._id), d]));
     return { order: guestView(order, departments, await invoiceService.publicForOrder(order)) };
+  }
+
+  async request(token, body = {}) {
+    const { table } = await resolveTable(token);
+    if (!table.is_active) throw ApiError.conflict('This table is not taking requests right now.', 'TABLE_INACTIVE');
+    return require('./serviceRequestService').create(table, body);
+  }
+
+  async openRequests(token) {
+    const { table } = await resolveTable(token);
+    return { requests: await require('./serviceRequestService').openForTable(table) };
+  }
+
+  async feedback(token, orderId, key, body = {}, customer = null) {
+    await this.getOrder(token, orderId, key, customer);
+    const order = await Order.findById(orderId).lean();
+    return require('./customerService').leaveFeedback(order, body);
   }
 
   /** GET /tables/:token/orders/:id?key= — a guest following their order (the key proves it's theirs). */

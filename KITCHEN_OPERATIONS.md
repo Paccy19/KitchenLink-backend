@@ -149,11 +149,61 @@ export neutralises cells that start like spreadsheet formulas.
 departments, roles, staff and access changes, tables and QR codes, tickets,
 collection and serving, invoices, payments and refunds, stock.
 
+## The full permission list
+
+`config/kitchenAccess.js` holds 242 permissions in 20 groups (Overview,
+Settings, Staff, Roles, Departments, Menu, Orders, Preparation, Tables,
+Service, Cashier, Finance, Inventory, Delivery, Customers, Reservations,
+Promotions, Notifications, Reports, Audit). Every one is enforced. Handing
+out access — creating or editing roles, choosing a role's permissions,
+giving roles to employees, choosing department managers and administrators —
+and the wallet are kitchen-administrator only (`A` flag): they show in the
+list but can't be put in a role.
+
+## More kitchen tools
+
+- **Orders** (`orderOpsService`): priority, who looks after it, adding and
+  removing items and changing quantities (bills paid in person, before
+  payment: app orders were charged online), moving items between
+  departments, moving orders between tables (the bill lines follow),
+  reopening, the full history, claiming collection tasks, and the kitchen's
+  own couriers for orders it delivers itself.
+- **Tickets**: pause/resume, cancel one department's part (in-person bills),
+  give a ticket to an employee. Queues put urgent orders first.
+- **Bills**: merge tables, split a bill, cancel an unpaid bill, discount
+  codes, a customer on the bill (standing discount, loyalty points), points
+  spent as a discount.
+- **Guests at the table** ask for the waiter or the bill
+  (`ServiceRequest`) and rate their order (`Feedback`; public ones are
+  reviews on the kitchen page, the kitchen can reply).
+- **Cashier tills** (`CashierSession`): opening float, then counted cash
+  against float + cash taken − cash refunded; cashier reports.
+- **Finance**: expenses (`Expense`, also recorded when a purchase order is
+  received), profit and loss, every money movement.
+- **Stock**: categories and kinds, transfers between departments, purchase
+  orders (`PurchaseOrder`) received into stock.
+- **Customers** (`KitchenCustomer`), loyalty settings, messages to app
+  customers (3 a day).
+- **Reservations** (`Reservation`): no double booking, free-table search,
+  seating, longer stays, active dining sessions.
+- **Promotions** (`Promotion`): codes the cashier applies and automatic
+  campaigns, on the whole bill, some products or some departments, on table
+  bills (app prices stay as they are).
+- **Team inbox** (`StaffNotification`): messages to everyone, roles,
+  departments or people, and automatic alerts (new and urgent orders, ready
+  items, low stock, guest requests, reservations, failed sign-ins, late
+  clock-ins), switchable per kitchen and mutable per person.
+- **Team**: invitations by SMS/email, shift schedules (`StaffShift`),
+  clocking in and out (`StaffAttendance`), signing an employee out
+  everywhere, sign-in history and security events in the activity log.
+- **Menu categories** a kitchen created can be renamed or deleted by it,
+  while no other kitchen uses them.
+
 ## Known limits
 
 - The Flutter app (`KitchenLink-Mobile`) does not have these screens yet.
 - There are no sockets: dashboards poll (`/vendor/workspace` carries the
   badge counts), as everywhere else in KitchenLink.
 - One username, phone or email signs in to one kitchen only.
-- Staff can't yet enter orders for walk-in customers (a POS screen).
+- Staff can't yet enter orders for walk-in customers from scratch (a POS screen); they can add to and edit table orders.
 - Department operating hours are stored but don't yet stop ordering.

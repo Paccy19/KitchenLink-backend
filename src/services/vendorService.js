@@ -77,6 +77,8 @@ class VendorService {
     return {
       ...serializeVendorStorefront(vendor, { menu, distanceKm }),
       departments: departments.map(require('./kitchen/departmentService').serializePublic),
+      // Guests' public reviews (rated after their order).
+      reviews: await require('./kitchen/customerService').publicReviews(vendor._id),
       // Photos of the kitchen's own printed menu.
       menu_photos: [...(vendor.menu_photos || [])]
         .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))

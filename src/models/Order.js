@@ -52,6 +52,11 @@ const ticketSchema = new mongoose.Schema({
   ready_at: { type: Date, default: null },
   cancelled_at: { type: Date, default: null },
   stock_deducted_at: { type: Date, default: null },
+  // Paused by the department (waiting for an ingredient …); shown on the queue.
+  paused: { type: Boolean, default: false },
+  paused_at: { type: Date, default: null },
+  pause_reason: { type: String, default: '' },
+  cancel_reason: { type: String, default: '' },
 });
 
 const orderSchema = new mongoose.Schema(
@@ -118,6 +123,27 @@ const orderSchema = new mongoose.Schema(
     // Where the order came from.
     source: { type: String, enum: ['marketplace', 'table_qr', 'event'], default: 'marketplace' },
     invoice_id: { type: ObjectId, ref: 'Invoice', default: null },
+    // Kitchen operations: how urgent, who looks after it, who collects it,
+    // and (orders the kitchen delivers itself) which employee takes it.
+    priority: { type: String, enum: ['normal', 'high', 'urgent'], default: 'normal' },
+    assigned_staff: { type: actorSchema, default: null },
+    collector: { type: actorSchema, default: null },
+    kitchen_courier: {
+      type: new mongoose.Schema(
+        {
+          staff_id: { type: ObjectId, ref: 'KitchenStaff', required: true },
+          name: { type: String, default: '' },
+          status: { type: String, enum: ['assigned', 'on_the_way', 'delivered'], default: 'assigned' },
+          assigned_at: { type: Date, default: Date.now },
+          updated_at: { type: Date, default: Date.now },
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
+    // A kitchen customer record (loyalty, notes) the bill was linked to.
+    kitchen_customer_id: { type: ObjectId, ref: 'KitchenCustomer', default: null },
+    reopened_at: { type: Date, default: null },
     // Dine-in orders paid in person: the point the bill must be paid by,
     // fixed when ordered from the kitchen's rule ('preparation', 'collection', 'none').
     payment_gate: { type: String, enum: ['preparation', 'collection', 'none', null], default: null },

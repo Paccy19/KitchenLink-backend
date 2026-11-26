@@ -83,8 +83,8 @@ class OrderRepository {
       .lean();
   }
 
-  async listByVendor(vendorId, { statuses, limit, offset, sort }) {
-    const filter = { vendor_id: vendorId };
+  async listByVendor(vendorId, { statuses, limit, offset, sort, extra = null }) {
+    const filter = { vendor_id: vendorId, ...(extra || {}) };
     if (statuses && statuses.length > 0) filter.status = { $in: statuses };
 
     const sortSpec =

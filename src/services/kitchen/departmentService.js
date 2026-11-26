@@ -245,6 +245,9 @@ class DepartmentService {
 
   async create(kitchen, body = {}, file) {
     const update = await this.#parse(kitchen, { ...body, __file: file }, { partial: false });
+    if (update.manager_staff_ids?.length && !kitchen.isAdmin) {
+      throw ApiError.forbidden('Only a kitchen administrator can choose department managers.', 'KITCHEN_ADMIN_ONLY');
+    }
     if (!update.code_prefix) {
       update.code_prefix = access.DEPARTMENT_CATEGORIES.find((c) => c.id === update.category)?.prefix || update.name[0].toUpperCase();
     }
@@ -264,14 +267,34 @@ class DepartmentService {
 
   async update(kitchen, departmentId, body = {}, file) {
     const current = await this.#load(kitchen.vendorId, departmentId);
-    // Department managers may run their department, but only administrators
-    // (or staff with departments.manage_staff for it) choose its managers.
-    kitchen.assert('departments.edit', current._id);
     const update = await this.#parse(kitchen, { ...body, __file: file }, { partial: true });
-    if (update.workflow) kitchen.assert('departments.configure_workflow', current._id);
-    if (update.operating_hours) kitchen.assert('departments.manage_hours', current._id);
-    if (update.manager_staff_ids && !kitchen.isAdmin) kitchen.assert('staff.assign_roles');
-    if (update.is_active === false && !kitchen.isAdmin) kitchen.assert('departments.delete');
+    // Each kind of change has its own permission, for this department.
+    const id = String(current._id);
+    const anyOf = (permissions) => {
+      if (!permissions.some((permission) => kitchen.can(permission, id))) kitchen.assert(permissions[0], id);
+    };
+    // Compared in a normal form: the dashboard sends the whole form on every save.
+    const norm = (field, value) => {
+      if (value === undefined || value === null) return field === 'is_active' ? true : field.endsWith('_ids') || field === 'stations' || field === 'operating_hours' ? '[]' : '';
+      if (field === 'workflow') {
+        const labels = { ...access.PREP_STAGE_LABELS, ...(value.labels || {}) };
+        return JSON.stringify([value.use_accept !== false, value.use_preparing !== false, access.PREP_STAGES.map((stage) => labels[stage])]);
+      }
+      if (field === 'stations') return JSON.stringify(value.map((station) => station.name));
+      if (field.endsWith('_ids')) return JSON.stringify(value.map(String).sort());
+      if (Array.isArray(value) || typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    };
+    const changed = (field) => update[field] !== undefined && norm(field, update[field]) !== norm(field, current[field]);
+    if (['name', 'category', 'custom_category', 'description', 'code_prefix', 'image_url', 'sort_order'].some(changed)) anyOf(['departments.edit']);
+    if (changed('is_active')) anyOf(['departments.activate', 'departments.availability']);
+    if (changed('operating_hours')) anyOf(['departments.manage_hours']);
+    if (changed('workflow')) anyOf(['departments.configure_workflow', 'kitchen.workflows']);
+    if (changed('stations')) anyOf(['departments.settings', 'kitchen.manage_stations']);
+    // Managers get extra permissions in their department: administrators only.
+    if (changed('manager_staff_ids') && !kitchen.isAdmin) {
+      throw ApiError.forbidden('Only a kitchen administrator can choose department managers.', 'KITCHEN_ADMIN_ONLY');
+    }
     const department = await Department.findOneAndUpdate({ _id: current._id }, { $set: update }, { returnDocument: 'after' }).lean();
     await activity.record(kitchen, {
       action: 'department.updated',
@@ -317,7 +340,7 @@ class DepartmentService {
   /** Puts employees in (or takes them out of) a department. */
   async setStaff(kitchen, departmentId, body = {}) {
     const department = await this.#load(kitchen.vendorId, departmentId);
-    kitchen.assert('departments.manage_staff', department._id);
+    if (!kitchen.can('staff.assign_departments')) kitchen.assert('departments.manage_staff', String(department._id));
     const ids = Array.isArray(body.staff_ids) ? [...new Set(body.staff_ids.map(String))] : null;
     if (!ids || ids.some((id) => !mongoose.isValidObjectId(id))) {
       throw ApiError.badRequest('staff_ids must be a list of employee ids.', { staff_ids: 'expected a list of ids' });

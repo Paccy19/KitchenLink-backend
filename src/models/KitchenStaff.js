@@ -24,6 +24,8 @@ const kitchenStaffSchema = new mongoose.Schema(
     department_ids: [{ type: ObjectId, ref: 'Department' }],
     // Kitchen administrator: full control, like the kitchen account itself.
     is_admin: { type: Boolean, default: false },
+    // Alert kinds this person muted (kitchenAccess.ALERT_TYPES).
+    notification_prefs: { muted: [{ type: String }] },
     is_active: { type: Boolean, default: true },
     last_login_at: { type: Date, default: null },
     sessions_valid_after: { type: Date, default: null },

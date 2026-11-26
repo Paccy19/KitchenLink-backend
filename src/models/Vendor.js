@@ -220,6 +220,18 @@ const vendorSchema = new mongoose.Schema(
       allow_partial_service: { type: Boolean, default: true },
       // Deduct stock from recipes when a ticket is marked ready.
       inventory_auto_deduct: { type: Boolean, default: false },
+      // Automatic team alerts on/off (kitchenAccess.ALERT_TYPES); missing = on.
+      alerts: { type: mongoose.Schema.Types.Mixed, default: {} },
+      // Loyalty points: earned on paid bills, spent as a discount.
+      loyalty: {
+        enabled: { type: Boolean, default: false },
+        // 1 point for every this many RWF spent.
+        earn_per_rwf: { type: Number, min: 100, default: 1000 },
+        // What one point is worth when spent.
+        point_value_rwf: { type: Number, min: 1, default: 10 },
+      },
+      // The starting roles were created (once).
+      default_roles_created: { type: Boolean, default: false },
       updated_at: { type: Date, default: null },
     },
     // Soft delete.

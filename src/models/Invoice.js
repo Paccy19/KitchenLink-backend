@@ -32,6 +32,7 @@ const invoiceSchema = new mongoose.Schema(
         order_id: { type: ObjectId, ref: 'Order' },
         order_number: { type: String, default: '' },
         item_id: { type: ObjectId, default: null },
+        menu_item_id: { type: ObjectId, ref: 'MenuItem', default: null },
         name: { type: String, required: true },
         department_id: { type: ObjectId, ref: 'Department', default: null },
         department_name: { type: String, default: '' },
@@ -44,6 +45,26 @@ const invoiceSchema = new mongoose.Schema(
     subtotal_rwf: { type: Number, default: 0, min: 0 },
     delivery_fee_rwf: { type: Number, default: 0, min: 0 },
     discount_rwf: { type: Number, default: 0, min: 0 },
+    // Promotions applied (codes and automatic campaigns), worked out from the lines.
+    promo_discount_rwf: { type: Number, default: 0, min: 0 },
+    promotions: [
+      {
+        _id: false,
+        promotion_id: { type: ObjectId, ref: 'Promotion' },
+        name: { type: String, default: '' },
+        code: { type: String, default: '' },
+        amount_rwf: { type: Number, default: 0, min: 0 },
+      },
+    ],
+    // Loyalty: the kitchen customer on the bill, and points spent on it.
+    kitchen_customer_id: { type: ObjectId, ref: 'KitchenCustomer', default: null },
+    loyalty_points_redeemed: { type: Number, default: 0, min: 0 },
+    loyalty_discount_rwf: { type: Number, default: 0, min: 0 },
+    loyalty_points_earned: { type: Number, default: 0, min: 0 },
+    // Split and merged bills, and why a bill was cancelled.
+    split_from: { type: ObjectId, ref: 'Invoice', default: null },
+    merged_into: { type: ObjectId, ref: 'Invoice', default: null },
+    cancel_reason: { type: String, default: '' },
     total_rwf: { type: Number, default: 0, min: 0 },
     amount_paid_rwf: { type: Number, default: 0, min: 0 },
     refunded_rwf: { type: Number, default: 0, min: 0 },

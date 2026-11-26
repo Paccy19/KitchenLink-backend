@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
 const { parseObjectId } = require('../../utils/vendorValidators');
-const { Order, Vendor, Invoice } = require('../../models');
+const { Order, Vendor, Invoice, DiningTable } = require('../../models');
 const config = require('../../config');
 const access = require('../../config/kitchenAccess');
 const departmentService = require('./departmentService');
@@ -35,6 +35,10 @@ function serializeForService(order, departments, { invoice = null, canSeeDeliver
     placed_at: order.created_at,
     payment_status: order.payment_status,
     payment_hold: ticketService.paymentBlocks(order, null, 'collection'),
+    priority: order.priority || 'normal',
+    assigned_staff: order.assigned_staff?.name ? { id: order.assigned_staff.id, name: order.assigned_staff.name } : null,
+    collector: order.collector?.name ? { id: order.collector.id, name: order.collector.name } : null,
+    kitchen_courier: order.kitchen_courier ? { staff_id: String(order.kitchen_courier.staff_id), name: order.kitchen_courier.name, status: order.kitchen_courier.status } : null,
     departments: ticketService.ticketProgress(order, departments),
     counts: {
       total: live.length,
@@ -58,7 +62,7 @@ function serializeForService(order, departments, { invoice = null, canSeeDeliver
       ? { id: String(invoice._id), invoice_number: invoice.invoice_number, status: invoice.status, total_rwf: invoice.total_rwf, balance_due_rwf: invoice.total_rwf - invoice.amount_paid_rwf }
       : null,
     // Delivery handover: where it goes (for coordinators handing it to the delivery worker).
-    delivery: canSeeDelivery && order.fulfillment === 'delivery'
+    delivery: canSeeDelivery && ['delivery', 'vendor_delivery'].includes(order.fulfillment)
       ? { address: order.delivery_location?.address || '', neighborhood: order.delivery_location?.neighborhood || '', note: order.delivery_location?.note || '', driver_assigned: Boolean(order.driver_id) }
       : null,
   };
@@ -74,7 +78,26 @@ class ServiceService {
     if (['dine_in', 'pickup', 'delivery'].includes(query.fulfillment)) filter.fulfillment = query.fulfillment;
     if (query.table_id && mongoose.isValidObjectId(query.table_id)) filter['table.table_id'] = new ObjectId(query.table_id);
     if (query.only === 'ready') filter['items.service_status'] = 'waiting_collection';
-    if (!kitchen.can('service.delivery_handover')) filter.fulfillment = filter.fulfillment && filter.fulfillment !== 'delivery' ? filter.fulfillment : { $ne: 'delivery' };
+    // "View assigned orders": given to me, at my tables, collected or delivered by me.
+    if (query.mine === 'true' && kitchen.actor.type === 'staff') {
+      kitchen.assert('service.view_assigned');
+      const me = kitchen.actor.id;
+      const myTables = await DiningTable.find({ vendor_id: kitchen.vendorId, assigned_staff_id: new ObjectId(me), deleted_at: null }).select('_id').lean();
+      filter.$or = [
+        { 'assigned_staff.id': me },
+        { 'collector.id': me },
+        { 'kitchen_courier.staff_id': new ObjectId(me) },
+        ...(myTables.length ? [{ 'table.table_id': { $in: myTables.map((t) => t._id) } }] : []),
+      ];
+      delete filter.fulfillment;
+    } else {
+      // Which kinds of orders this person follows: tables, takeaway, delivery.
+      const kinds = [];
+      if (kitchen.can('service.view_ready') || kitchen.can('service.dine_in')) kinds.push('dine_in');
+      if (kitchen.can('service.view_ready') || kitchen.can('service.takeaway')) kinds.push('pickup');
+      if (kitchen.can('delivery.view_orders')) kinds.push('delivery', 'vendor_delivery');
+      filter.fulfillment = filter.fulfillment ? (kinds.includes(filter.fulfillment) ? filter.fulfillment : '__none__') : { $in: kinds };
+    }
     const [orders, departmentList] = await Promise.all([
       Order.find(filter).sort({ created_at: 1 }).limit(200).lean(),
       departmentService.listForVendor(kitchen.vendorId),
@@ -83,8 +106,10 @@ class ServiceService {
     const invoiceIds = orders.map((o) => o.invoice_id).filter(Boolean);
     const invoices = kitchen.can('invoices.view') && invoiceIds.length ? await Invoice.find({ _id: { $in: invoiceIds } }).lean() : [];
     const invoiceById = new Map(invoices.map((i) => [String(i._id), i]));
+    const rank = { urgent: 0, high: 1, normal: 2 };
+    orders.sort((a, b) => (rank[a.priority] ?? 2) - (rank[b.priority] ?? 2));
     const list = orders.map((order) =>
-      serializeForService(order, departments, { invoice: invoiceById.get(String(order.invoice_id)), canSeeDelivery: kitchen.can('service.delivery_handover') })
+      serializeForService(order, departments, { invoice: invoiceById.get(String(order.invoice_id)), canSeeDelivery: kitchen.can('delivery.view_locations') })
     );
     return {
       orders: list,
@@ -209,7 +234,7 @@ class ServiceService {
     const order = await Order.findById(orderId).lean();
     const departments = new Map((await departmentService.listForVendor(kitchen.vendorId)).map((d) => [String(d._id), d]));
     const invoice = order.invoice_id && kitchen.can('invoices.view') ? await Invoice.findById(order.invoice_id).lean() : null;
-    return serializeForService(order, departments, { invoice, canSeeDelivery: kitchen.can('service.delivery_handover') });
+    return serializeForService(order, departments, { invoice, canSeeDelivery: kitchen.can('delivery.view_locations') });
   }
 }
 

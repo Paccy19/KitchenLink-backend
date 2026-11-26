@@ -64,11 +64,12 @@ router.use('/vendor/auth', vendorAuthRoutes);
 router.use('/vendor/menu', vendorMenuRoutes);
 router.use('/vendor/orders', vendorOrderRoutes);
 router.use('/vendor/wallet', requireVendorAuth, can('account.wallet'), vendorWalletRoutes);
-router.use('/vendor/notifications', requireVendorAuth, can('account.notifications'), vendorNotificationRoutes);
-router.use('/vendor/support', requireVendorAuth, can('account.messages'), vendorSupportRoutes);
-router.use('/vendor/chats', requireVendorAuth, can('account.messages'), vendorChatRoutes);
-router.use('/vendor/special-deliveries', requireVendorAuth, can('account.messages'), vendorSpecialDeliveryRoutes);
-router.use('/vendor/delivery-coverage', requireVendorAuth, can('account.settings'), vendorCoverageRoutes);
+router.use('/vendor/notifications', requireVendorAuth, can('notifications.view', 'notifications.history'), vendorNotificationRoutes);
+// Help & Support: the kitchen's own conversations with the KitchenLink team.
+router.use('/vendor/support', requireVendorAuth, can('settings.kitchen_settings'), vendorSupportRoutes);
+router.use('/vendor/chats', requireVendorAuth, can('customers.complaints'), vendorChatRoutes);
+router.use('/vendor/special-deliveries', requireVendorAuth, can('delivery.fees'), vendorSpecialDeliveryRoutes);
+router.use('/vendor/delivery-coverage', requireVendorAuth, can('delivery.settings'), vendorCoverageRoutes);
 // Departments, staff, roles, tables, preparation, service, invoices, stock, reports.
 router.use('/vendor', kitchenRoutes);
 router.use('/vendor', vendorDashboardRoutes);

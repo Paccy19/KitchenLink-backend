@@ -142,6 +142,8 @@ const SPECS = [
       settlement_status: 'text', settled_at: 'date',
       rider_payout_settled_at: 'date',
       tickets: 'json', fulfillment: 'text', source: 'text',
+      priority: 'text', assigned_staff: 'json', collector: 'json', kitchen_courier: 'json',
+      kitchen_customer_id: 'oid', reopened_at: 'date',
       table_ref: ['json', 'table'], guest_name: ['text', 'guest.name'],
       invoice_id: 'oid', payment_gate: 'text',
     },
@@ -312,7 +314,7 @@ const SPECS = [
     table: 'kitchenstaffs', collection: 'kitchenstaffs', sample: 'name',
     fields: {
       vendor_id: 'oid', name: 'text', phone: 'text', email: 'text', job_title: 'text',
-      username: 'text', password_hash: 'text', password_set_at: 'date',
+      username: 'text', password_hash: 'text', password_set_at: 'date', notification_prefs: 'json',
       role_ids: 'text[]', department_ids: 'text[]', is_admin: 'bool', is_active: 'bool',
       is_current: 'bool', last_login_at: 'date', sessions_valid_after: 'date', deleted_at: 'date',
     },
@@ -332,6 +334,8 @@ const SPECS = [
       customer_name: 'text', kind: 'text', is_open: 'bool', lines: 'json', subtotal_rwf: 'num',
       delivery_fee_rwf: 'num', discount_rwf: 'num', total_rwf: 'num', amount_paid_rwf: 'num',
       refunded_rwf: 'num', status: 'text', payments: 'json', refunds: 'json', notes: 'text',
+      promo_discount_rwf: 'num', promotions: 'json', kitchen_customer_id: 'oid', loyalty_points_redeemed: 'num',
+      loyalty_discount_rwf: 'num', loyalty_points_earned: 'num', split_from: 'oid', merged_into: 'oid', cancel_reason: 'text',
       created_by: 'json', paid_at: 'date', closed_at: 'date',
     },
   },
@@ -344,7 +348,7 @@ const SPECS = [
   {
     table: 'inventoryitems', collection: 'inventoryitems', sample: 'name',
     fields: {
-      vendor_id: 'oid', department_id: 'oid', name: 'text', unit: 'text', sku: 'text', quantity: 'num',
+      vendor_id: 'oid', department_id: 'oid', name: 'text', unit: 'text', sku: 'text', category: 'text', kind: 'text', quantity: 'num',
       low_stock_threshold: 'num', cost_per_unit_rwf: 'num', supplier_id: 'oid',
       low_stock_alerted_at: 'date', deleted_at: 'date',
     },
@@ -353,7 +357,7 @@ const SPECS = [
     table: 'stockmovements', collection: 'stockmovements', sample: 'reason',
     fields: {
       vendor_id: 'oid', item_id: 'oid', department_id: 'oid', delta: 'num', quantity_after: 'num',
-      reason: 'text', note: 'text', order_id: 'oid', order_number: 'text', supplier_id: 'oid', actor: 'json',
+      reason: 'text', note: 'text', order_id: 'oid', order_number: 'text', supplier_id: 'oid', actor: 'json', purchase_order_id: 'oid',
     },
   },
   {
@@ -370,6 +374,17 @@ const SPECS = [
       data: 'json', generated_at: 'date', generated_by: 'text',
     },
   },
+  { table: 'staffnotifications', collection: 'staffnotifications', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'servicerequests', collection: 'servicerequests', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'cashiersessions', collection: 'cashiersessions', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'expenses', collection: 'expenses', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'purchaseorders', collection: 'purchaseorders', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'kitchencustomers', collection: 'kitchencustomers', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'feedbacks', collection: 'feedbacks', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'reservations', collection: 'reservations', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'promotions', collection: 'promotions', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'staffshifts', collection: 'staffshifts', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'staffattendances', collection: 'staffattendances', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
 ];
 
 /**
@@ -466,7 +481,8 @@ const toRowValues = (spec, doc) => {
   const values = { _id: String(doc._id) };
   for (const [field, typeSpec] of Object.entries(spec.fields)) {
     const [type, source] = Array.isArray(typeSpec) ? typeSpec : [typeSpec, field];
-    const raw = source.split('.').reduce((value, key) => (value == null ? undefined : value[key]), doc);
+    // '$root' = the whole document (tables that keep it as JSONB).
+    const raw = source === '$root' ? doc : source.split('.').reduce((value, key) => (value == null ? undefined : value[key]), doc);
     const v = transform(type, raw);
     if (v !== undefined) values[field] = v;
   }

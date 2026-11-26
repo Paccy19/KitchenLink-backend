@@ -10,6 +10,9 @@ const inventoryItemSchema = new mongoose.Schema(
     department_id: { type: ObjectId, ref: 'Department', default: null },
     name: { type: String, required: true, trim: true },
     unit: { type: String, default: 'pcs', trim: true },
+    // Stock category (Dairy, Dry goods, Packaging …) and what it is for.
+    category: { type: String, default: '', trim: true },
+    kind: { type: String, enum: ['ingredient', 'raw_material', 'supply'], default: 'ingredient' },
     sku: { type: String, default: '', trim: true },
     quantity: { type: Number, default: 0 },
     low_stock_threshold: { type: Number, min: 0, default: 0 },

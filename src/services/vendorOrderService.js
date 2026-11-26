@@ -37,7 +37,23 @@ class VendorOrderService {
     return new Map(customers.map((customer) => [String(customer._id), customer]));
   }
 
-  async list(vendor, query = {}) {
+  /**
+   * Which orders a person's role shows: all of them ("View all orders"), or
+   * only new ones ("Receive new orders"), finished ones ("View order
+   * history") and delivery orders ("View delivery orders" / "history").
+   */
+  #visibleFilter(kitchen) {
+    if (!kitchen || kitchen.can('orders.view')) return null;
+    const finished = ['delivered', 'cancelled'];
+    const or = [];
+    if (kitchen.can('orders.receive')) or.push({ status: 'placed' });
+    if (kitchen.can('orders.history')) or.push({ status: { $in: finished } });
+    if (kitchen.can('delivery.view_orders')) or.push({ fulfillment: { $in: ['delivery', 'vendor_delivery'] }, status: { $nin: finished } });
+    if (kitchen.can('delivery.history')) or.push({ fulfillment: { $in: ['delivery', 'vendor_delivery'] }, status: { $in: finished } });
+    return or.length ? { $or: or } : { _id: null };
+  }
+
+  async list(vendor, query = {}, kitchen = null) {
     if (query.status !== undefined && query.status !== '') {
       parseVendorOrderStatus(query.status);
     }
@@ -50,6 +66,7 @@ class VendorOrderService {
 
     const { orders, total } = await orderRepository.listByVendor(vendor._id, {
       statuses: internalStatusesFor(query.status),
+      extra: this.#visibleFilter(kitchen),
       limit,
       offset,
       sort,
@@ -88,13 +105,20 @@ class VendorOrderService {
     const id = parseObjectId(orderId, 'order_id');
     const nextStatus = parseVendorOrderStatus(body?.status);
     // Staff need the permission for this step (the owner has them all).
-    if (kitchen) {
-      kitchen.assert(nextStatus === 'accepted' ? 'orders.accept' : nextStatus === 'cancelled' ? 'orders.cancel' : 'orders.update_status');
-    }
-
     const order = await orderRepository.findByVendorAndId(vendor._id, id);
     if (!order) {
       throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
+    }
+    if (kitchen) {
+      // Turning a new order down is "reject"; stopping one already accepted is "cancel".
+      const isNew = vendorConfig.internalToVendorStatus[order.status] === 'new';
+      const needs = {
+        accepted: ['orders.accept'],
+        cancelled: isNew ? ['orders.reject', 'orders.cancel'] : ['orders.cancel'],
+        preparing: ['kitchen.start_preparation', 'kitchen.update_progress'],
+        ready: ['kitchen.mark_ready'],
+      }[nextStatus] || ['orders.accept'];
+      if (!needs.some((permission) => kitchen.can(permission))) kitchen.assert(needs[0]);
     }
     const updated = await this.applyStatus(vendor, order, nextStatus, { note: body?.note, actor: kitchen?.actor });
     const customer = order.customer_id ? await customerRepository.findById(order.customer_id) : null;
@@ -237,7 +261,7 @@ class VendorOrderService {
    * Delivery orders are only ever completed by the delivery worker.
    */
   async confirmPickup(vendor, orderId, body = {}, kitchen = null) {
-    if (kitchen) kitchen.assert('orders.handover');
+    if (kitchen && !kitchen.can('orders.handover') && !kitchen.can('delivery.confirm_completion')) kitchen.assert('orders.handover');
     const id = parseObjectId(orderId, 'order_id');
     const order = await orderRepository.findByVendorAndId(vendor._id, id);
     if (!order) {

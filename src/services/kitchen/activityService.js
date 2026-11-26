@@ -32,6 +32,19 @@ const recordSystem = (vendorId, entry, actor = { type: 'system', id: null, name:
 async function list(access, query = {}) {
   const { limit, page, offset } = parsePagination(query, { defaultLimit: 30, maxLimit: 100 });
   const filter = { vendor_id: access.vendorId };
+  // Which logs this person may read ("Audit Logs & Security").
+  const all = ['audit.kitchen_logs', 'overview.activity_logs'].some((p) => access.can(p));
+  if (!all) {
+    const or = [];
+    if (access.can('audit.employee_logs') || access.can('staff.view_activity')) or.push({ actor_type: 'staff' });
+    if (access.can('audit.financial_logs')) or.push({ action: { $regex: '^(invoice|cashier|expense)\\.' } });
+    if (access.can('audit.permission_changes') || access.can('roles.history')) {
+      or.push({ action: { $regex: '^role\\.' } }, { action: { $in: ['staff.access_changed', 'staff.password_set', 'department.updated'] } });
+    }
+    if (access.can('audit.login_history')) or.push({ action: { $in: ['security.login'] } });
+    if (access.can('audit.security_events')) or.push({ action: { $regex: '^security\\.' } });
+    filter.$or = or.length ? or : [{ _id: null }];
+  }
   if (typeof query.actor_id === 'string' && query.actor_id) filter.actor_id = query.actor_id;
   if (typeof query.action === 'string' && query.action) filter.action = { $regex: `^${query.action.replace(/[^a-z_.]/gi, '')}` };
   const [rows, total] = await Promise.all([

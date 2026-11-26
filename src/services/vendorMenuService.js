@@ -197,16 +197,9 @@ class VendorMenuService {
     }
 
     const payload = this.#parsePayload(body, { partial: true });
-    kitchen.assert('menu.edit', deptOf(existing));
     if (body.department_id !== undefined) {
       payload.department_id = (await departmentService.resolveId(vendor._id, body.department_id)) ?? null;
-      kitchen.assert('menu.edit', payload.department_id ? String(payload.department_id) : null);
     }
-    if (payload.price_rwf !== undefined && payload.price_rwf !== existing.price_rwf) kitchen.assert('menu.prices', deptOf(existing));
-    if (payload.is_available !== undefined && payload.is_available !== existing.is_available) {
-      kitchen.assert('menu.availability', deptOf(existing));
-    }
-
     if (body.category_id !== undefined) {
       payload.category_id = (await this.#resolveCategoryId(body.category_id)) ?? null;
     }
@@ -218,6 +211,29 @@ class VendorMenuService {
 
     // Validate options before writing any new image to disk.
     const options = body.options !== undefined ? parseMenuOptions(body.options) || [] : undefined;
+
+    // Each changed field needs its own permission, for this dish's department
+    // (the dashboard sends the whole form, so only real changes count).
+    const department = deptOf(existing);
+    const need = (permissions, departmentId = department) => {
+      if (!permissions.some((permission) => kitchen.can(permission, departmentId))) kitchen.assert(permissions[0], departmentId);
+    };
+    const differs = (field) => payload[field] !== undefined && String(payload[field] ?? '') !== String(existing[field] ?? '');
+    if (['name', 'preparation_time_minutes', 'category_id', 'is_preorder', 'preorder_cutoff', 'preparation_notes'].some(differs)) need(['menu.edit']);
+    if (differs('price_rwf')) need(['menu.prices']);
+    if (differs('description')) need(['menu.descriptions', 'menu.edit']);
+    if (differs('is_available')) need(['menu.availability', 'menu.activate']);
+    if (differs('is_popular')) need(['menu.featured']);
+    if (differs('department_id')) {
+      need(['menu.assign_departments']);
+      need(['menu.assign_departments'], payload.department_id ? String(payload.department_id) : null);
+    }
+    if (clearImage || file || body.image_base64 || (body.image_url !== undefined && body.image_url !== (existing.image_url || ''))) need(['menu.images']);
+    if (options !== undefined) {
+      const key = (list) => JSON.stringify(list.map((o) => [o.group_name || 'Options', o.name, o.additional_price_rwf || 0]).sort());
+      const before = await menuItemOptionRepository.findByMenuItem(id);
+      if (key(options) !== key(before)) need(['menu.variants', 'menu.addons']);
+    }
 
     let newImageUrl;
     if (clearImage) {
@@ -281,7 +297,7 @@ class VendorMenuService {
     if (!existing) {
       throw ApiError.notFound('Menu item not found.', 'MENU_ITEM_NOT_FOUND');
     }
-    kitchen.assert('menu.availability', deptOf(existing));
+    if (!['menu.availability', 'menu.activate'].some((p) => kitchen.can(p, deptOf(existing)))) kitchen.assert('menu.availability', deptOf(existing));
 
     const isAvailable =
       parseBooleanValue(body.is_available, { field: 'is_available' }) ??
@@ -416,12 +432,48 @@ class VendorMenuService {
     return { category: this.#serializeCategory(category), created: true };
   }
 
+  /**
+   * "Edit / Delete product categories": categories are shared by every
+   * kitchen, so a kitchen may only change the ones it created, and only
+   * while no other kitchen's dishes use them.
+   */
+  async #ownCategory(vendor, categoryId) {
+    const { Category, MenuItem } = require('../models');
+    const id = parseObjectId(categoryId, 'category_id');
+    const category = await Category.findById(id).lean();
+    if (!category) throw ApiError.notFound('Category not found.', 'CATEGORY_NOT_FOUND');
+    if (String(category.created_by_vendor_id || '') !== String(vendor._id)) {
+      throw ApiError.forbidden('This category is shared on KitchenLink. You can only change categories your kitchen created.', 'CATEGORY_NOT_YOURS');
+    }
+    const others = await MenuItem.exists({ category_id: id, vendor_id: { $ne: vendor._id }, deleted_at: null });
+    if (others) throw ApiError.conflict('Other kitchens use this category now, so it can no longer be changed.', 'CATEGORY_IN_USE');
+    return { category, Category, MenuItem };
+  }
+
+  async renameCategory(vendor, categoryId, body = {}) {
+    const { category, Category } = await this.#ownCategory(vendor, categoryId);
+    const name = parseRequiredText(String(body.name ?? '').replace(/\s+/g, ' '), { field: 'name', min: 2, max: 40 });
+    const clash = await categoryRepository.findByName(name);
+    if (clash && String(clash._id) !== String(category._id)) throw ApiError.conflict(`There is already a category called "${clash.name}".`, 'CATEGORY_EXISTS');
+    const saved = await Category.findOneAndUpdate({ _id: category._id }, { $set: { name } }, { returnDocument: 'after' }).lean();
+    return { category: this.#serializeCategory(saved) };
+  }
+
+  async deleteCategory(vendor, categoryId) {
+    const { category, Category, MenuItem } = await this.#ownCategory(vendor, categoryId);
+    // This kitchen's dishes in it become uncategorised.
+    await MenuItem.updateMany({ vendor_id: vendor._id, category_id: category._id }, { $set: { category_id: null } });
+    await Category.deleteOne({ _id: category._id });
+    return { deleted: true, id: String(category._id) };
+  }
+
   #serializeCategory(category) {
     return {
       id: String(category._id),
       name: category.name,
       icon_url: category.icon_url || null,
       vendor_types: category.vendor_types || [],
+      created_by_vendor_id: category.created_by_vendor_id ? String(category.created_by_vendor_id) : null,
     };
   }
 
@@ -433,6 +485,8 @@ class VendorMenuService {
         name: category.name,
         icon_url: category.icon_url || null,
         vendor_types: category.vendor_types || [],
+        // Which kitchen created it (only that kitchen may rename or delete it).
+        created_by_vendor_id: category.created_by_vendor_id ? String(category.created_by_vendor_id) : null,
       })),
     };
   }

@@ -22,13 +22,15 @@ const linesFrom = (order) =>
     order_id: order._id,
     order_number: order.order_number,
     item_id: item._id || null,
+    menu_item_id: item.menu_item_id || null,
     name: item.name,
     department_id: item.department_id || null,
     department_name: item.department_name || '',
     quantity: item.quantity,
     unit_price_rwf: item.quantity ? Math.round(item.subtotal_rwf / item.quantity) : item.price_rwf,
     subtotal_rwf: item.subtotal_rwf,
-    voided: order.status === 'cancelled',
+    // A cancelled order, or an item taken off it, no longer counts on the bill.
+    voided: order.status === 'cancelled' || item.service_status === 'cancelled',
   }));
 
 /**
@@ -53,7 +55,21 @@ const recalc = (invoiceId) =>
           },
         },
       },
-      { $set: { total_rwf: { $max: [0, { $subtract: [{ $add: ['$subtotal_rwf', '$delivery_fee_rwf'] }, '$discount_rwf'] }] } } },
+      {
+        $set: {
+          total_rwf: {
+            $max: [
+              0,
+              {
+                $subtract: [
+                  { $add: ['$subtotal_rwf', '$delivery_fee_rwf'] },
+                  { $add: ['$discount_rwf', { $ifNull: ['$promo_discount_rwf', 0] }, { $ifNull: ['$loyalty_discount_rwf', 0] }] },
+                ],
+              },
+            ],
+          },
+        },
+      },
       {
         $set: {
           status: {
@@ -80,17 +96,21 @@ const recalc = (invoiceId) =>
     { returnDocument: 'after', updatePipeline: true }
   ).lean();
 
-/** The bill is paid in full: its dine-in orders count as paid. */
+/**
+ * The bill is paid in full: its dine-in orders count as paid, once every
+ * bill they are on is paid (a split bill puts one order on two bills).
+ */
 async function markOrdersPaid(invoice) {
   if (invoice.status !== 'paid') return;
   const orders = await Order.find({ _id: { $in: invoice.order_ids }, payment_method: 'in_person', payment_status: 'pending' })
     .select('_id total_rwf')
     .lean();
-  await Promise.all(
-    orders.map((order) =>
-      Order.updateOne({ _id: order._id, payment_status: 'pending' }, { $set: { payment_status: 'paid', amount_paid_rwf: order.total_rwf } })
-    )
-  );
+  for (const order of orders) {
+    const unpaid = await Invoice.exists({ order_ids: order._id, status: { $in: OPEN } });
+    if (unpaid) continue;
+    await Order.updateOne({ _id: order._id, payment_status: 'pending' }, { $set: { payment_status: 'paid', amount_paid_rwf: order.total_rwf } });
+  }
+  require('./customerService').earnForInvoice(invoice._id).catch((error) => console.error('[loyalty]', error.message));
 }
 
 function serialize(invoice, { vendor = null, detail = false } = {}) {
@@ -116,6 +136,15 @@ function serialize(invoice, { vendor = null, detail = false } = {}) {
     subtotal_rwf: invoice.subtotal_rwf,
     delivery_fee_rwf: invoice.delivery_fee_rwf || 0,
     discount_rwf: invoice.discount_rwf || 0,
+    promo_discount_rwf: invoice.promo_discount_rwf || 0,
+    promotions: (invoice.promotions || []).map((p) => ({ name: p.name, code: p.code || null, amount_rwf: p.amount_rwf })),
+    loyalty_points_redeemed: invoice.loyalty_points_redeemed || 0,
+    loyalty_discount_rwf: invoice.loyalty_discount_rwf || 0,
+    loyalty_points_earned: invoice.loyalty_points_earned || 0,
+    kitchen_customer_id: invoice.kitchen_customer_id ? String(invoice.kitchen_customer_id) : null,
+    split_from: invoice.split_from ? String(invoice.split_from) : null,
+    merged_into: invoice.merged_into ? String(invoice.merged_into) : null,
+    cancel_reason: invoice.cancel_reason || '',
     total_rwf: invoice.total_rwf,
     amount_paid_rwf: invoice.amount_paid_rwf,
     refunded_rwf: invoice.refunded_rwf || 0,
@@ -183,6 +212,11 @@ const parseAmount = (raw, field = 'amount_rwf') => {
 };
 
 class InvoiceService {
+  /** A bill just reached paid (by any path): its orders are paid and points earned. */
+  markPaid(invoice) {
+    return markOrdersPaid(invoice);
+  }
+
   /**
    * The invoice of one marketplace order (delivery or takeaway, paid online).
    * Created once, when the order is paid; calling it again returns the same one.
@@ -244,7 +278,22 @@ class InvoiceService {
       }
     }
     await Order.updateOne({ _id: order._id }, { $set: { invoice_id: invoice._id } });
+    await require('./promotionService').refreshInvoice(invoice._id).catch((error) => console.error('[promotions]', error.message));
     return recalc(invoice._id);
+  }
+
+  /**
+   * An order's items changed (added, removed, quantities, department): its
+   * lines on the bill are replaced by the order's current items.
+   */
+  async syncOrderLines(orderId) {
+    const order = await Order.findById(orderId).lean();
+    if (!order?.invoice_id) return null;
+    const oid = new ObjectId(String(order._id));
+    await Invoice.updateOne({ _id: order.invoice_id }, { $pull: { lines: { order_id: oid } } });
+    await Invoice.updateOne({ _id: order.invoice_id }, { $push: { lines: { $each: linesFrom(order) } } });
+    await require('./promotionService').refreshInvoice(order.invoice_id).catch(() => null);
+    return recalc(order.invoice_id);
   }
 
   /** A cancelled order's lines no longer count on its bill. */
@@ -308,7 +357,7 @@ class InvoiceService {
     const vendor = await Vendor.findById(kitchen.vendorId).select('name phone email address neighborhood').lean();
     const result = serialize(invoice, { vendor, detail: true });
     // Payment history only for people allowed to see it.
-    if (!kitchen.can('invoices.payment_history') && !kitchen.can('invoices.process_payment')) {
+    if (!['invoices.payment_history', 'invoices.process_payment', 'finance.transactions'].some((p) => kitchen.can(p))) {
       result.payments = result.payments.map(({ id, amount_rwf, method_label, at }) => ({ id, amount_rwf, method_label, at }));
       result.refunds = [];
     }
@@ -350,6 +399,12 @@ class InvoiceService {
     if (!METHOD_IDS.includes(method)) throw ApiError.badRequest('Pick how the customer paid.', { method: `expected one of: ${METHOD_IDS.join(', ')}` });
     const reference = parseOptionalText(body.reference, { field: 'reference', max: 80 }) || '';
     const balance = invoice.total_rwf - invoice.amount_paid_rwf;
+    // "Process payments" covers every kind; otherwise cash and digital are separate,
+    // and taking less than the balance is a part payment.
+    if (!kitchen.can('invoices.process_payment')) {
+      kitchen.assert(method === 'cash' ? 'invoices.cash' : 'invoices.digital');
+      if (amount < balance) kitchen.assert('invoices.partial');
+    }
     if (amount > balance) {
       throw ApiError.badRequest(`That is more than the RWF ${balance.toLocaleString('en-US')} still due.`, { amount_rwf: `at most ${balance}` });
     }
@@ -420,7 +475,9 @@ class InvoiceService {
     const set = {};
     if (body.notes !== undefined) set.notes = parseOptionalText(body.notes, { field: 'notes', max: 300 }) || '';
     if (body.customer_name !== undefined) set.customer_name = parseOptionalText(body.customer_name, { field: 'customer_name', max: 80 }) || '';
+    if ((body.notes !== undefined || body.customer_name !== undefined) && !kitchen.can('invoices.edit')) kitchen.assert('invoices.edit');
     if (body.discount_rwf !== undefined) {
+      if (!['invoices.discounts', 'promotions.manual_discounts', 'invoices.edit'].some((p) => kitchen.can(p))) kitchen.assert('invoices.discounts');
       const discount = Number(body.discount_rwf);
       if (!Number.isInteger(discount) || discount < 0 || discount > invoice.subtotal_rwf + (invoice.delivery_fee_rwf || 0)) {
         throw ApiError.badRequest('The discount must be between 0 and the bill total.', { discount_rwf: 'out of range' });
@@ -448,6 +505,125 @@ class InvoiceService {
     await Invoice.updateOne({ _id: invoice._id }, { $set: { is_open: false, closed_at: new Date() } });
     await activity.record(kitchen, { action: 'invoice.closed', target_type: 'invoice', target_id: invoice._id, summary: `Closed the table bill ${invoice.invoice_number}` });
     return this.get(kitchen, invoice._id);
+  }
+
+  /**
+   * "Split table bills": the chosen lines go to a new bill for the same
+   * table (e.g. each guest pays their own). The original keeps the rest and
+   * must still cover what was already paid on it.
+   */
+  async split(kitchen, invoiceId, body = {}) {
+    if (!['invoices.split', 'tables.split_bills'].some((p) => kitchen.can(p))) kitchen.assert('invoices.split');
+    const invoice = await this.#load(kitchen, invoiceId);
+    if (invoice.kind !== 'table' || !OPEN.includes(invoice.status)) throw ApiError.conflict('Only an unpaid table bill can be split.', 'INVOICE_NOT_SPLITTABLE');
+    const wanted = new Set(Array.isArray(body.line_ids) ? body.line_ids.map(String) : []);
+    const live = invoice.lines.filter((l) => !l.voided);
+    const moving = live.filter((l) => wanted.has(String(l._id)));
+    if (!moving.length || moving.length === live.length) {
+      throw ApiError.badRequest('Pick some (not all) of the items for the new bill.', { line_ids: 'expected part of the lines' });
+    }
+    const remaining = live.filter((l) => !wanted.has(String(l._id))).reduce((sum, l) => sum + l.subtotal_rwf, 0);
+    if (invoice.amount_paid_rwf > remaining) {
+      throw ApiError.conflict('More has already been paid than what would stay on this bill.', 'INVOICE_PAID_TOO_MUCH');
+    }
+    const ids = moving.map((l) => l._id);
+    const updated = await Invoice.findOneAndUpdate(
+      { _id: invoice._id, status: { $in: OPEN }, updated_at: invoice.updated_at },
+      { $pull: { lines: { _id: { $in: ids } } } },
+      { returnDocument: 'after' }
+    ).lean();
+    if (!updated) throw ApiError.conflict('The bill changed meanwhile. Refresh and try again.', 'INVOICE_CHANGED');
+    const orderIds = [...new Set(moving.map((l) => String(l.order_id)))];
+    const created = await Invoice.create({
+      vendor_id: invoice.vendor_id,
+      invoice_number: await nextNumber(invoice.vendor_id),
+      kind: 'table',
+      table_id: invoice.table_id,
+      table_label: invoice.table_label,
+      customer_name: parseOptionalText(body.customer_name, { field: 'customer_name', max: 80 }) || '',
+      is_open: false,
+      split_from: invoice._id,
+      order_ids: orderIds,
+      lines: moving.map(({ _id, ...line }) => line),
+      created_by: kitchen.actor,
+    });
+    // Orders now wholly on the new bill leave the old one.
+    const stillHere = new Set(updated.lines.map((l) => String(l.order_id)));
+    const gone = orderIds.filter((id) => !stillHere.has(id));
+    if (gone.length) await Invoice.updateOne({ _id: invoice._id }, { $pull: { order_ids: { $in: gone.map((id) => new ObjectId(id)) } } });
+    await Promise.all([recalc(invoice._id), recalc(created._id)]);
+    await activity.record(kitchen, {
+      action: 'invoice.split',
+      target_type: 'invoice',
+      target_id: invoice._id,
+      summary: `Split ${moving.length} item${moving.length === 1 ? '' : 's'} of ${invoice.invoice_number} into ${created.invoice_number}`,
+    });
+    return { original: await this.get(kitchen, invoice._id), created: await this.get(kitchen, created._id) };
+  }
+
+  /**
+   * "Cancel invoices": a table bill nothing was paid on. Its orders still in
+   * progress are cancelled; served ones stay served (the bill is written off).
+   */
+  async cancel(kitchen, invoiceId, body = {}) {
+    kitchen.assert('invoices.cancel');
+    const invoice = await this.#load(kitchen, invoiceId);
+    if (invoice.kind !== 'table') throw ApiError.conflict('App orders were paid online: cancel the order to refund it.', 'INVOICE_PAID_ONLINE');
+    if (invoice.amount_paid_rwf > 0) throw ApiError.conflict('Something was already paid on this bill. Refund it first.', 'INVOICE_HAS_PAYMENTS');
+    if (invoice.status === 'void') return this.get(kitchen, invoice._id);
+    const reason = parseOptionalText(body.reason, { field: 'reason', max: 200 }) || '';
+    if (!reason) throw ApiError.badRequest('Say why the bill is cancelled.', { reason: 'required' });
+    await Invoice.updateOne({ _id: invoice._id }, { $set: { status: 'void', is_open: false, cancel_reason: reason, closed_at: new Date() } });
+    const vendor = await Vendor.findById(kitchen.vendorId).lean();
+    const vendorOrderService = require('../vendorOrderService');
+    const orders = await Order.find({ _id: { $in: invoice.order_ids }, status: { $nin: ['delivered', 'cancelled'] } }).lean();
+    for (const order of orders) {
+      try {
+        await vendorOrderService.applyStatus(vendor, order, 'cancelled', { note: `Bill cancelled: ${reason}`, actor: kitchen.actor });
+      } catch (error) {
+        console.error('[invoice] could not cancel', order.order_number, error.message);
+      }
+    }
+    await activity.record(kitchen, { action: 'invoice.cancelled', target_type: 'invoice', target_id: invoice._id, summary: `Cancelled ${invoice.invoice_number}: ${reason}` });
+    return this.get(kitchen, invoice._id);
+  }
+
+  /**
+   * "Merge tables": everything open at another table (its orders and its
+   * bill, payments included) joins this table.
+   */
+  async mergeTables(kitchen, targetTable, fromTable) {
+    const DiningTable = mongoose.model('DiningTable');
+    const target = await DiningTable.findOne({ _id: targetTable, vendor_id: kitchen.vendorId, deleted_at: null }).lean();
+    const from = await DiningTable.findOne({ _id: fromTable, vendor_id: kitchen.vendorId, deleted_at: null }).lean();
+    if (!target || !from) throw ApiError.notFound('Table not found.', 'TABLE_NOT_FOUND');
+    if (String(target._id) === String(from._id)) throw ApiError.badRequest('Pick another table to merge.', { from_table_id: 'same table' });
+    const now = new Date();
+    await Order.updateMany(
+      { vendor_id: kitchen.vendorId, 'table.table_id': from._id, status: { $nin: ['delivered', 'cancelled'] } },
+      { $set: { table: { table_id: target._id, label: target.label } }, $push: { status_history: { status: 'placed', at: now, note: `Merged from ${from.label} into ${target.label}` } } }
+    );
+    const fromBill = await Invoice.findOne({ vendor_id: kitchen.vendorId, table_id: from._id, kind: 'table', is_open: true }).lean();
+    if (fromBill) {
+      const targetBill = await Invoice.findOne({ vendor_id: kitchen.vendorId, table_id: target._id, kind: 'table', is_open: true }).lean();
+      if (!targetBill) {
+        await Invoice.updateOne({ _id: fromBill._id }, { $set: { table_id: target._id, table_label: target.label } });
+      } else {
+        await Invoice.updateOne(
+          { _id: targetBill._id },
+          {
+            $push: { lines: { $each: fromBill.lines.map(({ _id, ...l }) => l) }, payments: { $each: fromBill.payments.map(({ _id, ...p }) => p) } },
+            $addToSet: { order_ids: { $each: fromBill.order_ids } },
+            $inc: { amount_paid_rwf: fromBill.amount_paid_rwf || 0, refunded_rwf: fromBill.refunded_rwf || 0 },
+          }
+        );
+        await Invoice.updateOne({ _id: fromBill._id }, { $set: { status: 'void', is_open: false, merged_into: targetBill._id, closed_at: now, cancel_reason: `Merged into ${targetBill.invoice_number}` } });
+        await Order.updateMany({ _id: { $in: fromBill.order_ids } }, { $set: { invoice_id: targetBill._id } });
+        await recalc(targetBill._id);
+      }
+    }
+    await activity.record(kitchen, { action: 'table.merged', target_type: 'table', target_id: target._id, summary: `Merged ${from.label} into ${target.label}` });
+    return { merged: true, table_id: String(target._id) };
   }
 
   /** What a guest at the table sees of their bill. */

@@ -3,6 +3,7 @@ const ApiError = require('../utils/ApiError');
 const { revokeAllSessions } = require('../utils/sessions');
 const { Vendor, KitchenStaff } = require('../models');
 const kitchenAccess = require('./kitchen/accessService');
+const kitchenActivity = require('./kitchen/activityService');
 const { signToken } = require('../utils/jwt');
 const { NAME_MAX_LENGTH, capitalizeName, normalizePhone, parseDeliveryLocation } = require('../utils/validators');
 const {
@@ -164,7 +165,7 @@ class VendorAuthService {
     this.#assertCanLogin(vendor);
     if (staff) {
       await KitchenStaff.updateOne({ _id: staff._id }, { $set: { last_login_at: new Date() } });
-      return this.#issueStaffSession(vendor, staff);
+      return this.#issueStaffSession(vendor, staff, 'code');
     }
     await vendorRepository.touchLogin(vendor._id);
     return this.#issueSession(vendor);
@@ -221,6 +222,20 @@ class VendorAuthService {
       .lean();
     const ok = staff?.password_hash ? await comparePassword(password, staff.password_hash) : false;
     if (!ok) {
+      if (staff) {
+        require('./kitchen/alertService').emit(staff.vendor_id, 'employee_alerts', {
+          title: `Wrong password for ${staff.name}`,
+          body: 'Someone tried to sign in with a wrong password.',
+          link: '/vendor-dashboard/activity',
+          permission: 'audit.security_events',
+        });
+        kitchenActivity.recordSystem(staff.vendor_id, {
+          action: 'security.login_failed',
+          target_type: 'staff',
+          target_id: staff._id,
+          summary: `Wrong password for ${staff.name} (${login})`,
+        });
+      }
       await otpGuardService.recordFailedAttempt(guardKey, 'staff-login');
       throw ApiError.unauthorized('Wrong username or password.', 'INVALID_CREDENTIALS');
     }
@@ -316,7 +331,12 @@ class VendorAuthService {
     };
   }
 
-  async #issueStaffSession(vendor, staff) {
+  async #issueStaffSession(vendor, staff, method = 'password') {
+    kitchenActivity.recordSystem(
+      vendor._id,
+      { action: 'security.login', target_type: 'staff', target_id: staff._id, summary: `${staff.name} signed in (${method === 'code' ? 'sign-in code' : 'username and password'})` },
+      { type: 'staff', id: String(staff._id), name: staff.name }
+    );
     const token = signToken({
       sub: String(vendor._id),
       role: config.vendor.jwtRole,

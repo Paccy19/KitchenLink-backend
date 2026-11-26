@@ -39,6 +39,14 @@ const toCustomer = (order, title, body) =>
 module.exports = {
   /** A paid order reached the kitchen. */
   newOrder(order) {
+    // The kitchen team's own alert (whoever receives new orders).
+    // eslint-disable-next-line global-require
+    require('./kitchen/alertService').emit(order.vendor_id, 'order_alerts', {
+      title: `New order ${order.order_number}`,
+      body: order.table?.label ? `${order.table.label} · ${(order.items || []).length} items` : `${(order.items || []).length} items`,
+      link: '/vendor-dashboard/kitchen',
+      permission: 'orders.receive',
+    });
     const when =
       order.order_type && order.order_type !== 'immediate' && order.scheduled_for
         ? ` for ${new Date(order.scheduled_for).toLocaleString('en-GB', { timeZone: 'Africa/Kigali', dateStyle: 'medium', timeStyle: 'short' })}`

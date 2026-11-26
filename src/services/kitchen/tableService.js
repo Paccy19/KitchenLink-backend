@@ -162,9 +162,14 @@ class TableService {
 
   async update(kitchen, tableId, body = {}) {
     const table = await this.#load(kitchen.vendorId, tableId);
-    if (body.assigned_staff_id !== undefined && Object.keys(body).length === 1) kitchen.assert('tables.assign');
-    else kitchen.assert('tables.edit');
     const update = await this.#parse(kitchen, body, { partial: true });
+    const anyOf = (permissions) => {
+      if (!permissions.some((permission) => kitchen.can(permission))) kitchen.assert(permissions[0]);
+    };
+    const changed = (field) => update[field] !== undefined && String(update[field] ?? '') !== String(table[field] ?? '');
+    if (['label', 'area', 'capacity'].some(changed)) anyOf(['tables.edit']);
+    if (changed('is_active')) anyOf(['tables.activate', 'reservations.table_availability']);
+    if (changed('assigned_staff_id')) anyOf(['service.assign_servers', 'service.transfer_servers']);
     let saved;
     try {
       saved = await DiningTable.findOneAndUpdate({ _id: table._id }, { $set: update }, { returnDocument: 'after' }).lean();

@@ -46,8 +46,12 @@ function parsePermissions(raw) {
 class RoleService {
   /** Every kitchen starts with the default roles (created the first time roles are opened). */
   async ensureDefaults(vendorId) {
-    const any = await KitchenRole.exists({ vendor_id: vendorId });
-    if (any) return;
+    // Once per kitchen (a flag, so roles the kitchen deleted don't come back).
+    const claimed = await Vendor.findOneAndUpdate(
+      { _id: vendorId, 'operations.default_roles_created': { $ne: true } },
+      { $set: { 'operations.default_roles_created': true } }
+    );
+    if (!claimed) return;
     await KitchenRole.insertMany(
       access.DEFAULT_ROLES.map((role) => ({
         vendor_id: vendorId,
@@ -87,13 +91,8 @@ class RoleService {
     if (body.description !== undefined) update.description = parseOptionalText(body.description, { field: 'description', max: 300 }) || '';
     if (!partial || body.permissions !== undefined) update.permissions = parsePermissions(body.permissions);
     if (body.department_ids !== undefined) update.department_ids = (await departmentService.resolveIds(kitchen.vendorId, body.department_ids)) || [];
-    // Nobody hands out permissions they don't hold themselves.
-    if (!kitchen.isAdmin && update.permissions) {
-      const missing = update.permissions.filter((p) => !kitchen.can(p));
-      if (missing.length) {
-        throw ApiError.forbidden("You can't give a role permissions you don't have yourself.", 'KITCHEN_PERMISSION_DENIED');
-      }
-    }
+    // Roles decide who may do what: only kitchen administrators shape them.
+    if (!kitchen.isAdmin) throw ApiError.forbidden('Only a kitchen administrator can create or change roles.', 'KITCHEN_ADMIN_ONLY');
     return update;
   }
 
@@ -108,6 +107,7 @@ class RoleService {
   }
 
   async create(kitchen, body = {}) {
+    await this.ensureDefaults(kitchen.vendorId);
     const update = await this.#parse(kitchen, body, { partial: false });
     await this.#assertUniqueName(kitchen.vendorId, update.name);
     const role = await KitchenRole.create({ ...update, vendor_id: kitchen.vendorId });
@@ -303,21 +303,19 @@ class StaffService {
     if (update.email !== undefined && update.email !== current?.email) await this.#assertIdentifierFree('email', update.email, current?._id);
 
     if (body.role_ids !== undefined) {
-      kitchen.assert('staff.assign_roles');
+      // Only kitchen administrators decide who gets which role (and so which permissions).
+      if (!kitchen.isAdmin) throw ApiError.forbidden('Only a kitchen administrator can give roles to employees.', 'KITCHEN_ADMIN_ONLY');
       const ids = Array.isArray(body.role_ids) ? [...new Set(body.role_ids.map(String))] : null;
       if (!ids || ids.some((id) => !mongoose.isValidObjectId(id))) throw ApiError.badRequest('role_ids must be a list of role ids.', { role_ids: 'expected ids' });
       const roles = await KitchenRole.find({ _id: { $in: ids }, vendor_id: kitchen.vendorId, deleted_at: null }).lean();
       if (roles.length !== ids.length) throw ApiError.badRequest('Some roles do not belong to this kitchen.', { role_ids: 'unknown role' });
-      if (!kitchen.isAdmin) {
-        const tooMuch = roles.flatMap((r) => r.permissions).some((p) => !kitchen.can(p));
-        if (tooMuch) throw ApiError.forbidden("You can't give someone a role with permissions you don't have.", 'KITCHEN_PERMISSION_DENIED');
-      }
       update.role_ids = ids.map(ObjectId);
     }
     if (body.department_ids !== undefined) {
       update.department_ids = (await departmentService.resolveIds(kitchen.vendorId, body.department_ids)) || [];
-      if (!kitchen.isAdmin) {
-        for (const id of update.department_ids) kitchen.assert('departments.manage_staff', id);
+      const changed = JSON.stringify((current?.department_ids || []).map(String).sort()) !== JSON.stringify(update.department_ids.map(String).sort());
+      if (!kitchen.isAdmin && changed && !kitchen.can('staff.assign_departments')) {
+        for (const id of update.department_ids) kitchen.assert('departments.manage_staff', String(id));
       }
     }
     if (body.is_admin !== undefined) {
@@ -366,7 +364,9 @@ class StaffService {
       throw ApiError.forbidden('Only a kitchen administrator can change another administrator.', 'KITCHEN_ADMIN_ONLY');
     }
     const parsed = await this.#parse(kitchen, body, { partial: true, current });
-    if (parsed.password) kitchen.assert('staff.edit');
+    if (parsed.password && !kitchen.can('staff.reset_passwords')) kitchen.assert('staff.edit');
+    const identity = ['name', 'job_title', 'phone', 'email', 'username'].filter((field) => parsed[field] !== undefined && parsed[field] !== current[field]);
+    if (identity.length) kitchen.assert('staff.edit');
     const { set: update, credentials } = await this.#withPassword(parsed);
     let saved;
     try {
@@ -416,6 +416,15 @@ class StaffService {
       summary: `${active ? 'Reactivated' : 'Deactivated'} ${current.name}`,
     });
     return this.get(kitchen, current._id);
+  }
+
+  /** Ends every session of the employee at once (they sign in again). */
+  async signOutEverywhere(kitchen, staffId) {
+    const current = await this.#load(kitchen.vendorId, staffId);
+    if (current.is_admin && !kitchen.isAdmin) throw ApiError.forbidden('Only a kitchen administrator can sign out an administrator.', 'KITCHEN_ADMIN_ONLY');
+    await revokeAllSessions(KitchenStaff, current._id);
+    await activity.record(kitchen, { action: 'security.sessions_revoked', target_type: 'staff', target_id: current._id, summary: `Signed ${current.name} out of every device` });
+    return { signed_out: true, id: String(current._id) };
   }
 
   async remove(kitchen, staffId) {

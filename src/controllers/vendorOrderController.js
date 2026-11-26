@@ -2,7 +2,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const vendorOrderService = require('../services/vendorOrderService');
 
 const list = asyncHandler(async (req, res) => {
-  res.json(await vendorOrderService.list(req.vendor, req.query));
+  res.json(await vendorOrderService.list(req.vendor, req.query, req.kitchenAccess));
 });
 
 const getDetail = asyncHandler(async (req, res) => {

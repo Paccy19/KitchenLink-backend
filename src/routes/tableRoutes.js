@@ -59,4 +59,20 @@ router.get(
   })
 );
 
+// "Call the waiter" / "Bring the bill" from the table (rate limited per network).
+const requestLimit = rateLimit({ windowMs: 60 * 1000, max: 6, code: 'TABLE_REQUEST_RATE_LIMITED', message: 'Please wait a moment before asking again.' });
+router.post(
+  '/:token/requests',
+  requestLimit,
+  asyncHandler(async (req, res) => res.status(201).json(await tableOrderService.request(req.params.token, req.body)))
+);
+router.get('/:token/requests', readLimit, asyncHandler(async (req, res) => res.json(await tableOrderService.openRequests(req.params.token))));
+// A guest rates their order (the guest key proves it is theirs).
+router.post(
+  '/:token/orders/:order_id/feedback',
+  requestLimit,
+  optionalCustomer,
+  asyncHandler(async (req, res) => res.status(201).json(await tableOrderService.feedback(req.params.token, req.params.order_id, req.headers['x-guest-key'], req.body, req.customer || null)))
+);
+
 module.exports = router;
