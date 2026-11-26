@@ -39,14 +39,32 @@ const orderLimit = rateLimit({
   code: 'TABLE_ORDER_RATE_LIMITED',
   message: 'Too many orders from this network in a minute. Please wait a moment.',
 });
+const sessionLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  code: 'DINING_SESSION_RATE_LIMITED',
+  message: 'Too many seat sessions were started from this network. Please wait a moment.',
+});
 const readLimit = rateLimit({ windowMs: 60 * 1000, max: 120, code: 'RATE_LIMITED', message: 'Too many requests. Please slow down.' });
 
 router.get('/:token', readLimit, asyncHandler(async (req, res) => res.json(await tableOrderService.menu(req.params.token))));
 router.post(
+  '/:token/session',
+  sessionLimit,
+  optionalCustomer,
+  asyncHandler(async (req, res) => {
+    const key = req.headers['x-dining-session-key'];
+    res.status(201).json(await tableOrderService.openSession(req.params.token, req.body, req.customer || null, key));
+  })
+);
+router.post(
   '/:token/orders',
   orderLimit,
   optionalCustomer,
-  asyncHandler(async (req, res) => res.status(201).json(await tableOrderService.placeOrder(req.params.token, req.body, req.customer || null)))
+  asyncHandler(async (req, res) => {
+    const key = req.headers['x-dining-session-key'];
+    res.status(201).json(await tableOrderService.placeOrder(req.params.token, req.body, req.customer || null, key));
+  })
 );
 router.get(
   '/:token/orders/:order_id',

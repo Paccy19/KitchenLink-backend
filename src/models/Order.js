@@ -108,7 +108,10 @@ const orderSchema = new mongoose.Schema(
     table: {
       table_id: { type: ObjectId, ref: 'DiningTable', default: null },
       label: { type: String, default: '' },
+      seat_number: { type: Number, min: 1, default: null },
     },
+    table_session_id: { type: ObjectId, ref: 'TableSession', default: null },
+    customer_session_id: { type: ObjectId, default: null },
     // Guests ordering from a table without an account: the name they gave,
     // and a hash of the secret their browser keeps to follow the order.
     guest: {

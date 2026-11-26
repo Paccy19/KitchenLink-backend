@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
 const { parseObjectId, parseOptionalText } = require('../../utils/vendorValidators');
 const { isVendorLive } = require('../../utils/vendorPresence');
-const { MenuItem, MenuItemOption, Order, Vendor } = require('../../models');
+const { MenuItem, MenuItemOption, Order, Vendor, TableSession } = require('../../models');
 const config = require('../../config');
 const access = require('../../config/kitchenAccess');
 const vendorService = require('../vendorService');
@@ -12,6 +12,7 @@ const departmentService = require('./departmentService');
 const ticketService = require('./ticketService');
 const invoiceService = require('./invoiceService');
 const tableService = require('./tableService');
+const diningSessionService = require('./diningSessionService');
 const activity = require('./activityService');
 
 const MAX_LINES = 40;
@@ -82,7 +83,11 @@ class TableOrderService {
     ]);
     const timing = vendor.operations?.payment_timing || 'after_service';
     return {
-      table: { label: table.label, area: table.area || '' },
+      table: {
+        label: table.label,
+        area: table.area || '',
+        ...(table._qr_seat_number ? { seat: { number: table._qr_seat_number } } : {}),
+      },
       kitchen: storefront,
       departments: departments.map(departmentService.serializePublic),
       ordering: {
@@ -92,6 +97,13 @@ class TableOrderService {
         pay_before_preparation: access.paymentGate(timing) === 'preparation',
       },
     };
+  }
+
+  async openSession(token, body = {}, customer = null, sessionKey = null) {
+    const { table, vendor } = await resolveTable(token);
+    const state = orderingState(table, vendor);
+    if (!state.can_order) throw ApiError.conflict(state.reason, 'TABLE_ORDERING_UNAVAILABLE');
+    return diningSessionService.open(table, vendor, body, customer, sessionKey);
   }
 
   #parseLines(body) {
@@ -121,12 +133,20 @@ class TableOrderService {
    * departments its dishes come from. The server prices it; each department
    * gets a ticket with only its dishes; the order joins the table's bill.
    */
-  async placeOrder(token, body = {}, customer = null) {
+  async placeOrder(token, body = {}, customer = null, sessionKey = null) {
     const { table, vendor } = await resolveTable(token);
     const state = orderingState(table, vendor);
     if (!state.can_order) throw ApiError.conflict(state.reason, 'TABLE_ORDERING_UNAVAILABLE');
+    const diningSession = await diningSessionService.requireOwned(table, customer, sessionKey);
     const lines = this.#parseLines(body);
-    const guestName = parseOptionalText(body.guest_name, { field: 'guest_name', max: 40 }) || customer?.name || '';
+    const requestedName = parseOptionalText(body.guest_name, { field: 'guest_name', max: 40 }) || '';
+    const guestName = diningSession?.customerSession.guest_name || requestedName || customer?.name || '';
+    if (diningSession && requestedName && !diningSession.customerSession.guest_name) {
+      await TableSession.updateOne(
+        { _id: diningSession.tableSession._id, 'customer_sessions._id': diningSession.customerSession._id },
+        { $set: { 'customer_sessions.$.guest_name': requestedName } }
+      );
+    }
 
     const dishIds = [...new Set(lines.map((l) => String(l.menu_item_id)))];
     const [dishes, options] = await Promise.all([
@@ -179,7 +199,9 @@ class TableOrderService {
         total_rwf: subtotal,
         fulfillment: 'dine_in',
         source: 'table_qr',
-        table: { table_id: table._id, label: table.label },
+        table: { table_id: table._id, label: table.label, seat_number: diningSession?.customerSession.seat_number ?? null },
+        table_session_id: diningSession?.tableSession._id || null,
+        customer_session_id: diningSession?.customerSession._id || null,
         guest: { name: guestName, key_hash: hashKey(guestKey) },
         delivery_location: { note: parseOptionalText(body.note, { field: 'note', max: 300 }) || '' },
         payment_method: 'in_person',

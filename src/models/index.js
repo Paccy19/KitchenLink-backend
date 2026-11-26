@@ -42,6 +42,7 @@ const Department = require('./Department');
 const KitchenRole = require('./KitchenRole');
 const KitchenStaff = require('./KitchenStaff');
 const DiningTable = require('./DiningTable');
+const TableSession = require('./TableSession');
 const Invoice = require('./Invoice');
 const InventoryItem = require('./InventoryItem');
 const StockMovement = require('./StockMovement');
@@ -54,6 +55,7 @@ module.exports = {
   KitchenRole,
   KitchenStaff,
   DiningTable,
+  TableSession,
   Invoice,
   InventoryItem,
   StockMovement,

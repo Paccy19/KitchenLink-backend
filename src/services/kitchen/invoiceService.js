@@ -22,6 +22,9 @@ const linesFrom = (order) =>
     order_id: order._id,
     order_number: order.order_number,
     item_id: item._id || null,
+    table_session_id: order.table_session_id || null,
+    customer_session_id: order.customer_session_id || null,
+    seat_number: order.table?.seat_number ?? null,
     name: item.name,
     department_id: item.department_id || null,
     department_name: item.department_name || '',
@@ -135,6 +138,9 @@ function serialize(invoice, { vendor = null, detail = false } = {}) {
       id: String(line._id),
       order_id: line.order_id ? String(line.order_id) : null,
       order_number: line.order_number,
+      table_session_id: line.table_session_id ? String(line.table_session_id) : null,
+      customer_session_id: line.customer_session_id ? String(line.customer_session_id) : null,
+      seat_number: line.seat_number ?? null,
       name: line.name,
       department_id: line.department_id ? String(line.department_id) : null,
       department_name: line.department_name || 'Kitchen',
@@ -455,7 +461,44 @@ class InvoiceService {
     if (!order.invoice_id) return null;
     const invoice = await Invoice.findById(order.invoice_id).lean();
     if (!invoice) return null;
-    const { lines, departments, total_rwf, amount_paid_rwf, balance_due_rwf, status, invoice_number, subtotal_rwf, discount_rwf } = serialize(invoice, { detail: true });
+    const details = serialize(invoice, { detail: true });
+    if (order.customer_session_id && order.table_session_id) {
+      const sessionOrders = await Order.find({
+        table_session_id: order.table_session_id,
+        customer_session_id: order.customer_session_id,
+      }).select('_id total_rwf amount_paid_rwf payment_status').lean();
+      const orderIds = new Set(sessionOrders.map((entry) => String(entry._id)));
+      const lines = details.lines.filter((line) => !line.voided && orderIds.has(line.order_id));
+      const subtotal = lines.reduce((sum, line) => sum + line.subtotal_rwf, 0);
+      const paid = sessionOrders.reduce((sum, entry) =>
+        sum + (entry.payment_status === 'paid' ? entry.amount_paid_rwf ?? entry.total_rwf : 0), 0);
+      const departmentsByName = new Map();
+      for (const line of lines) {
+        const key = line.department_id || 'main';
+        const row = departmentsByName.get(key) || {
+          department_id: line.department_id,
+          department_name: line.department_name,
+          subtotal_rwf: 0,
+          items: 0,
+        };
+        row.subtotal_rwf += line.subtotal_rwf;
+        row.items += line.quantity;
+        departmentsByName.set(key, row);
+      }
+      const balance = Math.max(0, subtotal - paid);
+      return {
+        invoice_number: details.invoice_number,
+        status: balance === 0 && subtotal > 0 ? 'paid' : paid > 0 ? 'partially_paid' : 'unpaid',
+        subtotal_rwf: subtotal,
+        discount_rwf: 0,
+        total_rwf: subtotal,
+        amount_paid_rwf: paid,
+        balance_due_rwf: balance,
+        departments: [...departmentsByName.values()],
+        lines: lines.map(({ name, quantity, subtotal_rwf: sub, department_name }) => ({ name, quantity, subtotal_rwf: sub, department_name })),
+      };
+    }
+    const { lines, departments, total_rwf, amount_paid_rwf, balance_due_rwf, status, invoice_number, subtotal_rwf, discount_rwf } = details;
     return {
       invoice_number,
       status,

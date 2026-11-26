@@ -63,14 +63,22 @@ router.post('/tables/batch', ...act, can('tables.create'), json((req) => tableSe
 router.get('/tables/:table_id', ...auth, can('tables.view'), json((req) => tableService.get(k(req), req.params.table_id)));
 router.patch('/tables/:table_id', ...act, can('tables.edit', 'tables.assign'), json((req) => tableService.update(k(req), req.params.table_id, req.body)));
 router.delete('/tables/:table_id', ...act, can('tables.delete'), json((req) => tableService.remove(k(req), req.params.table_id)));
+router.post('/tables/:table_id/session/close', ...act, can('tables.edit', 'tables.assign'), json((req) => tableService.closeDiningSession(k(req), req.params.table_id)));
 router.post('/tables/:table_id/qr/rotate', ...act, can('tables.qr'), json((req) => tableService.rotateToken(k(req), req.params.table_id)));
+router.post('/tables/:table_id/seats/:seat_number/qr/rotate', ...act, can('tables.qr'), json((req) => tableService.rotateSeatToken(k(req), req.params.table_id, req.params.seat_number)));
 router.get(
   '/tables/:table_id/qr',
   ...auth,
   can('tables.qr'),
   asyncHandler(async (req, res) => {
-    const { type, body, table } = await tableService.qr(k(req), req.params.table_id, req.query.format === 'png' ? 'png' : 'svg');
-    const name = `table-${table.label.replace(/[^A-Za-z0-9]+/g, '-')}-qr.${type === 'image/png' ? 'png' : 'svg'}`;
+    const { type, body, table, seat } = await tableService.qr(
+      k(req),
+      req.params.table_id,
+      req.query.format === 'png' ? 'png' : 'svg',
+      req.query.seat
+    );
+    const suffix = seat ? `-seat-${String(seat.seat_number).padStart(2, '0')}` : '';
+    const name = `table-${table.label.replace(/[^A-Za-z0-9]+/g, '-')}${suffix}-qr.${type === 'image/png' ? 'png' : 'svg'}`;
     res.set('Content-Type', type);
     res.set('Cache-Control', 'private, no-store');
     if (req.query.download === '1') res.set('Content-Disposition', `attachment; filename="${name}"`);
