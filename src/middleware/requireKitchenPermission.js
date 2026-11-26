@@ -7,16 +7,21 @@ const ApiError = require('../utils/ApiError');
  * Department-scoped checks (which department's ticket or dish) are made
  * again in the services, once the record is known.
  */
-const requireKitchenPermission = (...permissions) => (req, res, next) => {
-  const kitchen = req.kitchenAccess;
-  if (!kitchen) return next(ApiError.unauthorized('Sign in to your kitchen to continue.'));
-  if (permissions.some((permission) => kitchen.can(permission))) return next();
-  try {
-    kitchen.assert(permissions[0]);
-  } catch (error) {
-    return next(error);
-  }
-  return next();
+const requireKitchenPermission = (...permissions) => {
+  const middleware = (req, res, next) => {
+    const kitchen = req.kitchenAccess;
+    if (!kitchen) return next(ApiError.unauthorized('Sign in to your kitchen to continue.'));
+    if (permissions.some((permission) => kitchen.can(permission))) return next();
+    try {
+      kitchen.assert(permissions[0]);
+    } catch (error) {
+      return next(error);
+    }
+    return next();
+  };
+  // Read by config/routeAccess.js: what each route accepts, published to the website.
+  middleware.kitchenPermissions = permissions;
+  return middleware;
 };
 
 /** Only the kitchen account itself and kitchen administrators. */
@@ -26,5 +31,6 @@ requireKitchenPermission.admin = (req, res, next) => {
     ApiError.forbidden('Only the kitchen administrator can do this.', 'KITCHEN_ADMIN_ONLY')
   );
 };
+requireKitchenPermission.admin.kitchenAdminOnly = true;
 
 module.exports = requireKitchenPermission;

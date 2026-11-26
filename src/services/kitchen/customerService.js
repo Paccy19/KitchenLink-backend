@@ -73,7 +73,7 @@ class CustomerService {
   }
 
   async list(kitchen, query = {}) {
-    kitchen.assert('customers.view');
+    if (!require('../../config/kitchenAccess').inGroup('customers').some((p) => kitchen.can(p))) kitchen.assert('customers.view');
     await this.#syncAppCustomers(kitchen.vendorId);
     const { limit, page, offset } = parsePagination(query, { defaultLimit: 30, maxLimit: 100 });
     const filter = { vendor_id: kitchen.vendorId, deleted_at: null };
@@ -295,7 +295,8 @@ class CustomerService {
   }
 
   async listFeedback(kitchen, query = {}) {
-    const reviewsOnly = query.public === 'true';
+    // Someone who may only see reviews gets the public ones.
+    const reviewsOnly = query.public === 'true' || (!kitchen.can('customers.feedback') && kitchen.can('customers.reviews'));
     if (reviewsOnly) {
       if (!['customers.reviews', 'customers.feedback'].some((p) => kitchen.can(p))) kitchen.assert('customers.reviews');
     } else kitchen.assert('customers.feedback');

@@ -11,6 +11,7 @@ const { ObjectId } = mongoose.Types;
 const OPEN = ['unpaid', 'partially_paid'];
 const METHOD_IDS = access.IN_PERSON_METHODS.map((m) => m.id);
 const methodLabel = (id) =>
+  (id === 'deposit' && 'Reservation deposit') ||
   access.IN_PERSON_METHODS.find((m) => m.id === id)?.label ||
   config.orders.paymentMethods.find((m) => m.code === id)?.label ||
   id;
@@ -77,6 +78,10 @@ const recalc = (invoiceId) =>
               branches: [
                 { case: { $eq: ['$status', 'void'] }, then: 'void' },
                 { case: { $and: [{ $gt: ['$amount_paid_rwf', 0] }, { $gte: ['$refunded_rwf', '$amount_paid_rwf'] }] }, then: 'refunded' },
+                {
+                  case: { $and: [{ $gt: [{ $ifNull: ['$refunded_rwf', 0] }, 0] }, { $gte: ['$amount_paid_rwf', '$total_rwf'] }] },
+                  then: 'partially_refunded',
+                },
                 { case: { $and: [{ $gt: ['$total_rwf', 0] }, { $gte: ['$amount_paid_rwf', '$total_rwf'] }] }, then: 'paid' },
                 { case: { $gt: ['$amount_paid_rwf', 0] }, then: 'partially_paid' },
               ],
@@ -89,7 +94,7 @@ const recalc = (invoiceId) =>
         $set: {
           paid_at: { $cond: [{ $and: [{ $eq: ['$status', 'paid'] }, { $eq: ['$paid_at', null] }] }, '$$NOW', '$paid_at'] },
           // A fully paid bill takes no more orders from the table.
-          is_open: { $cond: [{ $in: ['$status', ['paid', 'refunded', 'void']] }, false, '$is_open'] },
+          is_open: { $cond: [{ $in: ['$status', ['paid', 'partially_refunded', 'refunded', 'void']] }, false, '$is_open'] },
         },
       },
     ],
@@ -111,6 +116,14 @@ async function markOrdersPaid(invoice) {
     await Order.updateOne({ _id: order._id, payment_status: 'pending' }, { $set: { payment_status: 'paid', amount_paid_rwf: order.total_rwf } });
   }
   require('./customerService').earnForInvoice(invoice._id).catch((error) => console.error('[loyalty]', error.message));
+  if (invoice.session_id) {
+    require('./alertService').emit(invoice.vendor_id, 'floor', {
+      title: `${invoice.table_label || 'A table'} has paid`,
+      body: `${invoice.invoice_number} is settled. The table can be closed once everything is served.`,
+      link: '/vendor-dashboard/floor',
+      permission: 'tables.close_sessions',
+    });
+  }
 }
 
 function serialize(invoice, { vendor = null, detail = false } = {}) {
@@ -251,10 +264,13 @@ class InvoiceService {
    * consolidated invoice for everything ordered at the table, whichever
    * departments prepare it.
    */
-  async attachDineInOrder(order, table) {
+  async attachDineInOrder(order, table, session = null) {
     const lines = linesFrom(order);
     const push = { $push: { lines: { $each: lines } }, $addToSet: { order_ids: order._id } };
-    const openFilter = { vendor_id: order.vendor_id, table_id: table._id, kind: 'table', is_open: true, status: { $in: OPEN } };
+    // One bill per table visit (session); without a session, the table's open bill.
+    const openFilter = session
+      ? { vendor_id: order.vendor_id, session_id: session._id, kind: 'table', is_open: true, status: { $in: OPEN } }
+      : { vendor_id: order.vendor_id, table_id: table._id, kind: 'table', is_open: true, status: { $in: OPEN } };
     let invoice = await Invoice.findOneAndUpdate(openFilter, push, { returnDocument: 'after' }).lean();
     if (!invoice) {
       try {
@@ -265,10 +281,12 @@ class InvoiceService {
             kind: 'table',
             table_id: table._id,
             table_label: table.label,
-            customer_name: order.guest?.name || '',
+            session_id: session?._id || null,
+            kitchen_customer_id: session?.kitchen_customer_id || null,
+            customer_name: order.guest?.name || session?.customer_name || '',
             order_ids: [order._id],
             lines,
-            created_by: { type: 'system', name: 'Table QR order' },
+            created_by: { type: 'system', name: 'Table order' },
           })
         ).toObject();
       } catch (error) {
@@ -278,6 +296,7 @@ class InvoiceService {
       }
     }
     await Order.updateOne({ _id: order._id }, { $set: { invoice_id: invoice._id } });
+    if (session && !session.invoice_id) await mongoose.model('TableSession').updateOne({ _id: session._id }, { $set: { invoice_id: invoice._id } });
     await require('./promotionService').refreshInvoice(invoice._id).catch((error) => console.error('[promotions]', error.message));
     return recalc(invoice._id);
   }
@@ -364,6 +383,39 @@ class InvoiceService {
     return result;
   }
 
+  /**
+   * The invoice (or, once something is paid, the receipt) as a printable
+   * page: `kind` 'invoice' | 'receipt'. Every value is escaped.
+   */
+  async document(kitchen, invoiceId, kind = 'invoice') {
+    const receipt = kind === 'receipt';
+    if (receipt) {
+      if (!['invoices.receipts', 'invoices.print', 'invoices.download', 'invoices.process_payment', 'invoices.cash', 'invoices.digital'].some((p) => kitchen.can(p))) kitchen.assert('invoices.receipts');
+    } else if (!['invoices.print', 'invoices.download', 'invoices.view', 'invoices.receipts', 'invoices.process_payment', 'invoices.cash', 'invoices.digital'].some((p) => kitchen.can(p))) kitchen.assert('invoices.print');
+    const invoice = await this.#load(kitchen, invoiceId);
+    if (receipt && !(invoice.amount_paid_rwf > 0)) throw ApiError.conflict('Nothing has been paid on this bill yet.', 'NOTHING_PAID');
+    const vendor = await Vendor.findById(kitchen.vendorId).select('name phone email address neighborhood').lean();
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    const rwf = (n) => `RWF ${Math.round(n || 0).toLocaleString('en-US')}`;
+    const when = (d) => (d ? new Date(d).toLocaleString('en-GB', { timeZone: 'Africa/Kigali', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
+    const lines = (invoice.lines || []).filter((l) => !l.voided);
+    const discounts = (invoice.discount_rwf || 0) + (invoice.promo_discount_rwf || 0) + (invoice.loyalty_discount_rwf || 0);
+    const due = Math.max(0, invoice.total_rwf - invoice.amount_paid_rwf);
+    const rows = lines.map((l) => `<tr><td>${esc(l.quantity)}× ${esc(l.name)}</td><td class="r">${esc(rwf(l.subtotal_rwf))}</td></tr>`).join('');
+    const payments = (invoice.payments || []).map((p) => `<tr><td>${esc(methodLabel(p.method))} · ${esc(when(p.at))}</td><td class="r">${esc(rwf(p.amount_rwf))}</td></tr>`).join('');
+    const title = `${receipt ? 'Receipt' : 'Invoice'} ${invoice.invoice_number}`;
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
+<style>body{font-family:Georgia,serif;color:#2b1206;max-width:420px;margin:24px auto;padding:0 16px}h1{font-size:22px;margin:0}small,.m{color:#8a6a52;font-family:system-ui,sans-serif;font-size:12px}table{width:100%;border-collapse:collapse;font-family:system-ui,sans-serif;font-size:13px;margin-top:14px}td{padding:6px 0;border-bottom:1px solid #eee}.r{text-align:right}.t td{font-weight:700;border-bottom:0;font-size:15px}@media print{body{margin:0}}</style></head><body>
+<h1>${esc(vendor?.name || '')}</h1><p class="m">${esc([vendor?.address, vendor?.neighborhood].filter(Boolean).join(', '))}${vendor?.phone ? ` · ${esc(vendor.phone)}` : ''}</p>
+<p><b>${esc(title)}</b><br><small>${esc(when(invoice.created_at))}${invoice.table_label ? ` · ${esc(invoice.table_label)}` : ''}${invoice.customer_name ? ` · ${esc(invoice.customer_name)}` : ''}</small></p>
+<table>${rows}${discounts ? `<tr><td>Discounts</td><td class="r">− ${esc(rwf(discounts))}</td></tr>` : ''}<tr class="t"><td>Total</td><td class="r">${esc(rwf(invoice.total_rwf))}</td></tr></table>
+${payments ? `<table><tr><td colspan="2"><b>Paid</b></td></tr>${payments}${invoice.refunded_rwf ? `<tr><td>Refunded</td><td class="r">− ${esc(rwf(invoice.refunded_rwf))}</td></tr>` : ''}</table>` : ''}
+<table><tr class="t"><td>${due ? 'Still to pay' : 'Paid in full'}</td><td class="r">${due ? esc(rwf(due)) : ''}</td></tr></table>
+<p class="m" style="text-align:center;margin-top:24px">Thank you · KitchenLink</p></body></html>`;
+    activity.record(kitchen, { action: receipt ? 'invoice.receipt' : 'invoice.printed', target_type: 'invoice', target_id: invoice._id, summary: `${receipt ? 'Receipt' : 'Invoice'} ${invoice.invoice_number} printed or downloaded` });
+    return { filename: `${receipt ? 'receipt' : 'invoice'}-${invoice.invoice_number}.html`, html };
+  }
+
   /** The bill for an order, created now if it has none yet. */
   async generate(kitchen, body = {}) {
     const orderId = parseObjectId(body.order_id, 'order_id');
@@ -432,6 +484,28 @@ class InvoiceService {
       details: { amount_rwf: amount, method, reference },
     });
     return this.get(kitchen, invoice._id);
+  }
+
+  /**
+   * A reservation deposit counted as paid on the table's bill (never more
+   * than the balance; what is left stays on the reservation). Internal: the
+   * reservation service calls it when the guests are seated.
+   */
+  async applyDeposit(invoiceId, amount, { reference = '', actor }) {
+    const invoice = await Invoice.findById(invoiceId).lean();
+    if (!invoice || !OPEN.includes(invoice.status) || amount <= 0) return 0;
+    const take = Math.min(amount, Math.max(0, invoice.total_rwf - invoice.amount_paid_rwf));
+    // Before anything is ordered the bill is 0: the deposit is held and applied as orders arrive.
+    if (take <= 0) return 0;
+    const updated = await Invoice.findOneAndUpdate(
+      { _id: invoice._id, status: { $in: OPEN }, $expr: { $lte: [{ $add: ['$amount_paid_rwf', take] }, '$total_rwf'] } },
+      { $inc: { amount_paid_rwf: take }, $push: { payments: { amount_rwf: take, method: 'deposit', reference, channel: 'deposit', received_by: actor, at: new Date() } } },
+      { returnDocument: 'after' }
+    ).lean();
+    if (!updated) return 0;
+    const saved = await recalc(invoice._id);
+    await markOrdersPaid(saved);
+    return take;
   }
 
   async refund(kitchen, invoiceId, body = {}) {
@@ -599,9 +673,30 @@ class InvoiceService {
     if (!target || !from) throw ApiError.notFound('Table not found.', 'TABLE_NOT_FOUND');
     if (String(target._id) === String(from._id)) throw ApiError.badRequest('Pick another table to merge.', { from_table_id: 'same table' });
     const now = new Date();
+    // The two visits become one: the merged table's visit ends inside the other.
+    const TableSession = mongoose.model('TableSession');
+    const fromSession = await TableSession.findOne({ table_id: from._id, is_live: true }).lean();
+    let targetSession = await TableSession.findOne({ table_id: target._id, is_live: true }).lean();
+    if (fromSession && !targetSession) {
+      await TableSession.updateOne({ _id: fromSession._id }, { $set: { table_id: target._id, table_label: target.label }, $push: { transfers: { from_label: from.label, to_label: target.label, at: now, by: kitchen.actor.name } } });
+      targetSession = { ...fromSession, table_id: target._id };
+    } else if (fromSession && targetSession) {
+      await TableSession.updateOne(
+        { _id: targetSession._id },
+        {
+          $addToSet: { order_ids: { $each: fromSession.order_ids || [] } },
+          ...(fromSession.guest_count || targetSession.guest_count ? { $set: { guest_count: (targetSession.guest_count || 0) + (fromSession.guest_count || 0) } } : {}),
+        }
+      );
+      await TableSession.updateOne({ _id: fromSession._id }, { $set: { status: 'closed', is_live: false, closed_at: now, closed_by: kitchen.actor, close_exceptions: [`Merged into ${target.label}`] } });
+      await Invoice.updateMany({ session_id: fromSession._id }, { $set: { session_id: targetSession._id } });
+    }
     await Order.updateMany(
       { vendor_id: kitchen.vendorId, 'table.table_id': from._id, status: { $nin: ['delivered', 'cancelled'] } },
-      { $set: { table: { table_id: target._id, label: target.label } }, $push: { status_history: { status: 'placed', at: now, note: `Merged from ${from.label} into ${target.label}` } } }
+      {
+        $set: { table: { table_id: target._id, label: target.label }, ...(targetSession ? { session_id: targetSession._id } : {}) },
+        $push: { status_history: { status: 'placed', at: now, note: `Merged from ${from.label} into ${target.label}` } },
+      }
     );
     const fromBill = await Invoice.findOne({ vendor_id: kitchen.vendorId, table_id: from._id, kind: 'table', is_open: true }).lean();
     if (fromBill) {

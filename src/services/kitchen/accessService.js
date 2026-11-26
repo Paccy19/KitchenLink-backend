@@ -63,6 +63,18 @@ class KitchenAccess {
     return { [field]: { $in: scope.map((id) => new mongoose.Types.ObjectId(id)) } };
   }
 
+  /** Like departmentFilter, over every department any of these permissions covers. */
+  departmentFilterAny(permissions, field = 'department_id') {
+    if (this.isAdmin) return {};
+    const ids = new Set();
+    for (const permission of permissions) {
+      const scope = this.scope(permission);
+      if (scope === ALL) return {};
+      scope.forEach((id) => ids.add(id));
+    }
+    return { [field]: { $in: [...ids].map((id) => new mongoose.Types.ObjectId(id)) } };
+  }
+
   serialize() {
     const permissions = {};
     for (const key of access.PERMISSION_KEYS) {

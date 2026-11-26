@@ -6,7 +6,7 @@ const list = asyncHandler(async (req, res) => {
 });
 
 const getDetail = asyncHandler(async (req, res) => {
-  res.json(await vendorOrderService.getDetail(req.vendor, req.params.order_id));
+  res.json(await vendorOrderService.getDetail(req.vendor, req.params.order_id, req.kitchenAccess));
 });
 
 const updateStatus = asyncHandler(async (req, res) => {

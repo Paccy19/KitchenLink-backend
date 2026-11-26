@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
+const access = require('../../config/kitchenAccess');
 const { parseObjectId, parseOptionalText, parseRequiredText, parseBooleanValue } = require('../../utils/vendorValidators');
 const { Promotion, Invoice, MenuItem } = require('../../models');
 const departmentService = require('./departmentService');
@@ -52,13 +53,14 @@ function discountFor(promotion, lines) {
 class PromotionService {
   #needs(kitchen, kind, appliesTo, action) {
     kitchen.assert(`promotions.${action}`);
-    kitchen.assert(kind === 'code' ? 'promotions.codes' : 'promotions.campaigns');
+    // Making a new code or campaign needs that kind; editing or removing one doesn't.
+    if (action === 'create') kitchen.assert(kind === 'code' ? 'promotions.codes' : 'promotions.campaigns');
     if (appliesTo === 'products' && !kitchen.can('menu.promotions')) kitchen.assert('promotions.products');
     if (appliesTo === 'departments') kitchen.assert('promotions.departments');
   }
 
   async list(kitchen) {
-    kitchen.assert('promotions.view');
+    if (![...access.inGroup('promotions'), 'menu.promotions'].some((p) => kitchen.can(p))) kitchen.assert('promotions.view');
     const rows = await Promotion.find({ vendor_id: kitchen.vendorId, deleted_at: null }).sort({ created_at: -1 }).lean();
     return { promotions: rows.map(serialize) };
   }

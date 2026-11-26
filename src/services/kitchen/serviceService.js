@@ -192,7 +192,10 @@ class ServiceService {
       throw ApiError.conflict('This bill must be paid before serving (your payment rule). Ask the cashier.', 'PAYMENT_PENDING');
     }
     await this.#assertPartialAllowed(kitchen, order);
-    const ids = this.#pickItems(order, body.item_ids, ['waiting_collection', 'collected']);
+    // Items the guests take away go to the packing station instead.
+    const takeaway = new Set(order.items.filter((i) => i.takeaway).map((i) => String(i._id)));
+    const ids = this.#pickItems(order, body.item_ids, ['waiting_collection', 'collected']).filter((id) => body.item_ids !== undefined || !takeaway.has(String(id)));
+    if (ids.some((id) => takeaway.has(String(id)))) throw ApiError.conflict('Takeaway items are handed over from the packing station.', 'ITEM_IS_TAKEAWAY');
     if (!ids.length) throw ApiError.conflict('Nothing of this order is ready to serve yet.', 'NOTHING_TO_SERVE');
     const now = new Date();
     const result = await Order.updateOne(
@@ -213,21 +216,28 @@ class ServiceService {
       { $set: { 'items.$[it].collected_at': now, 'items.$[it].collected_by': kitchen.actor } },
       { arrayFilters: [{ 'it._id': { $in: ids }, 'it.collected_at': null }] }
     );
-    const after = await Order.findById(order._id).lean();
-    const everythingServed = after.items.every((i) => ['served', 'cancelled'].includes(i.service_status));
-    if (everythingServed) {
-      const done = await Order.findOneAndUpdate(
-        { _id: order._id, status: { $nin: ['delivered', 'cancelled'] } },
-        {
-          $set: { status: 'delivered', delivered_at: now, completed_at: now },
-          $push: { status_history: { status: 'delivered', at: now, note: `Served at ${order.table?.label || 'the table'}` } },
-        },
-        { returnDocument: 'after' }
-      ).lean();
-      if (done) orderNotifications.completed(done);
-    }
+    await this.completeIfDone(order._id);
     activity.record(kitchen, { action: 'service.served', target_type: 'order', target_id: order._id, summary: `Served ${ids.length} item${ids.length === 1 ? '' : 's'} at ${destination(order).label}` });
     return this.#fresh(kitchen, order._id);
+  }
+
+  /** A dine-in order is complete once everything is served, handed over or cancelled. */
+  async completeIfDone(orderId) {
+    const after = await Order.findById(orderId).lean();
+    if (!after || after.fulfillment !== 'dine_in') return false;
+    const live = after.items.filter((i) => i.service_status !== 'cancelled');
+    if (!live.length || !live.every((i) => ['served', 'handed_over'].includes(i.service_status))) return false;
+    const now = new Date();
+    const done = await Order.findOneAndUpdate(
+      { _id: after._id, status: { $nin: ['delivered', 'cancelled'] } },
+      {
+        $set: { status: 'delivered', delivered_at: now, completed_at: now },
+        $push: { status_history: { status: 'delivered', at: now, note: `Served at ${after.table?.label || 'the table'}` } },
+      },
+      { returnDocument: 'after' }
+    ).lean();
+    if (done) orderNotifications.completed(done);
+    return Boolean(done);
   }
 
   async #fresh(kitchen, orderId) {

@@ -151,6 +151,8 @@ class OrderOpsService {
         subtotal_rwf: unit * quantity,
         image_url: dish.image_url || '',
         note: parseOptionalText(body.note, { field: 'note', max: 140 }) || '',
+        // Dine-in guests can add something to take away: billed, then packed.
+        takeaway: body.takeaway === true && order.fulfillment === 'dine_in',
         department_id: ticket.department_id,
         department_name: ticket.department_name,
         ticket_id: ticket._id,
@@ -163,6 +165,8 @@ class OrderOpsService {
     if (saved.status === 'ready') {
       await Order.updateOne({ _id: order._id, status: 'ready' }, { $set: { status: 'preparing' }, $push: { status_history: { status: 'preparing', at: new Date(), note: 'More items added' } } });
     }
+    const added = items[items.length - 1];
+    if (added.takeaway) await require('./packingService').forNewTakeawayItems({ ...order, items: [added] }, kitchen.actor);
     return this.view(kitchen, order._id);
   }
 
@@ -361,15 +365,72 @@ class OrderOpsService {
     return this.view(kitchen, order._id);
   }
 
-  /** The courier (or a coordinator) says the food is on its way. */
+  /**
+   * The kitchen's own courier moves the delivery along:
+   *   assigned -> acknowledged -> collected -> in_transit -> (customer's code) delivered
+   *   collected / in_transit -> failed or customer_unavailable -> in_transit (retry) or returned
+   * The courier changes their own deliveries; a coordinator can change any.
+   * Only the customer's code completes it (and nobody marks it paid here).
+   */
   async courierStatus(kitchen, orderId, body = {}) {
     const order = await this.#load(kitchen, orderId);
     if (!order.kitchen_courier) throw ApiError.conflict('No courier is assigned.', 'NO_COURIER');
     const mine = kitchen.actor.type === 'staff' && String(order.kitchen_courier.staff_id) === kitchen.actor.id;
     if (!mine) anyOf(kitchen, ['delivery.change_assignments', 'delivery.track']);
-    const status = String(body.status || '');
-    if (!['on_the_way'].includes(status)) throw ApiError.badRequest('status must be on_the_way (the customer\'s code completes the delivery).', { status: 'expected on_the_way' });
-    await Order.updateOne({ _id: order._id }, { $set: { 'kitchen_courier.status': status, 'kitchen_courier.updated_at': new Date() }, $push: { status_history: { status: order.status, at: new Date(), note: `${order.kitchen_courier.name} is on the way` } } });
+    let status = String(body.status || '');
+    if (status === 'on_the_way') status = 'in_transit';
+    const current = order.kitchen_courier.status === 'on_the_way' ? 'in_transit' : order.kitchen_courier.status;
+    const NEXT = {
+      // Leaving straight away counts as collecting the food too.
+      assigned: ['acknowledged', 'collected', 'in_transit'],
+      acknowledged: ['collected', 'in_transit'],
+      collected: ['in_transit', 'failed', 'customer_unavailable', 'returned'],
+      in_transit: ['failed', 'customer_unavailable', 'returned'],
+      failed: ['in_transit', 'returned'],
+      customer_unavailable: ['in_transit', 'returned'],
+    };
+    const allowed = NEXT[current] || [];
+    if (!allowed.includes(status)) {
+      throw ApiError.conflict(
+        allowed.length ? `From "${current.replace('_', ' ')}" the delivery can go to: ${allowed.join(', ')}. The customer's code completes it.` : 'This delivery is finished.',
+        'INVALID_COURIER_STATUS'
+      );
+    }
+    if (status === 'collected' || (status === 'in_transit' && ['assigned', 'acknowledged'].includes(current))) {
+      if (!['ready', 'assigned'].includes(order.status)) throw ApiError.conflict('The order is not ready yet.', 'ORDER_NOT_READY');
+      if (!(await require('./packingService').isPacked(order._id))) throw ApiError.conflict('The order is still at the packing station.', 'NOT_PACKED');
+    }
+    const note = parseOptionalText(body.note, { field: 'note', max: 200 }) || '';
+    if (['failed', 'customer_unavailable', 'returned'].includes(status) && !note) {
+      throw ApiError.badRequest('Say what happened.', { note: 'required' });
+    }
+    const now = new Date();
+    const label = { acknowledged: 'accepted the delivery', collected: 'collected the food', in_transit: 'is on the way', failed: 'could not deliver', customer_unavailable: 'could not reach the customer', returned: 'brought the food back' }[status];
+    const done = await Order.updateOne(
+      { _id: order._id, 'kitchen_courier.status': order.kitchen_courier.status },
+      {
+        $set: { 'kitchen_courier.status': status, 'kitchen_courier.updated_at': now },
+        $push: {
+          status_history: { status: order.status, at: now, note: `${order.kitchen_courier.name} ${label}${note ? `: ${note}` : ''}` },
+          ...(['failed', 'customer_unavailable', 'returned'].includes(status) ? { 'kitchen_courier.attempts': { at: now, outcome: status, note } } : {}),
+        },
+      }
+    );
+    if (!done.modifiedCount) throw ApiError.conflict('This delivery just changed. Refresh and try again.', 'COURIER_CHANGED');
+    if (['failed', 'customer_unavailable', 'returned'].includes(status)) {
+      alerts.emit(kitchen.vendorId, 'deliveries', { title: `${order.order_number}: ${label}`, body: note, link: '/vendor-dashboard/deliveries', permission: 'delivery.change_assignments' });
+    }
+    if (['collected', 'in_transit'].includes(status) && order.customer_id) {
+      require('../notificationService')
+        .notifyCustomers([order.customer_id], { type: 'order_update', title: status === 'collected' ? 'Your order has left the kitchen' : 'Your order is on the way', body: `${order.kitchen_courier.name} is bringing ${order.order_number}.`, link: `/orders/${order._id}` })
+        .catch(() => null);
+    }
+    activity.record(kitchen, { action: `delivery.${status}`, target_type: 'order', target_id: order._id, summary: `${order.order_number}: ${order.kitchen_courier.name} ${label}` });
+    if (mine && !kitchen.can('delivery.track') && !kitchen.can('orders.view')) {
+      // A kitchen driver sees their delivery, not the order's money.
+      const fresh = await Order.findById(order._id).select('order_number status kitchen_courier').lean();
+      return { id: String(fresh._id), order_number: fresh.order_number, status: fresh.status, kitchen_courier: { staff_id: String(fresh.kitchen_courier.staff_id), name: fresh.kitchen_courier.name, status: fresh.kitchen_courier.status } };
+    }
     return this.view(kitchen, order._id);
   }
 

@@ -80,8 +80,10 @@ class FinanceService {
   // ------------------------------------------------ cashier sessions
 
   async sessions(kitchen, query = {}) {
-    if (!['invoices.cashier_sessions', 'invoices.cashier_reports'].some((p) => kitchen.can(p))) kitchen.assert('invoices.cashier_sessions');
-    const filter = { vendor_id: kitchen.vendorId };
+    // Managers see every till; a cashier sees their own.
+    const all = ['invoices.cashier_sessions', 'invoices.cashier_reports'].some((p) => kitchen.can(p));
+    if (!all && !['invoices.process_payment', 'invoices.cash'].some((p) => kitchen.can(p))) kitchen.assert('invoices.cashier_sessions');
+    const filter = { vendor_id: kitchen.vendorId, ...(all ? {} : { 'cashier.id': kitchen.actor.id }) };
     if (query.status === 'open' || query.status === 'closed') filter.status = query.status;
     const rows = await CashierSession.find(filter).sort({ opened_at: -1 }).limit(60).lean();
     const mine = await CashierSession.findOne({ vendor_id: kitchen.vendorId, 'cashier.id': kitchen.actor.id, status: 'open' }).lean();
@@ -186,7 +188,7 @@ class FinanceService {
   }
 
   async listExpenses(kitchen, query = {}) {
-    kitchen.assert('finance.expenses_view');
+    if (!['finance.expenses_view', 'finance.expenses_record', 'finance.expenses_edit', 'finance.expenses_delete'].some((p) => kitchen.can(p))) kitchen.assert('finance.expenses_view');
     const { from, to } = range(query);
     const { limit, page, offset } = parsePagination(query, { defaultLimit: 50, maxLimit: 200 });
     const filter = { vendor_id: new ObjectId(kitchen.vendorId), deleted_at: null, date: { $gte: from, $lte: to } };

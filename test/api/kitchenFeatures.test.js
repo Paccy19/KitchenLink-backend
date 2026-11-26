@@ -44,9 +44,9 @@ before(async () => {
 });
 after(stop);
 
-test('the permission list has 20 groups; only administrators shape roles', async () => {
+test('the permission list has 21 groups; only administrators shape roles', async () => {
   const catalogue = ok(await api('GET', '/vendor/permissions', { token: owner }));
-  assert.equal(catalogue.groups.length, 20);
+  assert.equal(catalogue.groups.length, 21);
   const all = catalogue.groups.flatMap((g) => g.permissions);
   assert.ok(all.length > 230);
   assert.equal(all.filter((p) => p.planned).length, 0, 'every permission does something');

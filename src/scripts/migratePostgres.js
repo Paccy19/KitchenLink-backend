@@ -146,6 +146,7 @@ const SPECS = [
       kitchen_customer_id: 'oid', reopened_at: 'date',
       table_ref: ['json', 'table'], guest_name: ['text', 'guest.name'],
       invoice_id: 'oid', payment_gate: 'text',
+      session_id: 'oid', reservation_id: 'oid', converted_to_takeaway_at: 'date', packed_at: 'date', prep_minutes: 'num',
     },
   },
   {
@@ -330,7 +331,7 @@ const SPECS = [
   {
     table: 'invoices', collection: 'invoices', sample: 'invoice_number',
     fields: {
-      vendor_id: 'oid', invoice_number: 'text', order_ids: 'text[]', table_id: 'oid', table_label: 'text',
+      vendor_id: 'oid', invoice_number: 'text', order_ids: 'text[]', table_id: 'oid', table_label: 'text', session_id: 'oid',
       customer_name: 'text', kind: 'text', is_open: 'bool', lines: 'json', subtotal_rwf: 'num',
       delivery_fee_rwf: 'num', discount_rwf: 'num', total_rwf: 'num', amount_paid_rwf: 'num',
       refunded_rwf: 'num', status: 'text', payments: 'json', refunds: 'json', notes: 'text',
@@ -385,6 +386,9 @@ const SPECS = [
   { table: 'promotions', collection: 'promotions', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
   { table: 'staffshifts', collection: 'staffshifts', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
   { table: 'staffattendances', collection: 'staffattendances', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'tablesessions', collection: 'tablesessions', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'waitlistentries', collection: 'waitlistentries', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
+  { table: 'packingtasks', collection: 'packingtasks', fields: { vendor_id: 'oid', doc: ['json', '$root'] } },
 ];
 
 /**

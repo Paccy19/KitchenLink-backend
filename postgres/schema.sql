@@ -39,7 +39,7 @@ DROP TABLE IF EXISTS
   invoices, inventoryitems, stockmovements, suppliers, kitchenactivities,
   kitchenreports, staffnotifications, servicerequests, cashiersessions, expenses,
   purchaseorders, kitchencustomers, feedbacks, reservations, promotions,
-  staffshifts, staffattendances
+  staffshifts, staffattendances, tablesessions, waitlistentries, packingtasks
 CASCADE;
 
 -- ============================================================================
@@ -338,6 +338,11 @@ CREATE TABLE orders (
   kitchen_courier           JSONB,
   kitchen_customer_id       CHAR(24),
   reopened_at               TIMESTAMPTZ,
+  -- Table visit (TableSession) and booking (Reservation) the order belongs to.
+  session_id                CHAR(24),
+  reservation_id            CHAR(24),
+  converted_to_takeaway_at  TIMESTAMPTZ,
+  packed_at                 TIMESTAMPTZ,
   subtotal_rwf              NUMERIC     NOT NULL,
   delivery_fee_rwf          NUMERIC     NOT NULL,
   delivery_distance_km      NUMERIC     CHECK (delivery_distance_km >= 0),
@@ -364,6 +369,7 @@ CREATE TABLE orders (
   driver_id                 CHAR(24),
   delivery_id               CHAR(24),
   eta_minutes               NUMERIC,
+  prep_minutes              NUMERIC,
   estimated_delivery_at     TIMESTAMPTZ,
   picked_up_at              TIMESTAMPTZ,
   delivered_at              TIMESTAMPTZ,
@@ -909,6 +915,7 @@ CREATE TABLE invoices (
   order_ids        TEXT[]      NOT NULL DEFAULT '{}',
   table_id         CHAR(24),
   table_label      TEXT        NOT NULL DEFAULT '',
+  session_id       CHAR(24),
   customer_name    TEXT        NOT NULL DEFAULT '',
   kind             TEXT        NOT NULL CHECK (kind IN ('table','order')),
   is_open          BOOLEAN     NOT NULL DEFAULT TRUE,
@@ -929,7 +936,7 @@ CREATE TABLE invoices (
   amount_paid_rwf  NUMERIC     NOT NULL DEFAULT 0 CHECK (amount_paid_rwf >= 0),
   refunded_rwf     NUMERIC     NOT NULL DEFAULT 0 CHECK (refunded_rwf >= 0),
   status           TEXT        NOT NULL DEFAULT 'unpaid'
-                   CHECK (status IN ('unpaid','partially_paid','paid','refunded','void')),
+                   CHECK (status IN ('unpaid','partially_paid','paid','partially_refunded','refunded','void')),
   payments         JSONB       NOT NULL DEFAULT '[]',
   refunds          JSONB       NOT NULL DEFAULT '[]',
   notes            TEXT        NOT NULL DEFAULT '',
@@ -1121,6 +1128,31 @@ CREATE TABLE staffattendances (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX staffattendances_vendor_idx ON staffattendances (vendor_id, created_at DESC);
+-- Table visits, the waiting list and the packing station (kept whole as JSON).
+CREATE TABLE tablesessions (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX tablesessions_vendor_idx ON tablesessions (vendor_id, created_at DESC);
+CREATE TABLE waitlistentries (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX waitlistentries_vendor_idx ON waitlistentries (vendor_id, created_at DESC);
+CREATE TABLE packingtasks (
+  _id         CHAR(24) PRIMARY KEY,
+  vendor_id   CHAR(24)    NOT NULL,
+  doc         JSONB       NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX packingtasks_vendor_idx ON packingtasks (vendor_id, created_at DESC);
 
 -- ============================================================================
 -- FOREIGN KEYS (all deferred -> any insert order works)

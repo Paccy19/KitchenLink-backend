@@ -68,14 +68,15 @@ const invoiceSchema = new mongoose.Schema(
     total_rwf: { type: Number, default: 0, min: 0 },
     amount_paid_rwf: { type: Number, default: 0, min: 0 },
     refunded_rwf: { type: Number, default: 0, min: 0 },
-    status: { type: String, enum: ['unpaid', 'partially_paid', 'paid', 'refunded', 'void'], default: 'unpaid' },
+    status: { type: String, enum: ['unpaid', 'partially_paid', 'paid', 'partially_refunded', 'refunded', 'void'], default: 'unpaid' },
+    session_id: { type: ObjectId, ref: 'TableSession', default: null },
     payments: [
       {
         amount_rwf: { type: Number, required: true, min: 1 },
         method: { type: String, required: true },
         reference: { type: String, default: '' },
         // 'in_person' = taken by the kitchen; 'online' = paid in the app (platform holds it).
-        channel: { type: String, enum: ['in_person', 'online'], default: 'in_person' },
+        channel: { type: String, enum: ['in_person', 'online', 'deposit'], default: 'in_person' },
         received_by: actor,
         at: { type: Date, default: Date.now },
       },

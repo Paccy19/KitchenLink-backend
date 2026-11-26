@@ -6,7 +6,7 @@ class CartRepository {
       .sort({ created_at: 1 })
       .populate({
         path: 'menu_item_id',
-        select: 'name price_rwf image_url is_available vendor_id description',
+        select: 'name price_rwf image_url is_available vendor_id description preparation_time_minutes',
       })
       .populate('vendor_id', 'name vendor_type banner_image_url delivery_available')
       .lean();

@@ -15,7 +15,7 @@ const router = Router();
 router.use(requireVendorAuth);
 
 // Department checks (which dish) happen again in vendorMenuService.
-router.get('/categories', can('menu.view'), vendorMenuController.categories);
+router.get('/categories', can(...require('../config/kitchenAccess').inGroup('menu')), vendorMenuController.categories);
 router.post('/categories', can('menu.categories'), vendorMenuController.createCategory);
 router.patch('/categories/:category_id', can('menu.categories_edit'), asyncHandler(async (req, res) => res.json(await require('../services/vendorMenuService').renameCategory(req.vendor, req.params.category_id, req.body))));
 router.delete('/categories/:category_id', can('menu.categories_delete'), asyncHandler(async (req, res) => res.json(await require('../services/vendorMenuService').deleteCategory(req.vendor, req.params.category_id))));
@@ -31,7 +31,8 @@ router.post(
 );
 router.patch('/photos/:photo_id', can('menu.images', 'menu.descriptions'), asyncHandler(async (req, res) => res.json(await vendorMenuService.updatePhoto(req.vendor, req.params.photo_id, req.body))));
 router.delete('/photos/:photo_id', can('menu.images'), asyncHandler(async (req, res) => res.json(await vendorMenuService.removePhoto(req.vendor, req.params.photo_id))));
-router.get('/', can('menu.view'), vendorMenuController.list);
+// Anyone who works on the menu (prices, photos, availability…) sees it.
+router.get('/', can(...require('../config/kitchenAccess').inGroup('menu')), vendorMenuController.list);
 router.post('/', can('menu.create'), upload.single('image'), vendorMenuController.create);
 router.put('/:item_id', can('menu.edit', 'menu.prices', 'menu.descriptions', 'menu.images', 'menu.variants', 'menu.addons', 'menu.availability', 'menu.activate', 'menu.featured', 'menu.assign_departments'), upload.single('image'), vendorMenuController.update);
 router.delete('/:item_id', can('menu.delete'), vendorMenuController.remove);

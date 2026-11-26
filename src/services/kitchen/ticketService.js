@@ -112,6 +112,8 @@ function serializeTicket(ticket, order, department) {
     station_id: ticket.station_id || null,
     paused: Boolean(ticket.paused),
     pause_reason: ticket.pause_reason || '',
+    flags: (ticket.flags || []).map((f, index) => ({ index, kind: f.kind, note: f.note || '', at: f.at, by: f.by || '', resolved_at: f.resolved_at || null })),
+    open_flags: (ticket.flags || []).filter((f) => !f.resolved_at).length,
     assigned_staff_id: ticket.assigned_staff_id ? String(ticket.assigned_staff_id) : null,
     assigned_staff_name: ticket.assigned_staff_name || '',
     accepted_at: ticket.accepted_at ?? null,
@@ -125,6 +127,8 @@ function serializeTicket(ticket, order, department) {
       note: item.note || '',
       options: (item.options || []).map((o) => `${o.group_name}: ${o.name}`),
       service_status: item.service_status || 'pending',
+      takeaway: Boolean(item.takeaway),
+      unavailable: Boolean(item.unavailable),
     })),
     order: {
       id: String(order._id),
@@ -220,6 +224,9 @@ class TicketService {
         // A ready ticket leaves the live board once nothing of it waits at the counter.
         if (!history && ticket.status === 'ready' && !serialized.items.some((i) => i.service_status === 'waiting_collection')) continue;
         serialized.payment_hold = paymentBlocks(order, vendor, 'preparation');
+        // Only the stages this person may move the ticket to (e.g. a cook who can't mark ready).
+        const dept = ticket.department_id ? String(ticket.department_id) : null;
+        serialized.allowed_next_statuses = serialized.allowed_next_statuses.filter((next) => (STAGE_PERMISSION[next.id] || []).some((p) => kitchen.can(p, dept)));
         tickets.push(serialized);
       }
     }
@@ -353,6 +360,64 @@ class TicketService {
     );
     activity.record(kitchen, { action: paused ? 'ticket.paused' : 'ticket.resumed', target_type: 'order', target_id: order._id, summary: `${ticket.code} ${paused ? 'paused' : 'resumed'}${reason ? `: ${reason}` : ''}`, department_id: ticket.department_id });
     return { ticket: serializeTicket((await Order.findById(order._id).lean()).tickets.find((t) => String(t._id) === String(ticket._id)), await Order.findById(order._id).lean(), null) };
+  }
+
+  /**
+   * A department raises a problem on its ticket: running late, an item it
+   * can't make, or it needs a server/manager. The server and the floor are
+   * alerted; an "unavailable" item stays on the order (and the bill) until
+   * the server agrees a change with the guests.
+   */
+  async flag(vendor, kitchen, orderId, ticketId, body = {}) {
+    const { order, ticket, department } = await this.#ticketOf(vendor, orderId, ticketId);
+    kitchen.assert('kitchen.flag_issues', department);
+    const kind = String(body.kind || '');
+    if (!['delayed', 'unavailable', 'assistance'].includes(kind)) throw ApiError.badRequest('Pick the problem: delayed, unavailable or assistance.', { kind: 'expected delayed, unavailable or assistance' });
+    if (ticket.status === 'cancelled') throw ApiError.conflict('This ticket is cancelled.', 'TICKET_FINISHED');
+    const note = String(body.note || '').trim().slice(0, 200);
+    let itemIds = [];
+    if (kind === 'unavailable') {
+      const mine = order.items.filter((i) => String(i.ticket_id) === String(ticket._id) && i.service_status === 'pending');
+      const wanted = Array.isArray(body.item_ids) ? new Set(body.item_ids.map(String)) : null;
+      itemIds = mine.filter((i) => !wanted || wanted.has(String(i._id))).map((i) => i._id);
+      if (!itemIds.length) throw ApiError.badRequest('Pick the items you cannot make.', { item_ids: 'required' });
+    }
+    const now = new Date();
+    await Order.updateOne(
+      { _id: order._id },
+      {
+        $push: {
+          'tickets.$[t].flags': { kind, note, item_ids: itemIds, at: now, by: kitchen.actor.name },
+          'tickets.$[t].history': { status: `flag:${kind}`, at: now, by: kitchen.actor, note },
+        },
+        ...(itemIds.length ? { $set: { 'items.$[it].unavailable': true } } : {}),
+      },
+      { arrayFilters: [{ 't._id': ticket._id }, ...(itemIds.length ? [{ 'it._id': { $in: itemIds } }] : [])] }
+    );
+    const label = { delayed: 'is running late', unavailable: 'cannot make an item', assistance: 'needs help' }[kind];
+    const where = order.table?.label || order.order_number;
+    const names = itemIds.length ? order.items.filter((i) => itemIds.some((id) => String(id) === String(i._id))).map((i) => i.name).join(', ') : '';
+    const alert = { title: `${ticket.department_name || 'Kitchen'} ${label}: ${where}`, body: [names, note].filter(Boolean).join(' · '), link: '/vendor-dashboard/service' };
+    const alerts = require('./alertService');
+    if (order.assigned_staff?.id && order.assigned_staff.type === 'staff') alerts.toStaff(order.vendor_id, order.assigned_staff.id, { ...alert, type: 'order_alerts' });
+    alerts.emit(order.vendor_id, 'order_alerts', { ...alert, permission: kind === 'assistance' ? 'service.view_ready' : 'service.view_assigned' });
+    activity.record(kitchen, { action: `ticket.flag_${kind}`, target_type: 'order', target_id: order._id, summary: `${ticket.code} ${label}${names ? ` (${names})` : ''}${note ? `: ${note}` : ''}`, department_id: ticket.department_id });
+    const fresh = await Order.findById(order._id).lean();
+    return { ticket: serializeTicket(fresh.tickets.find((t) => String(t._id) === String(ticket._id)), fresh, null) };
+  }
+
+  /** The problem is dealt with (the server changed the order, help arrived...). */
+  async resolveFlag(vendor, kitchen, orderId, ticketId, flagIndex) {
+    const { order, ticket, department } = await this.#ticketOf(vendor, orderId, ticketId);
+    if (!kitchen.can('kitchen.flag_issues', department) && !kitchen.can('service.view_assigned') && !kitchen.can('orders.edit')) kitchen.assert('kitchen.flag_issues', department);
+    const index = Number(flagIndex);
+    const flag = (ticket.flags || [])[index];
+    if (!Number.isInteger(index) || !flag) throw ApiError.notFound('That problem was not found.', 'FLAG_NOT_FOUND');
+    if (flag.resolved_at) return { ticket: serializeTicket(ticket, order, null) };
+    await Order.updateOne({ _id: order._id }, { $set: { [`tickets.$[t].flags.${index}.resolved_at`]: new Date() } }, { arrayFilters: [{ 't._id': ticket._id }] });
+    activity.record(kitchen, { action: 'ticket.flag_resolved', target_type: 'order', target_id: order._id, summary: `${ticket.code}: ${flag.kind} sorted out`, department_id: ticket.department_id });
+    const fresh = await Order.findById(order._id).lean();
+    return { ticket: serializeTicket(fresh.tickets.find((t) => String(t._id) === String(ticket._id)), fresh, null) };
   }
 
   /**

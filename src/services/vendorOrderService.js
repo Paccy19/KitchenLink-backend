@@ -23,6 +23,37 @@ const ticketService = require('./kitchen/ticketService');
 const { vendor: vendorConfig } = config;
 
 /** All internal statuses that surface to a vendor under the given status. */
+/**
+ * Who may move an order to a status: accepting needs orders.accept, turning
+ * a new order down orders.reject (or cancel), stopping an accepted one
+ * orders.cancel, cooking the kitchen permissions.
+ */
+function statusNeeds(order, nextStatus) {
+  const isNew = vendorConfig.internalToVendorStatus[order.status] === 'new';
+  return {
+    accepted: ['orders.accept'],
+    cancelled: isNew ? ['orders.reject', 'orders.cancel'] : ['orders.cancel'],
+    preparing: ['kitchen.start_preparation', 'kitchen.update_progress'],
+    ready: ['kitchen.mark_ready'],
+  }[nextStatus] || ['orders.accept'];
+}
+
+/** The order as this person sees it: only the next steps their role allows, and whether they can hand it over. */
+function forKitchen(serialized, order, kitchen) {
+  if (!kitchen || kitchen.isAdmin) return serialized;
+  const allowed = (serialized.allowed_next_statuses || []).filter((next) => statusNeeds(order, next).some((p) => kitchen.can(p)));
+  const out = { ...serialized, allowed_next_statuses: allowed, can_hand_over: kitchen.can('orders.handover') || kitchen.can('delivery.confirm_completion') };
+  // The kitchen's earnings (commission, payout) only for people who handle its money.
+  const money = ['finance.revenue', 'overview.sales', 'overview.financial_summary', 'reports.sales', 'reports.financial'].some((p) => kitchen.can(p));
+  if (!money) {
+    delete out.commission_percent;
+    delete out.commission_rwf;
+    delete out.vendor_payout_rwf;
+    delete out.rider_payout_rwf;
+  }
+  return out;
+}
+
 const internalStatusesFor = (vendorStatus) => {
   if (!vendorStatus) return undefined;
   return Object.entries(vendorConfig.internalToVendorStatus)
@@ -76,9 +107,7 @@ class VendorOrderService {
 
     return {
       orders: orders.map((order) =>
-        serializeVendorOrder(order, {
-          customer: customers.get(String(order.customer_id)),
-        })
+        forKitchen(serializeVendorOrder(order, { customer: customers.get(String(order.customer_id)) }), order, kitchen)
       ),
       meta: {
         limit,
@@ -91,14 +120,14 @@ class VendorOrderService {
     };
   }
 
-  async getDetail(vendor, orderId) {
+  async getDetail(vendor, orderId, kitchen = null) {
     const id = parseObjectId(orderId, 'order_id');
     const order = await orderRepository.findByVendorAndId(vendor._id, id);
     if (!order) {
       throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
     }
     const customer = order.customer_id ? await customerRepository.findById(order.customer_id) : null;
-    return serializeVendorOrder(order, { customer });
+    return forKitchen(serializeVendorOrder(order, { customer }), order, kitchen);
   }
 
   async updateStatus(vendor, orderId, body = {}, kitchen = null) {
@@ -110,19 +139,12 @@ class VendorOrderService {
       throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
     }
     if (kitchen) {
-      // Turning a new order down is "reject"; stopping one already accepted is "cancel".
-      const isNew = vendorConfig.internalToVendorStatus[order.status] === 'new';
-      const needs = {
-        accepted: ['orders.accept'],
-        cancelled: isNew ? ['orders.reject', 'orders.cancel'] : ['orders.cancel'],
-        preparing: ['kitchen.start_preparation', 'kitchen.update_progress'],
-        ready: ['kitchen.mark_ready'],
-      }[nextStatus] || ['orders.accept'];
+      const needs = statusNeeds(order, nextStatus);
       if (!needs.some((permission) => kitchen.can(permission))) kitchen.assert(needs[0]);
     }
     const updated = await this.applyStatus(vendor, order, nextStatus, { note: body?.note, actor: kitchen?.actor });
     const customer = order.customer_id ? await customerRepository.findById(order.customer_id) : null;
-    return serializeVendorOrder(updated, { customer });
+    return forKitchen(serializeVendorOrder(updated, { customer }), updated, kitchen);
   }
 
   /**
@@ -228,6 +250,7 @@ class VendorOrderService {
     // When the kitchen signals the food is ready: a pickup customer gets their
     // code; otherwise the delivery worker (or nearby drivers) are told.
     if (nextStatus === 'ready' && isPickup) {
+      await require('./kitchen/packingService').holdsDispatch(order).catch((error) => console.error('[packing]', error.message));
       notificationService
         .notifyPickupCode(order.customer_id, {
           orderNumber: order.order_number,
@@ -242,7 +265,9 @@ class VendorOrderService {
       // Servers see it on their board; nothing is dispatched.
     } else if (nextStatus === 'ready') {
       try {
-        await deliveryService.handleOrderReady(order);
+        // With packing on, the delivery is dispatched once the order is packed.
+        const held = await require('./kitchen/packingService').holdsDispatch(order);
+        if (!held) await deliveryService.handleOrderReady(order);
       } catch (error) {
         console.error('[delivery] failed to dispatch ready order:', error.message);
       }
@@ -261,12 +286,14 @@ class VendorOrderService {
    * Delivery orders are only ever completed by the delivery worker.
    */
   async confirmPickup(vendor, orderId, body = {}, kitchen = null) {
-    if (kitchen && !kitchen.can('orders.handover') && !kitchen.can('delivery.confirm_completion')) kitchen.assert('orders.handover');
     const id = parseObjectId(orderId, 'order_id');
     const order = await orderRepository.findByVendorAndId(vendor._id, id);
     if (!order) {
       throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
     }
+    // The kitchen's own courier confirms the customer's code for their delivery.
+    const myDelivery = kitchen && kitchen.actor.type === 'staff' && kitchen.can('delivery.drive') && order.kitchen_courier && String(order.kitchen_courier.staff_id) === kitchen.actor.id;
+    if (kitchen && !myDelivery && !kitchen.can('orders.handover') && !kitchen.can('delivery.confirm_completion')) kitchen.assert('orders.handover');
     const kitchenBrings = isKitchenDelivered(order);
     if (!usesHandoverCode(order)) {
       throw ApiError.forbidden(
@@ -323,6 +350,12 @@ class VendorOrderService {
 
     // Same completion as a delivered order: the vendor is credited.
     const settled = await settlementService.releaseOrder(order._id);
+    if (order.kitchen_courier) {
+      await Order.updateOne(
+        { _id: order._id },
+        { $set: { 'kitchen_courier.status': 'delivered', 'kitchen_courier.updated_at': now }, $push: { 'kitchen_courier.attempts': { at: now, outcome: 'delivered', note: 'Customer code confirmed' } } }
+      ).catch(() => null);
+    }
     await Order.updateOne(
       { _id: order._id },
       { $set: { 'items.$[it].service_status': 'handed_over' } },

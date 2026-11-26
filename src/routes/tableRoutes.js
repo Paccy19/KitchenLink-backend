@@ -76,3 +76,4 @@ router.post(
 );
 
 module.exports = router;
+module.exports.optionalCustomer = optionalCustomer;

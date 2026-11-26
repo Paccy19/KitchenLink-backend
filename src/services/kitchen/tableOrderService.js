@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
+const { orderPrepMinutes } = require('../../utils/prepTime');
 const { parseObjectId, parseOptionalText } = require('../../utils/vendorValidators');
 const { isVendorLive } = require('../../utils/vendorPresence');
 const { MenuItem, MenuItemOption, Order, Vendor } = require('../../models');
@@ -95,7 +96,7 @@ class TableOrderService {
     };
   }
 
-  #parseLines(body) {
+  parseLines(body) {
     const raw = body?.items;
     if (!Array.isArray(raw) || raw.length === 0) throw ApiError.badRequest('Add something to your order first.', { items: 'expected at least one item' });
     if (raw.length > MAX_LINES) throw ApiError.badRequest(`At most ${MAX_LINES} different items per order.`, { items: 'too many lines' });
@@ -113,6 +114,7 @@ class TableOrderService {
         quantity,
         option_ids: optionIds,
         note: parseOptionalText(line?.note, { field: `items[${index}].note`, max: 140 }) || '',
+        takeaway: line?.takeaway === true,
       };
     });
   }
@@ -126,9 +128,30 @@ class TableOrderService {
     const { table, vendor } = await resolveTable(token);
     const state = orderingState(table, vendor);
     if (!state.can_order) throw ApiError.conflict(state.reason, 'TABLE_ORDERING_UNAVAILABLE');
-    const lines = this.#parseLines(body);
+    const lines = this.parseLines(body);
     const guestName = parseOptionalText(body.guest_name, { field: 'guest_name', max: 40 }) || customer?.name || '';
+    // The order joins the table's current visit (opened now if the guests scanned before being seated).
+    const session = await require('./sessionService').liveForTable(table, { source: 'qr' });
+    const { order, guestKey } = await this.createDineInOrder({
+      vendor,
+      table,
+      session,
+      lines,
+      guestName,
+      note: parseOptionalText(body.note, { field: 'note', max: 300 }) || '',
+      customer,
+      source: 'table_qr',
+      actor: { type: 'customer', id: customer ? String(customer._id) : null, name: guestName || 'Guest' },
+    });
+    return { ...(await this.#view(order._id)), guest_key: guestKey };
+  }
 
+  /**
+   * One dine-in order for a table visit, priced on the server and split into
+   * department tickets; it joins the visit's bill. Used by guests (QR), by
+   * servers taking an order, and by reservations' pre-orders.
+   */
+  async createDineInOrder({ vendor, table, session = null, lines, guestName = '', note = '', customer = null, source = 'table_qr', actor, reservationId = null }) {
     const dishIds = [...new Set(lines.map((l) => String(l.menu_item_id)))];
     const [dishes, options] = await Promise.all([
       MenuItem.find({ _id: { $in: dishIds }, vendor_id: vendor._id, deleted_at: null }).lean(),
@@ -143,7 +166,7 @@ class TableOrderService {
         unavailable.push(dish?.name || 'an item');
         return null;
       }
-      const chosen = line.option_ids.map((id) => optionById.get(id));
+      const chosen = (line.option_ids || []).map((id) => optionById.get(String(id)));
       if (chosen.some((o) => !o || String(o.menu_item_id) !== String(dish._id))) {
         throw ApiError.conflict(`Some options for ${dish.name} are no longer available.`, 'OPTION_UNAVAILABLE');
       }
@@ -155,7 +178,8 @@ class TableOrderService {
         quantity: line.quantity,
         subtotal_rwf: unit * line.quantity,
         image_url: dish.image_url || '',
-        note: line.note,
+        note: line.note || '',
+        takeaway: Boolean(line.takeaway),
         options: chosen.map((o) => ({ option_id: o._id, group_name: o.group_name || 'Options', name: o.name, additional_price_rwf: o.additional_price_rwf || 0 })),
       };
     });
@@ -163,6 +187,7 @@ class TableOrderService {
       throw ApiError.conflict(`These items are no longer available: ${unavailable.join(', ')}.`, 'CART_ITEM_UNAVAILABLE');
     }
     const subtotal = items.reduce((sum, item) => sum + item.subtotal_rwf, 0);
+    const prepMinutes = orderPrepMinutes(lines.map((l) => dishById.get(String(l.menu_item_id))), vendor);
     const number = orderNumber();
     const split = await ticketService.buildTickets(vendor._id, items, number);
     const guestKey = crypto.randomBytes(24).toString('base64url');
@@ -181,27 +206,36 @@ class TableOrderService {
         fulfillment: 'dine_in',
         source: 'table_qr',
         table: { table_id: table._id, label: table.label },
-        guest: { name: guestName, key_hash: hashKey(guestKey) },
-        delivery_location: { note: parseOptionalText(body.note, { field: 'note', max: 300 }) || '' },
+        session_id: session?._id || null,
+        reservation_id: reservationId,
+        assigned_staff: session?.server_id ? { type: 'staff', id: String(session.server_id), name: session.server_name } : null,
+        guest: { name: guestName || session?.customer_name || '', key_hash: hashKey(guestKey) },
+        delivery_location: { note },
         payment_method: 'in_person',
         payment_status: 'pending',
         payment_gate: access.paymentGate(timing),
         order_type: 'immediate',
         status: 'placed',
-        status_history: [{ status: 'placed', at: now, note: `Ordered at ${table.label}` }],
-        eta_minutes: vendor.estimated_prep_time ?? 20,
-        estimated_delivery_at: new Date(now.getTime() + (vendor.estimated_prep_time ?? 20) * 60000),
+        status_history: [{ status: 'placed', at: now, note: source === 'staff' ? `Taken at ${table.label} by ${actor?.name || 'staff'}` : source === 'reservation' ? `Pre-order for ${table.label}` : `Ordered at ${table.label}` }],
+        eta_minutes: prepMinutes,
+        prep_minutes: prepMinutes,
+        estimated_delivery_at: new Date(now.getTime() + prepMinutes * 60000),
       })
     ).toObject();
 
-    await invoiceService.attachDineInOrder(order, table);
+    if (session) await require('./sessionService').attachOrder(session, order);
+    await invoiceService.attachDineInOrder(order, table, session);
+    // A booking's paid deposit counts on the bill as soon as there is something to pay.
+    if (session?.reservation_id) await require('./reservationService').applyDeposit(session.reservation_id);
+    // New items "to take away" are billed like any other, then packed when ready.
+    await require('./packingService').forNewTakeawayItems(order, actor || { type: 'customer', name: guestName || 'Guest' });
     orderNotifications.newOrder(order);
     activity.recordSystem(
       vendor._id,
-      { action: 'order.table_placed', target_type: 'order', target_id: order._id, summary: `${table.label} ordered ${order.order_number} (RWF ${subtotal.toLocaleString('en-US')})` },
-      { type: 'customer', id: customer ? String(customer._id) : null, name: guestName || 'Guest' }
+      { action: source === 'staff' ? 'order.taken_by_server' : 'order.table_placed', target_type: 'order', target_id: order._id, summary: `${table.label} ordered ${order.order_number} (RWF ${subtotal.toLocaleString('en-US')})` },
+      actor || { type: 'customer', id: null, name: guestName || 'Guest' }
     );
-    return { ...(await this.#view(order._id)), guest_key: guestKey };
+    return { order, guestKey };
   }
 
   async #view(orderId) {

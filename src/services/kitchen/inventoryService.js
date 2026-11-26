@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
+const access = require('../../config/kitchenAccess');
 const parsePagination = require('../../utils/pagination');
 const { parseObjectId, parseOptionalText, parseRequiredText } = require('../../utils/vendorValidators');
 const { InventoryItem, StockMovement, Supplier, MenuItem, Order, PurchaseOrder, Counter } = require('../../models');
@@ -9,6 +10,8 @@ const activity = require('./activityService');
 
 const { ObjectId } = mongoose.Types;
 const REASONS = ['purchase', 'adjustment', 'waste', 'usage', 'return'];
+// Which kind of stock item each specialised permission covers.
+const KIND_PERMISSION = { ingredient: 'inventory.ingredients', raw_material: 'inventory.raw_materials' };
 const round = (n) => Math.round(n * 1000) / 1000;
 
 const parseQuantity = (raw, field, { allowNegative = false, allowZero = false } = {}) => {
@@ -69,7 +72,7 @@ class InventoryService {
   }
 
   async list(kitchen, query = {}) {
-    const filter = { vendor_id: kitchen.vendorId, deleted_at: null, ...kitchen.departmentFilter('inventory.view') };
+    const filter = { vendor_id: kitchen.vendorId, deleted_at: null, ...kitchen.departmentFilterAny(access.inGroup('inventory')) };
     if (query.department_id === 'none') filter.department_id = null;
     else if (query.department_id && mongoose.isValidObjectId(query.department_id)) {
       kitchen.assert('inventory.view', query.department_id);
@@ -143,7 +146,10 @@ class InventoryService {
 
   async create(kitchen, body = {}) {
     const update = await this.#parse(kitchen, body, { partial: false });
-    kitchen.assert('inventory.add', update.department_id ? String(update.department_id) : null);
+    // "Add stock" covers every item; "Ingredients" / "Raw materials" cover their own kind.
+    const dept = update.department_id ? String(update.department_id) : null;
+    const byKind = KIND_PERMISSION[update.kind || 'ingredient'];
+    if (!kitchen.can('inventory.add', dept) && !(byKind && kitchen.can(byKind, dept))) kitchen.assert('inventory.add', dept);
     const quantity = body.quantity !== undefined && body.quantity !== '' ? parseQuantity(body.quantity, 'quantity', { allowZero: true }) : 0;
     const item = await InventoryItem.create({ ...update, vendor_id: kitchen.vendorId, quantity });
     if (quantity) {
@@ -156,8 +162,16 @@ class InventoryService {
   async update(kitchen, itemId, body = {}) {
     const update = await this.#parse(kitchen, body, { partial: true });
     // Only the alert level changing: "Set low-stock alerts" is enough.
-    const onlyAlert = Object.keys(update).every((key) => key === 'low_stock_threshold');
-    const item = await this.#load(kitchen, itemId, onlyAlert ? ['inventory.low_stock_alerts', 'inventory.update'] : ['inventory.update', 'inventory.ingredients', 'inventory.raw_materials']);
+    const onlyAlert = Object.keys(update).length > 0 && Object.keys(update).every((key) => key === 'low_stock_threshold');
+    const current = await InventoryItem.findOne({ _id: parseObjectId(itemId, 'item_id'), vendor_id: kitchen.vendorId, deleted_at: null }).select('kind').lean();
+    const byKind = KIND_PERMISSION[current?.kind || 'ingredient'];
+    const nothing = !Object.keys(update).length;
+    const item = await this.#load(kitchen, itemId, onlyAlert || nothing ? ['inventory.low_stock_alerts', 'inventory.update', ...(byKind ? [byKind] : [])] : ['inventory.update', ...(byKind ? [byKind] : [])]);
+    // Changing an item into another kind needs that kind too (or "Update stock").
+    if (update.kind && update.kind !== item.kind && !kitchen.can('inventory.update', item.department_id ? String(item.department_id) : null)) {
+      const target = KIND_PERMISSION[update.kind];
+      if (!target || !kitchen.can(target)) kitchen.assert('inventory.update');
+    }
     if (update.department_id !== undefined) kitchen.assert('inventory.update', update.department_id ? String(update.department_id) : null);
     const saved = await InventoryItem.findOneAndUpdate({ _id: item._id }, { $set: update }, { returnDocument: 'after' }).lean();
     await activity.record(kitchen, { action: 'inventory.item_updated', target_type: 'inventory', target_id: item._id, summary: `Updated stock item ${saved.name}` });
@@ -259,9 +273,9 @@ class InventoryService {
   }
 
   async movements(kitchen, query = {}) {
-    kitchen.assert('inventory.view');
+    if (!['inventory.movements', 'inventory.view'].some((p) => kitchen.can(p))) kitchen.assert('inventory.movements');
     const { limit, page, offset } = parsePagination(query, { defaultLimit: 50, maxLimit: 200 });
-    const filter = { vendor_id: kitchen.vendorId, ...kitchen.departmentFilter('inventory.view') };
+    const filter = { vendor_id: kitchen.vendorId, ...kitchen.departmentFilter(kitchen.can('inventory.view') ? 'inventory.view' : 'inventory.movements') };
     if (query.item_id && mongoose.isValidObjectId(query.item_id)) filter.item_id = new ObjectId(query.item_id);
     if (REASONS.concat(['order', 'initial', 'transfer_in', 'transfer_out']).includes(query.reason)) filter.reason = query.reason;
     const [rows, total] = await Promise.all([

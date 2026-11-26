@@ -73,8 +73,24 @@ router.use('/vendor/delivery-coverage', requireVendorAuth, can('delivery.setting
 // Departments, staff, roles, tables, preparation, service, invoices, stock, reports.
 router.use('/vendor', kitchenRoutes);
 router.use('/vendor', vendorDashboardRoutes);
+// What each kitchen route accepts, for GET /vendor/permissions (the website follows it).
+{
+  const routeAccess = require('../config/routeAccess');
+  routeAccess.collect('/vendor/menu', vendorMenuRoutes);
+  routeAccess.collect('/vendor/orders', vendorOrderRoutes);
+  routeAccess.collect('/vendor/wallet', vendorWalletRoutes, [['account.wallet']]);
+  routeAccess.collect('/vendor/notifications', vendorNotificationRoutes, [['notifications.view', 'notifications.history']]);
+  routeAccess.collect('/vendor/support', vendorSupportRoutes, [['settings.kitchen_settings']]);
+  routeAccess.collect('/vendor/chats', vendorChatRoutes, [['customers.complaints']]);
+  routeAccess.collect('/vendor/special-deliveries', vendorSpecialDeliveryRoutes, [['delivery.fees']]);
+  routeAccess.collect('/vendor/delivery-coverage', vendorCoverageRoutes, [['delivery.settings']]);
+  routeAccess.collect('/vendor', kitchenRoutes);
+  routeAccess.collect('/vendor', vendorDashboardRoutes);
+}
 // Table QR codes (public): the menu and ordering at the table.
 router.use('/tables', tableRoutes);
+// Table bookings from a kitchen's public page.
+router.use('/bookings', require('./bookingRoutes'));
 router.use('/orders', orderRoutes);
 router.use('/payments', require('./paymentWebhookRoutes'));
 router.use('/notifications', notificationRoutes);

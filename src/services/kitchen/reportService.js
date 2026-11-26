@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
 const config = require('../../config');
-const { Order, Invoice, StockMovement, InventoryItem, MenuItem, KitchenStaff, KitchenActivity, KitchenReport, Vendor, Refund } = require('../../models');
+const { Order, Invoice, StockMovement, InventoryItem, MenuItem, KitchenStaff, KitchenActivity, KitchenReport, Vendor, Refund, Reservation, TableSession, PackingTask, DiningTable } = require('../../models');
 const notificationService = require('../notificationService');
 const departmentService = require('./departmentService');
 
@@ -83,6 +83,99 @@ const minutesBetween = (a, b) => (a && b ? Math.max(0, (new Date(b) - new Date(a
 const avg = (list) => (list.length ? Math.round((list.reduce((s, n) => s + n, 0) / list.length) * 10) / 10 : null);
 
 /**
+ * The floor and the road in one period: table visits and how much each
+ * table was used, reservations and who came, how long food waited to be
+ * served, packing, and the kitchen's own deliveries.
+ */
+async function operationsSection(vid, period, orders) {
+  const range = { $gte: period.start, $lt: period.end };
+  const [sessions, reservations, packing, tables] = await Promise.all([
+    TableSession.find({ vendor_id: vid, started_at: { $lt: period.end }, $or: [{ closed_at: null }, { closed_at: { $gte: period.start } }] }).select('table_id table_label guest_count started_at closed_at close_exceptions').lean(),
+    Reservation.find({ vendor_id: vid, starts_at: range }).select('status source party_size deposit').lean(),
+    PackingTask.find({ vendor_id: vid, created_at: range }).select('kind status created_at packed_at handed_over_at').lean(),
+    DiningTable.find({ vendor_id: vid, deleted_at: null }).select('label').lean(),
+  ]);
+  const periodMinutes = Math.max(1, (Math.min(period.end, new Date()) - period.start) / 60000);
+  const perTable = new Map(tables.map((t) => [String(t._id), { label: t.label, visits: 0, guests: 0, minutes: 0 }]));
+  const visitMinutes = [];
+  for (const sn of sessions) {
+    const from = Math.max(new Date(sn.started_at), period.start);
+    const to = Math.min(sn.closed_at ? new Date(sn.closed_at) : new Date(), period.end);
+    const minutes = Math.max(0, (to - from) / 60000);
+    const row = perTable.get(String(sn.table_id)) || { label: sn.table_label, visits: 0, guests: 0, minutes: 0 };
+    row.visits += 1;
+    row.guests += sn.guest_count || 0;
+    row.minutes += minutes;
+    perTable.set(String(sn.table_id), row);
+    if (sn.closed_at) visitMinutes.push(minutesBetween(sn.started_at, sn.closed_at));
+  }
+  const tableUse = [...perTable.values()]
+    .map((t) => ({ label: t.label, visits: t.visits, guests: t.guests, hours_used: Math.round((t.minutes / 60) * 10) / 10, utilization_percent: Math.round((t.minutes / periodMinutes) * 100) }))
+    .sort((a, b) => b.hours_used - a.hours_used);
+
+  const byStatus = {};
+  for (const r of reservations) {
+    const st = r.status === 'booked' ? 'confirmed' : r.status;
+    byStatus[st] = (byStatus[st] || 0) + 1;
+  }
+  const came = (byStatus.seated || 0) + (byStatus.completed || 0);
+  const expected = came + (byStatus.no_show || 0);
+  const deposits = { paid_rwf: 0, applied_rwf: 0, kept_rwf: 0, to_return_rwf: 0 };
+  for (const r of reservations) {
+    const d = r.deposit || {};
+    deposits.paid_rwf += d.paid_rwf || 0;
+    deposits.applied_rwf += d.applied_rwf || 0;
+    if (d.status === 'forfeited') deposits.kept_rwf += (d.paid_rwf || 0) - (d.applied_rwf || 0);
+    if (d.status === 'refunded') deposits.to_return_rwf += (d.paid_rwf || 0) - (d.applied_rwf || 0);
+  }
+
+  // Ready at the counter -> served at the table.
+  const waitToServe = [];
+  const courierMinutes = [];
+  let failedAttempts = 0;
+  for (const o of orders) {
+    for (const item of o.items || []) {
+      const ticket = (o.tickets || []).find((t) => String(t._id) === String(item.ticket_id));
+      if (item.served_at && ticket?.ready_at) waitToServe.push(minutesBetween(ticket.ready_at, item.served_at));
+    }
+    if (o.kitchen_courier) {
+      failedAttempts += (o.kitchen_courier.attempts || []).filter((a) => a.outcome !== 'delivered').length;
+      if (o.status === 'delivered' && o.completed_at) courierMinutes.push(minutesBetween(o.kitchen_courier.assigned_at, o.completed_at));
+    }
+  }
+  const packWait = packing.filter((t) => t.packed_at).map((t) => minutesBetween(t.created_at, t.packed_at));
+  return {
+    floor: {
+      visits: sessions.length,
+      guests: sessions.reduce((n, sn) => n + (sn.guest_count || 0), 0),
+      avg_visit_minutes: avg(visitMinutes.filter((m) => m !== null)),
+      closed_with_override: sessions.filter((sn) => (sn.close_exceptions || []).length).length,
+      tables: tableUse,
+    },
+    reservations: {
+      total: reservations.length,
+      online: reservations.filter((r) => r.source === 'online').length,
+      by_status: byStatus,
+      guests_booked: reservations.reduce((n, r) => n + r.party_size, 0),
+      attendance_percent: expected ? Math.round((came / expected) * 100) : null,
+      deposits,
+    },
+    service: {
+      avg_wait_to_serve_minutes: avg(waitToServe.filter((m) => m !== null)),
+      packing_requests: packing.length,
+      leftovers_packed: packing.filter((t) => t.kind === 'leftover' && t.status !== 'cancelled').length,
+      avg_packing_minutes: avg(packWait.filter((m) => m !== null)),
+    },
+    deliveries: {
+      kitchen_deliveries: orders.filter((o) => o.kitchen_courier).length,
+      delivered: orders.filter((o) => o.kitchen_courier && o.status === 'delivered').length,
+      failed_attempts: failedAttempts,
+      avg_delivery_minutes: avg(courierMinutes.filter((m) => m !== null)),
+    },
+  };
+}
+
+/**
  * Everything that happened in a kitchen in one period, in one document.
  * `scope`: null = the whole kitchen, or the department ids a manager may see
  * (sales then only count their departments' dishes, and the kitchen-wide
@@ -95,7 +188,7 @@ async function build(vendorId, period, { scope = null, financial = true, withCom
 
   const [orders, departments, invoices, movements, inventory, menu, staff, activityCount, refunds] = await Promise.all([
     Order.find({ vendor_id: vid, created_at: range })
-      .select('customer_id order_number status fulfillment source payment_method payment_status subtotal_rwf delivery_fee_rwf total_rwf commission_rwf vendor_payout_rwf items tickets table created_at completed_at cancelled_at status_history')
+      .select('customer_id order_number status fulfillment source payment_method payment_status subtotal_rwf delivery_fee_rwf total_rwf commission_rwf vendor_payout_rwf items tickets table created_at completed_at cancelled_at status_history kitchen_courier')
       .lean(),
     departmentService.listForVendor(vid),
     financial ? Invoice.find({ vendor_id: vid, $or: [{ created_at: range }, { 'payments.at': range }, { 'refunds.at': range }] }).lean() : [],
@@ -343,6 +436,7 @@ async function build(vendorId, period, { scope = null, financial = true, withCom
     payments,
     staff: staffReport,
     customers: scope === null ? customersReport : null,
+    operations: scope === null ? await operationsSection(vid, period, orders) : null,
     inventory: inventoryReport,
     activity_entries: activityCount,
     definitions: {
@@ -385,6 +479,11 @@ function highlights(r) {
   if (s.busiest_hour) out.push(`Busiest time: ${s.busiest_hour}.`);
   if (s.avg_prep_minutes !== null) out.push(`Food was ready on average ${s.avg_prep_minutes} minutes after ordering.`);
   if (r.payments?.outstanding_rwf) out.push(`${rwf(r.payments.outstanding_rwf)} is still unpaid on ${r.payments.unpaid_invoices.length} bill${r.payments.unpaid_invoices.length === 1 ? '' : 's'}.`);
+  const ops = r.operations;
+  if (ops?.floor?.visits) out.push(`${ops.floor.visits} table visit${ops.floor.visits === 1 ? '' : 's'} (${ops.floor.guests} guests)${ops.floor.avg_visit_minutes !== null ? `, about ${Math.round(ops.floor.avg_visit_minutes)} minutes each` : ''}.`);
+  if (ops?.reservations?.total) out.push(`${ops.reservations.total} booking${ops.reservations.total === 1 ? '' : 's'}${ops.reservations.attendance_percent !== null ? `; ${ops.reservations.attendance_percent}% of guests came` : ''}${ops.reservations.by_status.no_show ? ` (${ops.reservations.by_status.no_show} no-show)` : ''}.`);
+  if (ops?.service?.avg_wait_to_serve_minutes) out.push(`Ready food waited ${ops.service.avg_wait_to_serve_minutes} minutes on average before reaching the table.`);
+  if (ops?.deliveries?.failed_attempts) out.push(`${ops.deliveries.failed_attempts} delivery attempt${ops.deliveries.failed_attempts === 1 ? '' : 's'} by your couriers failed.`);
   if (r.inventory?.low_stock?.length) out.push(`${r.inventory.low_stock.length} stock item${r.inventory.low_stock.length === 1 ? ' is' : 's are'} low: ${r.inventory.low_stock.slice(0, 3).map((i) => i.name).join(', ')}.`);
   return out;
 }
@@ -425,6 +524,8 @@ function toCsv(input) {
     ]);
   }
   if (report.staff) section('Staff', ['Employee', 'Tickets done', 'Items served', 'Payments taken', 'Payments (RWF)'], report.staff.map((s) => [s.name, s.tickets_done, s.items_served, s.payments_taken, s.payments_rwf]));
+  if (report.operations?.floor) section('Tables', ['Table', 'Visits', 'Guests', 'Hours used', 'Use (%)'], report.operations.floor.tables.map((t) => [t.label, t.visits, t.guests, t.hours_used, t.utilization_percent]));
+  if (report.operations?.reservations) section('Reservations', ['Status', 'Bookings'], Object.entries(report.operations.reservations.by_status).map(([k, v]) => [k.replace('_', ' '), v]));
   section('Stock used', ['Item', 'Used', 'Unit'], report.inventory.most_used.map((i) => [i.name, i.used, i.unit]));
   section('Low stock', ['Item', 'Left', 'Unit', 'Alert level'], report.inventory.low_stock.map((i) => [i.name, i.quantity, i.unit, i.threshold]));
   return `${parts.join('\n\n')}\n`;
@@ -488,6 +589,15 @@ class ReportService {
     if (!any('reports.departments', 'finance.department_revenue', 'overview.department_performance', 'departments.performance', 'reports.sales')) out.departments = [];
     if (!any('reports.employees', 'staff.view_performance')) out.staff = null;
     if (!any('reports.customers')) out.customers = null;
+    if (out.operations) {
+      const ops = { ...out.operations };
+      if (!any('reports.orders', 'tables.sessions_view', 'reports.sales', 'overview.statistics')) ops.floor = null;
+      if (!any('reports.orders', 'reservations.view', 'reports.sales')) ops.reservations = null;
+      else if (!money && ops.reservations) ops.reservations = { ...ops.reservations, deposits: null };
+      if (!any('reports.orders', 'service.view_ready', 'reports.sales')) ops.service = null;
+      if (!any('reports.orders', 'delivery.history', 'delivery.track', 'reports.sales')) ops.deliveries = null;
+      out.operations = ops;
+    }
     if (!any('reports.inventory', 'inventory.reports')) out.inventory = { movements: 0, movements_by_reason: {}, most_used: [], low_stock: [], stock_value_rwf: null, hidden: true };
     if (!any('reports.payments', 'reports.financial', 'finance.payment_summaries', 'invoices.cashier_reports')) out.payments = null;
     out.highlights = highlights(out);

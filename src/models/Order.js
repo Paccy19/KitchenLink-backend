@@ -57,6 +57,18 @@ const ticketSchema = new mongoose.Schema({
   paused_at: { type: Date, default: null },
   pause_reason: { type: String, default: '' },
   cancel_reason: { type: String, default: '' },
+  // Problems the department raised: delayed, an item unavailable, help needed.
+  flags: [
+    {
+      _id: false,
+      kind: { type: String, enum: ['delayed', 'unavailable', 'assistance'], required: true },
+      note: { type: String, default: '' },
+      item_ids: [{ type: ObjectId }],
+      at: { type: Date, default: Date.now },
+      by: { type: String, default: '' },
+      resolved_at: { type: Date, default: null },
+    },
+  ],
 });
 
 const orderSchema = new mongoose.Schema(
@@ -93,6 +105,10 @@ const orderSchema = new mongoose.Schema(
         note: { type: String, default: '' },
         // After preparation: kitchenAccess.SERVICE_STATUSES.
         service_status: { type: String, default: 'pending' },
+        // Taken away rather than eaten at the table (new takeaway items, or the rest of a converted order).
+        takeaway: { type: Boolean, default: false },
+        // A department said it can't make it (the server decides what to do).
+        unavailable: { type: Boolean, default: false },
         collected_at: { type: Date, default: null },
         collected_by: { type: actorSchema, default: null },
         served_at: { type: Date, default: null },
@@ -123,6 +139,13 @@ const orderSchema = new mongoose.Schema(
     // Where the order came from.
     source: { type: String, enum: ['marketplace', 'table_qr', 'event'], default: 'marketplace' },
     invoice_id: { type: ObjectId, ref: 'Invoice', default: null },
+    // Dine-in: the table visit it belongs to; a reservation it was ordered ahead for.
+    session_id: { type: ObjectId, ref: 'TableSession', default: null },
+    reservation_id: { type: ObjectId, ref: 'Reservation', default: null },
+    // The guest decided to take the rest of the order away (served items stay served).
+    converted_to_takeaway_at: { type: Date, default: null },
+    // Delivery / pickup: packed and ready to leave (when packing is on).
+    packed_at: { type: Date, default: null },
     // Kitchen operations: how urgent, who looks after it, who collects it,
     // and (orders the kitchen delivers itself) which employee takes it.
     priority: { type: String, enum: ['normal', 'high', 'urgent'], default: 'normal' },
@@ -133,7 +156,13 @@ const orderSchema = new mongoose.Schema(
         {
           staff_id: { type: ObjectId, ref: 'KitchenStaff', required: true },
           name: { type: String, default: '' },
-          status: { type: String, enum: ['assigned', 'on_the_way', 'delivered'], default: 'assigned' },
+          // assigned -> acknowledged -> collected -> in_transit -> delivered; or failed / customer_unavailable / returned / cancelled.
+          status: {
+            type: String,
+            enum: ['assigned', 'acknowledged', 'collected', 'on_the_way', 'in_transit', 'delivered', 'failed', 'customer_unavailable', 'returned', 'cancelled'],
+            default: 'assigned',
+          },
+          attempts: [{ _id: false, at: { type: Date, default: Date.now }, outcome: String, note: String }],
           assigned_at: { type: Date, default: Date.now },
           updated_at: { type: Date, default: Date.now },
         },
@@ -343,6 +372,8 @@ const orderSchema = new mongoose.Schema(
       default: null,
     },
     eta_minutes: { type: Number },
+    // Preparation time of this order (its slowest dish), set when it is placed.
+    prep_minutes: { type: Number, min: 0, default: null },
     estimated_delivery_at: { type: Date },
     picked_up_at: { type: Date },
     delivered_at: { type: Date },
@@ -413,6 +444,7 @@ orderSchema.index({ special_delivery_request_id: 1 }, { sparse: true });
 // Preparation queues and table activity.
 orderSchema.index({ vendor_id: 1, 'tickets.department_id': 1, 'tickets.status': 1 });
 orderSchema.index({ 'table.table_id': 1, status: 1 }, { sparse: true });
+orderSchema.index({ session_id: 1 }, { sparse: true });
 
 // An order with a special delivery agreement keeps the request in step when
 // it is delivered or cancelled, whichever service made the change.

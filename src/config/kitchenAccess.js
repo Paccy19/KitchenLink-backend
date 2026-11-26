@@ -26,6 +26,7 @@ const GROUPS = [
   { id: 'kitchen', label: 'Preparation & Kitchen Operations' },
   { id: 'tables', label: 'Table & QR Code Management' },
   { id: 'service', label: 'Server & Customer Service' },
+  { id: 'packing', label: 'Packing & Fulfillment' },
   { id: 'invoices', label: 'Cashier, Invoices & Payments' },
   { id: 'finance', label: 'Financial Management' },
   { id: 'inventory', label: 'Inventory & Stock Management' },
@@ -150,6 +151,7 @@ const LIST = {
     ['orders.history', 'View order history'],
     ['orders.refunds', 'Manage order refunds'],
     ['orders.reopen', 'Reopen orders where permitted'],
+    ['orders.change_fulfillment', 'Switch an order from dine-in to takeaway'],
   ],
   kitchen: [
     ['kitchen.view_queue', 'View preparation queues', 'S'],
@@ -165,6 +167,7 @@ const LIST = {
     ['kitchen.workflows', 'Manage preparation workflows', 'S'],
     ['kitchen.item_handover', 'Manage item handover'],
     ['kitchen.completed', 'Manage completed orders', 'S'],
+    ['kitchen.flag_issues', 'Flag delays, unavailable items or ask for help', 'S'],
   ],
   tables: [
     ['tables.view', 'View tables'],
@@ -181,7 +184,11 @@ const LIST = {
     ['tables.transfer_orders', 'Transfer orders between tables'],
     ['tables.merge', 'Merge tables'],
     ['tables.split_bills', 'Split table bills'],
+    ['tables.seat', 'Seat guests and open table sessions'],
+    ['tables.waitlist', 'Manage the waiting list'],
+    ['tables.transfer_sessions', 'Move guests to another table'],
     ['tables.close_sessions', 'Close table sessions'],
+    ['tables.session_override', 'Close sessions with unresolved items (manager)'],
     ['tables.order_history', 'View table order history'],
   ],
   service: [
@@ -197,6 +204,14 @@ const LIST = {
     ['service.takeaway', 'View takeaway orders'],
     ['orders.handover', 'Manage collection handovers'],
     ['service.dine_in', 'Manage dine-in service'],
+    ['service.order_for_guests', 'Take orders for guests at the table'],
+    ['service.request_packing', 'Request leftover packing and takeaway'],
+  ],
+  packing: [
+    ['packing.view', 'View packing tasks'],
+    ['packing.pack', 'Pack orders and items'],
+    ['packing.handover', 'Hand packed food over'],
+    ['packing.report_issue', 'Report packing problems'],
   ],
   invoices: [
     ['invoices.view', 'View invoices'],
@@ -262,6 +277,7 @@ const LIST = {
     ['delivery.settings', 'Manage delivery settings'],
     ['delivery.confirm_completion', 'Confirm delivery completion'],
     ['delivery.cancel_assignments', 'Cancel delivery assignments'],
+    ['delivery.drive', 'Deliver orders as a kitchen courier (own deliveries only)'],
   ],
   customers: [
     ['customers.view', 'View customers'],
@@ -276,6 +292,10 @@ const LIST = {
   ],
   reservations: [
     ['reservations.view', 'View reservations'],
+    ['reservations.confirm', 'Confirm or reject booking requests'],
+    ['reservations.check_in', 'Mark arrivals and no-shows, seat booked guests'],
+    ['reservations.deposits', 'Record and refund deposits'],
+    ['reservations.preorders', 'Manage pre-orders'],
     ['reservations.create', 'Create reservations'],
     ['reservations.edit', 'Edit reservations'],
     ['reservations.cancel', 'Cancel reservations'],
@@ -356,10 +376,10 @@ const DEPARTMENT_MANAGER_PERMISSIONS = [
   'inventory.view', 'inventory.add', 'inventory.update', 'inventory.remove', 'inventory.adjust', 'inventory.movements',
   'inventory.ingredients', 'inventory.raw_materials', 'inventory.low_stock_alerts', 'inventory.view_alerts',
   'inventory.receive_deliveries', 'inventory.waste', 'inventory.reports',
-  'reports.departments', 'reports.inventory', 'overview.department_performance', 'finance.department_revenue', 'orders.view',
+  'reports.departments', 'reports.inventory', 'overview.department_performance', 'finance.department_revenue', 'orders.view', 'kitchen.flag_issues', 'kitchen.pause',
 ];
 
-const PREP = ['orders.view', 'orders.details', 'departments.view', 'kitchen.view_queue', 'kitchen.accept_tasks', 'kitchen.start_preparation', 'kitchen.update_progress', 'kitchen.mark_ready', 'kitchen.view_history', 'menu.view', 'menu.availability', 'inventory.view'];
+const PREP = ['orders.view', 'orders.details', 'departments.view', 'kitchen.view_queue', 'kitchen.accept_tasks', 'kitchen.start_preparation', 'kitchen.update_progress', 'kitchen.mark_ready', 'kitchen.view_history', 'kitchen.pause', 'kitchen.flag_issues', 'menu.view', 'menu.availability', 'inventory.view'];
 
 /**
  * Starting roles every kitchen gets (the administrator edits or deletes them
@@ -389,6 +409,7 @@ const DEFAULT_ROLES = [
     name: 'Server / Waiter',
     description: 'Collects ready items, serves tables and shows customers their bill.',
     permissions: [
+      'service.view_assigned', 'service.order_for_guests', 'service.request_packing', 'service.customer_requests', 'tables.sessions_view', 'orders.add_items', 'orders.quantities',
       'orders.view', 'orders.details', 'departments.view', 'service.view_ready', 'service.collect', 'service.serve', 'service.takeaway',
       'service.dine_in', 'service.table_info', 'kitchen.item_handover', 'tables.view', 'tables.sessions_view', 'invoices.view',
       'invoices.print', 'invoices.receipts', 'menu.view',
@@ -405,13 +426,48 @@ const DEFAULT_ROLES = [
     ],
   },
   {
+    key: 'host',
+    name: 'Host / Receptionist',
+    description: 'Welcomes guests, seats them, runs the waiting list and the bookings.',
+    permissions: [
+      'tables.view', 'tables.seat', 'tables.waitlist', 'tables.transfer_sessions', 'tables.sessions_view', 'service.assign_servers', 'service.table_info',
+      'reservations.view', 'reservations.create', 'reservations.edit', 'reservations.cancel', 'reservations.confirm', 'reservations.check_in',
+      'reservations.assign_tables', 'reservations.table_availability', 'reservations.active_sessions', 'reservations.deposits', 'reservations.preorders',
+      'customers.view',
+    ],
+  },
+  {
+    key: 'service_supervisor',
+    name: 'Service Supervisor',
+    description: 'Oversees the floor: tables, servers, sessions and exceptions.',
+    permissions: [
+      'orders.view', 'orders.details', 'orders.history', 'orders.priorities', 'orders.assign_employees', 'orders.change_fulfillment', 'orders.add_items', 'orders.quantities', 'orders.remove_items',
+      'tables.view', 'tables.seat', 'tables.waitlist', 'tables.transfer_sessions', 'tables.transfer_orders', 'tables.close_sessions', 'tables.session_override', 'tables.sessions_view',
+      'service.view_ready', 'service.collect', 'service.serve', 'service.dine_in', 'service.takeaway', 'service.assign_servers', 'service.transfer_servers', 'service.customer_requests',
+      'service.order_for_guests', 'service.request_packing', 'packing.view', 'invoices.view', 'reservations.view', 'reservations.active_sessions',
+    ],
+  },
+  {
+    key: 'packing_staff',
+    name: 'Packing Staff',
+    description: 'Packs leftovers, takeaway and delivery orders and hands them over.',
+    permissions: ['orders.view', 'orders.details', 'packing.view', 'packing.pack', 'packing.handover', 'packing.report_issue', 'service.takeaway'],
+  },
+  {
+    key: 'kitchen_driver',
+    name: 'Delivery Driver (kitchen)',
+    description: 'Delivers the orders the kitchen brings itself. Sees only their own deliveries.',
+    permissions: ['delivery.drive'],
+  },
+  {
     key: 'stock_manager',
     name: 'Stock Manager',
-    description: 'Keeps stock levels, suppliers and stock movements up to date.',
+    description: 'Keeps stock up to date: adds and removes stock, waste, suppliers, purchase orders and transfers.',
     permissions: [
       'inventory.view', 'inventory.add', 'inventory.update', 'inventory.remove', 'inventory.adjust', 'inventory.movements',
       'inventory.ingredients', 'inventory.raw_materials', 'inventory.low_stock_alerts', 'inventory.view_alerts', 'inventory.suppliers',
       'inventory.receive_deliveries', 'inventory.waste', 'inventory.reports', 'reports.inventory', 'menu.view',
+      'inventory.purchase_orders', 'inventory.transfers', 'inventory.categories', 'departments.view',
     ],
   },
   {
@@ -433,6 +489,7 @@ const DEFAULT_ROLES = [
     permissions: [
       'orders.view', 'orders.details', 'orders.handover', 'service.view_ready', 'service.collect', 'service.takeaway', 'kitchen.item_handover',
       'delivery.view_orders', 'delivery.view_locations', 'delivery.track', 'delivery.history', 'delivery.confirm_completion',
+      'delivery.assign_workers', 'delivery.create_assignments', 'delivery.change_assignments', 'delivery.cancel_assignments', 'packing.view',
     ],
   },
 ];
@@ -494,7 +551,10 @@ const ALERT_TYPES = [
   { id: 'employee_alerts', label: 'Team: failed sign-ins and late clock-ins', setting: 'notifications.employee_alerts' },
   { id: 'stock', label: 'Low stock', setting: 'settings.notifications' },
   { id: 'requests', label: 'Guests calling the waiter or asking for the bill', setting: 'settings.notifications' },
-  { id: 'reservations', label: 'New and changed reservations', setting: 'settings.notifications' },
+  { id: 'reservations', label: 'New and changed reservations, arrivals and deposits', setting: 'settings.notifications' },
+  { id: 'floor', label: 'Floor: guests seated, servers assigned, bills paid, tables ready to close', setting: 'settings.notifications' },
+  { id: 'packing', label: 'Packing: leftovers and takeaway to pack, orders packed', setting: 'settings.notifications' },
+  { id: 'deliveries', label: 'Kitchen deliveries: assigned, collected, delivered or failed', setting: 'settings.notifications' },
 ];
 
 /** Ways a cashier records an in-person payment. */
@@ -504,6 +564,9 @@ const IN_PERSON_METHODS = [
   { id: 'card', label: 'Card' },
   { id: 'other', label: 'Other' },
 ];
+
+/** Every permission of a group that can go in a role: anyone holding one may see that area's list. */
+const inGroup = (...groupIds) => PERMISSION_KEYS.filter((key) => groupIds.includes(PERMISSIONS[key].group) && !PERMISSIONS[key].owner);
 
 const catalogue = () => ({
   groups: GROUPS.map((group) => ({
@@ -531,6 +594,7 @@ module.exports = {
   GROUPS,
   PERMISSIONS,
   PERMISSION_KEYS,
+  inGroup,
   SCOPED,
   ROLE_ASSIGNABLE,
   DEPARTMENT_MANAGER_PERMISSIONS,

@@ -8,7 +8,9 @@ required, and a kitchen that sets nothing up works exactly as before.
 Code: `src/services/kitchen/`, `src/routes/kitchenRoutes.js`,
 `src/routes/tableRoutes.js`, `src/config/kitchenAccess.js`. Endpoints:
 `../KitchenLink-frontend/API_CONTRACT.md` ("Kitchen operations" and "/tables").
-Tests: `test/api/kitchenOperations.test.js`, `test/unit/kitchenReports.test.js`.
+Tests: `test/api/kitchenOperations.test.js`, `test/api/kitchenFeatures.test.js`,
+`test/api/restaurantFlow.test.js` (the floor, packing, deliveries, reservations,
+security), `test/unit/kitchenReports.test.js`.
 
 ## Who is signed in
 
@@ -42,6 +44,15 @@ Tests: `test/api/kitchenOperations.test.js`, `test/unit/kitchenReports.test.js`.
   hold. Nobody changes their own roles or administrator flag, and nobody
   grants permissions they don't hold. The kitchen account can't be removed,
   so a kitchen always keeps an administrator.
+- **Every permission works on its own.** `test/api/everyPermission.test.js`
+  gives an employee one permission at a time and calls every route that
+  accepts it, with real records: a 403 fails the test. It also checks that
+  every permission is used somewhere, and that the default roles (stock
+  manager, chef, cashier, order desk...) do their jobs end to end.
+- **The website follows the routes.** `config/routeAccess.js` reads what each
+  route accepts from its `requireKitchenPermission(...)` and serves it in
+  `GET /vendor/permissions` (`routes`), so a button shows exactly when the
+  server would allow it.
 - **Enforcement** is on the server, twice: `requireKitchenPermission(...)` on
   every route (including the old `/vendor/*` routes: wallet, notifications,
   messages, settings, menu, orders), then `kitchen.assert(permission,
@@ -80,6 +91,14 @@ Tests: `test/api/kitchenOperations.test.js`, `test/unit/kitchenReports.test.js`.
   `items[].service_status` tracks what happens after
   (`waiting_collection → collected → served / handed_over`).
 
+## Preparation time
+
+Each dish has its own preparation time (`MenuItem.preparation_time_minutes`).
+An order takes as long as its slowest dish (departments cook in parallel):
+`Order.prep_minutes`, set when it is placed (`utils/prepTime.js`). The
+kitchen's `estimated_prep_time` is only the default for dishes without one;
+kitchen pages don't show a kitchen-wide time any more.
+
 ## Ordering
 
 - **Dine-in (table QR).** `DiningTable` has a random 128-bit `token`; its QR
@@ -98,6 +117,94 @@ Tests: `test/api/kitchenOperations.test.js`, `test/unit/kitchenReports.test.js`.
   destination (table, takeaway, delivery address), each department's
   progress and what waits at the counter. Serving everything of a dine-in
   order completes it (no platform settlement: the money is the kitchen's).
+
+## The floor: table visits
+
+- **`TableSession`** is one visit at a table, from seating to closing:
+  guests, server, every order placed at the table, and the one bill
+  (`Invoice.session_id`). A unique partial index allows one live visit per
+  table (`is_live`), so two hosts can't seat the same table.
+- A visit starts when the **host seats** guests (`POST /vendor/table-sessions`:
+  a walk-in, someone from the **waiting list** `WaitlistEntry`, or a
+  reservation), or with the **first QR order** when nobody seated them
+  (`sessionService.liveForTable`, race-safe through the same index).
+  Seating refuses a table in use, switched off, too small or booked within
+  the hour unless the host confirms (`allow_over_capacity`,
+  `ignore_reservation`).
+- Status is worked out from what's in it: `open` (nothing ordered),
+  `active`, `awaiting_payment` (everything served, money due), `closed`.
+- **Servers** (`service.order_for_guests`) take orders for the table through
+  the same code as QR orders (`tableOrderService.createDineInOrder`): priced
+  on the server, split into tickets, on the visit's bill. A server who only
+  has `service.view_assigned` sees and orders for their own tables only.
+- **Moving guests** (`tables.transfer_sessions`) moves the visit, its open
+  orders and its bill to a free table; merging tables merges the visits.
+- **Closing** follows `operations.session_close` (orders finished, bill paid,
+  packing handed over, optionally no open guest requests). What blocks it is
+  returned as `blockers`. A manager with `tables.session_override` can close
+  anyway with a reason, kept in `close_exceptions` and the activity log; an
+  unpaid bill then stays outstanding, never marked paid.
+
+## Packing, takeaway and leftovers
+
+`PackingTask` (`packingService`) keeps three things apart:
+
+- **Leftovers** of a dine-in order: the guest's own food, already on the bill.
+  Packing them never adds a charge.
+- **Takeaway from a dine-in order**: items the guest takes instead of eating
+  in (`POST /vendor/orders/:id/takeaway`: same items, same bill), or new items
+  ordered "to take away" (`takeaway: true` on a line: a normal, billed item).
+  Servers can't "serve" them; the packing station hands them over
+  (`service_status: handed_over`), which completes the order with the rest.
+- **Delivery and pickup orders**, when `operations.require_packing` is on:
+  marking the order ready creates the task instead of dispatching; packing it
+  dispatches the KitchenLink delivery, and a kitchen courier can only collect
+  a packed order.
+
+## Problems on a ticket
+
+A department flags its ticket (`kitchen.flag_issues`): running late, an item
+it can't make (the item is marked `unavailable`, stays on the bill until the
+server changes the order with the guests), or it needs help. The table's
+server and the floor are alerted; anyone serving can mark it sorted out.
+
+## The kitchen's own deliveries
+
+For orders the kitchen delivers itself (`vendor_delivery`), a coordinator
+gives each to a courier (`/vendor/deliveries` is their board: what is
+packed, who is out, failed attempts). A **kitchen driver** (`delivery.drive`)
+sees only their own deliveries, with the address and items but no money, and
+moves them along: `assigned → acknowledged → collected → in_transit`, with
+`failed` / `customer_unavailable` (a note is required; each is an attempt)
+and `returned`. Only the customer's code completes a delivery, which the
+courier may enter for their own order; nothing marks it paid on the way.
+Customers see the courier's name and progress on their tracking page.
+
+## Reservations
+
+`reservationService` runs a booking from start to end:
+`pending` (asked online) → `confirmed` → `arrived` → `seated` → `completed`,
+or `rejected`, `cancelled`, `no_show`. Every step changes the booking only
+from the status it was read in, and each booking says what can come next
+(`allowed_next_statuses`).
+
+- **No double booking**: a table is held by bookings that overlap, with the
+  kitchen's buffer before and after (`operations.reservations.buffer_minutes`).
+- **Online booking** (`/bookings`, public): the kitchen's opening hours, real
+  free tables, the largest party it takes online; held as `pending` when the
+  kitchen confirms bookings itself. The guest gets a private token (only its
+  hash is kept) to view or cancel, sent in a header.
+- **Deposits**: recorded when taken (`reservations.deposits`), counted on the
+  visit's bill when the guests are seated, as payments arrive (payment method
+  `deposit`, never more than is due, claimed on the booking first so it is
+  used once). Cancelled within `refund_deposit_hours` of the time → kept
+  (`forfeited`), earlier → to give back (`refunded`); a no-show follows
+  `keep_deposit_on_no_show`. The money itself is handed over at the till.
+- **Pre-orders** are dishes chosen with the booking. They are sent to the
+  kitchen only when the guests are seated, as one order on their bill; a
+  dish that went off the menu is reported to the server instead.
+- **Reminders**: a scheduler (`reservationService.start`, every 5 minutes)
+  tells the floor who is arriving soon and reminds signed-in guests, once.
 
 ## Invoices and payments
 
@@ -137,7 +244,10 @@ kitchen once until restocked.
 fulfilment, source, hour, over time), departments (sales, items, prep time),
 products, tables, payments, refunds, outstanding bills, staff, stock and
 cancellations, compared with the previous period, with plain-language
-`highlights`. Department managers get their departments only, without the
+`highlights`, and `operations`: table visits and how much each table was
+used, reservations by status with attendance and deposits, how long ready
+food waited to be served, packing, and the kitchen's own deliveries.
+Department managers get their departments only, without the
 kitchen-wide money sections. A scheduler (`reportService.start`, every 30
 minutes) saves the report of each day, week, month and year that ended
 (`KitchenReport`) and notifies the kitchen for weekly and longer ones. CSV
@@ -151,10 +261,12 @@ collection and serving, invoices, payments and refunds, stock.
 
 ## The full permission list
 
-`config/kitchenAccess.js` holds 242 permissions in 20 groups (Overview,
+`config/kitchenAccess.js` holds 259 permissions in 21 groups (Overview,
 Settings, Staff, Roles, Departments, Menu, Orders, Preparation, Tables,
-Service, Cashier, Finance, Inventory, Delivery, Customers, Reservations,
-Promotions, Notifications, Reports, Audit). Every one is enforced. Handing
+Service, Packing, Cashier, Finance, Inventory, Delivery, Customers,
+Reservations, Promotions, Notifications, Reports, Audit). Default roles
+include Host / Receptionist, Server, Service supervisor, Packing staff,
+Delivery coordinator and Kitchen driver. Every one is enforced. Handing
 out access — creating or editing roles, choosing a role's permissions,
 giving roles to employees, choosing department managers and administrators —
 and the wallet are kitchen-administrator only (`A` flag): they show in the
@@ -184,8 +296,6 @@ list but can't be put in a role.
   orders (`PurchaseOrder`) received into stock.
 - **Customers** (`KitchenCustomer`), loyalty settings, messages to app
   customers (3 a day).
-- **Reservations** (`Reservation`): no double booking, free-table search,
-  seating, longer stays, active dining sessions.
 - **Promotions** (`Promotion`): codes the cashier applies and automatic
   campaigns, on the whole bill, some products or some departments, on table
   bills (app prices stay as they are).
@@ -205,5 +315,8 @@ list but can't be put in a role.
 - There are no sockets: dashboards poll (`/vendor/workspace` carries the
   badge counts), as everywhere else in KitchenLink.
 - One username, phone or email signs in to one kitchen only.
-- Staff can't yet enter orders for walk-in customers from scratch (a POS screen); they can add to and edit table orders.
+- Servers order for guests seated at a table; there is no separate counter
+  POS for walk-in takeaway customers without a table.
+- Deposits are recorded, not collected online: the kitchen takes and returns
+  the money itself.
 - Department operating hours are stored but don't yet stop ordering.

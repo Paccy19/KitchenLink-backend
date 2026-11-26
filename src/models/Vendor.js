@@ -230,6 +230,34 @@ const vendorSchema = new mongoose.Schema(
         // What one point is worth when spent.
         point_value_rwf: { type: Number, min: 1, default: 10 },
       },
+      // Delivery and pickup orders are packed and checked before they leave.
+      require_packing: { type: Boolean, default: false },
+      // Several departments' delivery items may leave separately.
+      allow_partial_dispatch: { type: Boolean, default: false },
+      // What must be true before a table session closes (a manager may override).
+      session_close: {
+        orders_complete: { type: Boolean, default: true },
+        paid: { type: Boolean, default: true },
+        packing_resolved: { type: Boolean, default: true },
+        requests_resolved: { type: Boolean, default: false },
+      },
+      reservations: {
+        enabled_online: { type: Boolean, default: true },
+        duration_minutes: { type: Number, min: 15, max: 720, default: 90 },
+        buffer_minutes: { type: Number, min: 0, max: 240, default: 15 },
+        max_party: { type: Number, min: 1, max: 200, default: 12 },
+        // Online bookings wait for the host to confirm them.
+        require_confirmation: { type: Boolean, default: true },
+        deposit_per_guest_rwf: { type: Number, min: 0, default: 0 },
+        // A cancellation this many hours before (or more) gets the deposit back.
+        refund_deposit_hours: { type: Number, min: 0, default: 24 },
+        // No-show: the deposit is kept.
+        keep_deposit_on_no_show: { type: Boolean, default: true },
+        preorders: { type: Boolean, default: true },
+        // Pre-orders start this many minutes before the booking (0 = when the guests arrive).
+        preorder_lead_minutes: { type: Number, min: 0, max: 240, default: 0 },
+        reminder_minutes: { type: Number, min: 0, max: 1440, default: 120 },
+      },
       // The starting roles were created (once).
       default_roles_created: { type: Boolean, default: false },
       updated_at: { type: Date, default: null },

@@ -4,6 +4,7 @@ const vendorOrderingService = require('./vendorOrderingService');
 const mongoose = require('mongoose');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
+const { orderPrepMinutes } = require('../utils/prepTime');
 const {
   parseDeliveryLocation,
   parsePaymentMethod,
@@ -282,6 +283,7 @@ const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
     note: entry.note || '',
   })),
   eta_minutes: order.eta_minutes ?? null,
+  prep_minutes: order.prep_minutes ?? null,
   estimated_delivery_at: order.estimated_delivery_at ?? null,
   cancelled_at: order.cancelled_at ?? null,
   cancel_reason: order.cancel_reason || null,
@@ -343,6 +345,7 @@ const serializeTracking = (order, vendor, payment, delivery) => {
         }
       : null,
     eta_minutes: order.status === 'delivered' ? 0 : order.eta_minutes ?? null,
+    prep_minutes: order.prep_minutes ?? null,
     estimated_delivery_at: order.estimated_delivery_at ?? null,
     rider: order.rider?.name
       ? { name: order.rider.name, phone: order.rider.phone }
@@ -577,6 +580,8 @@ class OrderService {
     }));
 
     const subtotal = items.reduce((sum, item) => sum + item.subtotal_rwf, 0);
+    // Preparation time of this order: its slowest dish (each dish has its own time).
+    const prepMinutes = orderPrepMinutes(entries.map((entry) => entry.menu_item_id), vendor);
     // Type rules: advance-only kitchens, notice, minimum order, basket size
     // and daily capacity (config/vendorTypes.js RULES).
     await vendorOrderingService.assertOrderAllowed(vendor, {
@@ -601,7 +606,7 @@ class OrderService {
     }
     // The kitchen needs time to cook and then travel there.
     if (kitchenBrings && scheduledFor) {
-      const needMinutes = (vendor.estimated_prep_time ?? 30) + Math.ceil(quote.duration_minutes ?? quote.distance_km * 2);
+      const needMinutes = prepMinutes + Math.ceil(quote.duration_minutes ?? quote.distance_km * 2);
       if (scheduledFor.getTime() < Date.now() + needMinutes * 60 * 1000) {
         const hours = Math.ceil(needMinutes / 60);
         throw ApiError.conflict(
@@ -614,7 +619,7 @@ class OrderService {
     const usesCode = isPickup || kitchenBrings;
     const fee = quote.delivery_fee_rwf;
     const total = subtotal + fee;
-    const etaMinutes = (vendor.estimated_prep_time ?? 30) + (isPickup ? 0 : quote.duration_minutes ?? 15);
+    const etaMinutes = prepMinutes + (isPickup ? 0 : quote.duration_minutes ?? 15);
     const now = new Date();
 
     // Each dish goes to the department that prepares it (one ticket each).
@@ -655,6 +660,7 @@ class OrderService {
         },
       ],
       eta_minutes: orderType === 'immediate' ? etaMinutes : null,
+      prep_minutes: prepMinutes,
       estimated_delivery_at:
         orderType === 'immediate'
           ? new Date(now.getTime() + etaMinutes * 60 * 1000)
@@ -1151,7 +1157,14 @@ class OrderService {
     const order = await this.#withPickupCode(await this.#loadOrder(customerId, orderId));
     const { vendor, payment, delivery } = await this.#loadWithVendor(order);
     await this.#ensureDeliveryCodeNotification(order, delivery);
-    return { ...serializeTracking(order, vendor, payment, delivery), refund: await refundService.forOrder(order._id) };
+    const packing = await require('../models').PackingTask.findOne({ order_id: order._id, kind: { $in: ['delivery', 'pickup'] }, status: { $ne: 'cancelled' } }).select('status packed_at').lean();
+    return {
+      ...serializeTracking(order, vendor, payment, delivery),
+      refund: await refundService.forOrder(order._id),
+      // The kitchen's own courier (orders it delivers itself), and the packing station.
+      kitchen_courier: order.kitchen_courier ? { name: order.kitchen_courier.name, status: order.kitchen_courier.status === 'on_the_way' ? 'in_transit' : order.kitchen_courier.status, updated_at: order.kitchen_courier.updated_at } : null,
+      packing: packing ? { status: packing.status, packed_at: packing.packed_at } : null,
+    };
   }
 
   /* ------------------------- pickup -> delivery switch ------------------------- */

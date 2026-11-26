@@ -154,6 +154,8 @@ function serializeMenuItem(item, options = []) {
     is_preorder: Boolean(item.is_preorder),
     preorder_cutoff: item.preorder_cutoff || '',
     image_url: item.image_url || null,
+    // This dish's own preparation time (null: not set by the kitchen).
+    estimated_prep_time: item.preparation_time_minutes > 0 ? item.preparation_time_minutes : null,
     department_id: item.department_id ? String(item.department_id._id || item.department_id) : null,
     options: options.map(serializeMenuItemOption),
   };
@@ -478,6 +480,7 @@ function serializeVendorOrder(order, { customer } = {}) {
     special_text: order.special_text || '',
     delivery_location: { ...order.delivery_location },
     eta_minutes: order.eta_minutes ?? null,
+    prep_minutes: order.prep_minutes ?? null,
     estimated_delivery_at: order.estimated_delivery_at ?? null,
     status_history: (order.status_history || []).map((entry) => ({
       status: toVendorStatus(entry.status),
@@ -649,7 +652,7 @@ function serializeDelivery(delivery, options = {}) {
       isKitchenReady(delivery) || !order?.created_at
         ? null
         : new Date(
-            new Date(order.created_at).getTime() + (Number(vendorVendor?.estimated_prep_time) || 30) * 60000
+            new Date(order.created_at).getTime() + (Number(order.prep_minutes) || Number(vendorVendor?.estimated_prep_time) || 30) * 60000
           ),
     // This worker's own pickup clock (fixed when it started)...
     pickup_started_at: delivery.pickup_started_at ?? null,
@@ -998,6 +1001,7 @@ function serializeAdminOrder(order) {
     special_text: order.special_text || '',
     delivery_location: { ...order.delivery_location },
     eta_minutes: order.eta_minutes ?? null,
+    prep_minutes: order.prep_minutes ?? null,
     estimated_delivery_at: order.estimated_delivery_at ?? null,
     status_history: (order.status_history || []).map((entry) => ({
       status: entry.status,

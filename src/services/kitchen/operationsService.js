@@ -25,9 +25,21 @@ const serializeSettings = (vendor) => {
       earn_per_rwf: ops.loyalty?.earn_per_rwf || 1000,
       point_value_rwf: ops.loyalty?.point_value_rwf || 10,
     },
+    require_packing: Boolean(ops.require_packing),
+    session_close: {
+      orders_complete: ops.session_close?.orders_complete !== false,
+      paid: ops.session_close?.paid !== false,
+      packing_resolved: ops.session_close?.packing_resolved !== false,
+      requests_resolved: Boolean(ops.session_close?.requests_resolved),
+    },
+    reservations: { ...RESERVATION_DEFAULTS, ...Object.fromEntries(Object.entries(ops.reservations || {}).filter(([k]) => k in RESERVATION_DEFAULTS)) },
     updated_at: ops.updated_at ?? null,
   };
 };
+
+const RESERVATION_DEFAULTS = { enabled_online: true, duration_minutes: 90, buffer_minutes: 15, max_party: 12, require_confirmation: true, deposit_per_guest_rwf: 0, refund_deposit_hours: 24, keep_deposit_on_no_show: true, preorders: true, reminder_minutes: 120 };
+// Whole-number reservation settings and their ranges.
+const RESERVATION_NUMBERS = { duration_minutes: [15, 720], buffer_minutes: [0, 240], max_party: [1, 200], deposit_per_guest_rwf: [0, 1000000], refund_deposit_hours: [0, 720], reminder_minutes: [0, 1440] };
 
 class OperationsService {
   async get(kitchen) {
@@ -66,8 +78,30 @@ class OperationsService {
         set[`operations.loyalty.${field}`] = n;
       }
     }
-    for (const field of ['table_ordering_enabled', 'allow_partial_service', 'inventory_auto_deduct']) {
-      if (body[field] !== undefined) set[`operations.${field}`] = parseBooleanValue(body[field], { field });
+    for (const field of ['table_ordering_enabled', 'allow_partial_service', 'inventory_auto_deduct', 'require_packing']) {
+      if (body[field] !== undefined) {
+        anyOf(['settings.operational_rules']);
+        set[`operations.${field}`] = parseBooleanValue(body[field], { field });
+      }
+    }
+    if (body.session_close && typeof body.session_close === 'object') {
+      anyOf(['settings.operational_rules']);
+      for (const field of ['orders_complete', 'paid', 'packing_resolved', 'requests_resolved']) {
+        if (body.session_close[field] !== undefined) set[`operations.session_close.${field}`] = parseBooleanValue(body.session_close[field], { field: `session_close.${field}` });
+      }
+    }
+    if (body.reservations && typeof body.reservations === 'object') {
+      anyOf(['settings.operational_rules', 'reservations.edit']);
+      for (const field of ['enabled_online', 'require_confirmation', 'keep_deposit_on_no_show', 'preorders']) {
+        if (body.reservations[field] !== undefined) set[`operations.reservations.${field}`] = parseBooleanValue(body.reservations[field], { field: `reservations.${field}` });
+      }
+      for (const [field, [min, max]] of Object.entries(RESERVATION_NUMBERS)) {
+        if (body.reservations[field] === undefined) continue;
+        if (field === 'deposit_per_guest_rwf') anyOf(['reservations.deposits', 'finance.settings']);
+        const n = Number(body.reservations[field]);
+        if (!Number.isInteger(n) || n < min || n > max) throw ApiError.badRequest(`reservations.${field} must be a whole number from ${min} to ${max}.`, { [`reservations.${field}`]: 'out of range' });
+        set[`operations.reservations.${field}`] = n;
+      }
     }
     const vendor = await Vendor.findOneAndUpdate({ _id: kitchen.vendorId }, { $set: set }, { returnDocument: 'after' }).select('operations').lean();
     await activity.record(kitchen, { action: 'operations.updated', target_type: 'kitchen', target_id: kitchen.vendorId, summary: 'Changed the kitchen operations settings', details: set });
@@ -97,16 +131,23 @@ class OperationsService {
       kitchen.can('tables.view') || kitchen.can('overview.active_tables') ? DiningTable.countDocuments({ vendor_id: vendorId, deleted_at: null }) : 0,
       kitchen.can('staff.view') || kitchen.can('overview.active_employees') ? KitchenStaff.countDocuments({ vendor_id: vendorId, deleted_at: null }) : 0,
     ]);
-    const [requests, inboxUnread, clock] = await Promise.all([
+    const { TableSession, PackingTask, Reservation, WaitlistEntry } = require('../../models');
+    const [requests, inboxUnread, clock, liveTables, toPack, toConfirm, waiting, myTables, myDeliveries] = await Promise.all([
       kitchen.can('service.customer_requests') ? require('./serviceRequestService').openCount(vendorId) : 0,
       require('./alertService').inbox.unreadCount(kitchen),
       require('./teamService').myStatus(kitchen),
+      kitchen.can('tables.seat') || kitchen.can('tables.sessions_view') ? TableSession.countDocuments({ vendor_id: vendorId, is_live: true }) : 0,
+      kitchen.can('packing.view') ? PackingTask.countDocuments({ vendor_id: vendorId, status: 'requested' }) : 0,
+      kitchen.can('reservations.confirm') ? Reservation.countDocuments({ vendor_id: vendorId, status: 'pending', starts_at: { $gt: new Date() } }) : 0,
+      kitchen.can('tables.waitlist') || kitchen.can('tables.seat') ? WaitlistEntry.countDocuments({ vendor_id: vendorId, status: 'waiting' }) : 0,
+      kitchen.actor.type === 'staff' && kitchen.can('service.view_assigned') ? TableSession.countDocuments({ vendor_id: vendorId, is_live: true, server_id: kitchen.actor.id }) : 0,
+      kitchen.actor.type === 'staff' && kitchen.can('delivery.drive') ? Order.countDocuments({ vendor_id: vendorId, 'kitchen_courier.staff_id': kitchen.actor.id, status: { $nin: ['delivered', 'cancelled'] } }) : 0,
     ]);
     return {
       ...kitchen.serialize(),
       clock,
       departments: departments.map((d) => ({ id: String(d._id), name: d.name, is_active: d.is_active !== false, category: d.category, code_prefix: d.code_prefix })),
-      counts: { queue: queueCount, ready_orders: waitingCount, open_invoices: openBills, tables, staff: staffCount, requests, inbox: inboxUnread },
+      counts: { queue: queueCount, ready_orders: waitingCount, open_invoices: openBills, tables, staff: staffCount, requests, inbox: inboxUnread, live_tables: liveTables, to_pack: toPack, bookings_to_confirm: toConfirm, waiting_list: waiting, my_tables: myTables, my_deliveries: myDeliveries },
       settings: serializeSettings((await Vendor.findById(vendorId).select('operations').lean()) || {}),
     };
   }

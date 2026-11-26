@@ -59,6 +59,9 @@ const Reservation = require('./Reservation');
 const Promotion = require('./Promotion');
 const StaffShift = require('./StaffShift');
 const StaffAttendance = require('./StaffAttendance');
+const TableSession = require('./TableSession');
+const WaitlistEntry = require('./WaitlistEntry');
+const PackingTask = require('./PackingTask');
 
 module.exports = {
   Department,
@@ -82,6 +85,9 @@ module.exports = {
   Promotion,
   StaffShift,
   StaffAttendance,
+  TableSession,
+  WaitlistEntry,
+  PackingTask,
   AdminLoginChallenge,
   BigEventDeliverySettings,
   SpecialDeliveryRequest,

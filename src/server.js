@@ -209,6 +209,7 @@ const start = async () => {
     deliveryService.start();
     // Daily, weekly, monthly and yearly kitchen reports, saved when each period ends.
     require('./services/kitchen/reportService').start();
+    require('./services/kitchen/reservationService').start();
 
     app.listen(config.port, () => {
       console.log(`API listening on http://localhost:${config.port}/api/v1`);
