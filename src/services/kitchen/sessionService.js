@@ -34,23 +34,23 @@ class SessionService {
 
   /** The table's live visit, opened now if there is none (first QR scan, staff order). */
   async liveForTable(table, { source = 'qr', actor = { type: 'system', name: 'Table order' } } = {}) {
-    const found = await TableSession.findOne({ table_id: table._id, is_live: true }).lean();
+    const found = await TableSession.findOne({ vendor_id: table.vendor_id, table_id: table._id, status: 'active' }).lean();
     if (found) return found;
     try {
       return (
-        await TableSession.create({ vendor_id: table.vendor_id, table_id: table._id, table_label: table.label, source, status: 'open', started_by: actor, server_id: table.assigned_staff_id || null, server_name: table.assigned_staff_id ? await this.#staffName(table.assigned_staff_id) : '' })
+        await TableSession.create({ vendor_id: table.vendor_id, table_id: table._id, table_label: table.label, source, started_by: actor, server_id: table.assigned_staff_id || null, server_name: table.assigned_staff_id ? await this.#staffName(table.assigned_staff_id) : '' })
       ).toObject();
     } catch (error) {
       // Two first orders at the same moment: both join the one that won.
       if (!isDuplicate(error)) throw error;
-      return TableSession.findOne({ table_id: table._id, is_live: true }).lean();
+      return TableSession.findOne({ vendor_id: table.vendor_id, table_id: table._id, status: 'active' }).lean();
     }
   }
 
   async attachOrder(session, order) {
     await TableSession.updateOne(
       { _id: session._id },
-      { $addToSet: { order_ids: order._id }, $set: { status: 'active' } }
+      { $addToSet: { order_ids: order._id } }
     );
   }
 
@@ -65,18 +65,18 @@ class SessionService {
     if (!sessions.length) return new Map();
     const ids = sessions.map((s) => s._id);
     const [orders, bills, packing, requests] = await Promise.all([
-      Order.find({ session_id: { $in: ids } }).select('session_id status items.service_status items.takeaway order_number total_rwf created_at tickets.flags').lean(),
+      Order.find({ table_session_id: { $in: ids } }).select('table_session_id status items.service_status items.takeaway order_number total_rwf created_at tickets.flags').lean(),
       Invoice.find({ session_id: { $in: ids }, status: { $ne: 'void' } }).select('session_id invoice_number total_rwf amount_paid_rwf refunded_rwf status is_open').lean(),
       PackingTask.find({ session_id: { $in: ids }, status: { $in: ['requested', 'packed'] } }).select('session_id').lean(),
       ServiceRequest.find({ table_id: { $in: sessions.map((s) => s.table_id) }, status: { $in: ['open', 'acknowledged'] } }).select('table_id kind').lean(),
     ]);
     const out = new Map(ids.map((id) => [String(id), { orders: [], bills: [], packing: 0, requests: 0 }]));
-    for (const o of orders) out.get(String(o.session_id))?.orders.push(o);
+    for (const o of orders) out.get(String(o.table_session_id))?.orders.push(o);
     for (const b of bills) out.get(String(b.session_id))?.bills.push(b);
     for (const p of packing) out.get(String(p.session_id)).packing += 1;
     const byTable = new Map();
     for (const r of requests) byTable.set(String(r.table_id), (byTable.get(String(r.table_id)) || 0) + 1);
-    for (const s of sessions) out.get(String(s._id)).requests = s.is_live ? byTable.get(String(s.table_id)) || 0 : 0;
+    for (const s of sessions) out.get(String(s._id)).requests = s.status === 'active' ? byTable.get(String(s.table_id)) || 0 : 0;
     return out;
   }
 
@@ -95,7 +95,7 @@ class SessionService {
   #state(session, summary, rules) {
     const check = this.#blockers(summary, rules);
     let status = session.status;
-    if (session.is_live && status !== 'closing') {
+    if (session.status === 'active') {
       if (!summary.orders.length) status = 'open';
       else if (check.open_orders) status = 'active';
       else status = check.balance_due_rwf > 0 ? 'awaiting_payment' : 'active';
@@ -184,7 +184,7 @@ class SessionService {
       const since = query.from ? new Date(query.from) : new Date(Date.now() - 86400000);
       if (Number.isNaN(since.getTime())) throw ApiError.badRequest('Pick a valid date.', { from: 'expected a date' });
       filter.closed_at = { $gte: since };
-    } else filter.is_live = true;
+    } else filter.status = 'active';
     if (this.#onlyMine(kitchen) || query.mine === 'true') filter.server_id = kitchen.actor.type === 'staff' ? kitchen.actor.id : null;
     const sessions = await TableSession.find(filter).sort({ started_at: -1 }).limit(200).lean();
     const [summaries, rules] = await Promise.all([this.#summaries(sessions), this.#rules(kitchen.vendorId)]);
@@ -203,7 +203,7 @@ class SessionService {
     const dayEnd = new Date(now.getTime() + 18 * 3600000);
     const [tables, sessions, upcoming, waitlist, staff, rules] = await Promise.all([
       DiningTable.find({ vendor_id: kitchen.vendorId, deleted_at: null }).lean(),
-      TableSession.find({ vendor_id: kitchen.vendorId, is_live: true }).lean(),
+      TableSession.find({ vendor_id: kitchen.vendorId, status: 'active' }).lean(),
       Reservation.find({ vendor_id: kitchen.vendorId, status: { $in: ['pending', 'confirmed', 'booked', 'arrived'] }, starts_at: { $gte: dayStart, $lte: dayEnd } }).sort({ starts_at: 1 }).lean(),
       kitchen.can('tables.waitlist') || kitchen.can('tables.seat') ? WaitlistEntry.find({ vendor_id: kitchen.vendorId, status: 'waiting' }).sort({ created_at: 1 }).lean() : [],
       KitchenStaff.find({ vendor_id: kitchen.vendorId, is_current: true, deleted_at: null, is_active: { $ne: false } }).select('name').lean(),
@@ -371,7 +371,7 @@ class SessionService {
 
   async #live(kitchen, sessionId) {
     const s = await this.#load(kitchen, sessionId);
-    if (!s.is_live) throw ApiError.conflict('This table visit is already closed.', 'SESSION_CLOSED');
+    if (s.status !== 'active') throw ApiError.conflict('This table visit is already closed.', 'SESSION_CLOSED');
     return s;
   }
 
@@ -387,7 +387,7 @@ class SessionService {
       if (body.notes !== undefined) set.notes = parseOptionalText(body.notes, { field: 'notes', max: 300 }) || '';
     }
     if (!Object.keys(set).length) throw ApiError.badRequest('Nothing to change.', {});
-    await TableSession.updateOne({ _id: s._id, is_live: true }, { $set: set });
+    await TableSession.updateOne({ _id: s._id, status: 'active' }, { $set: set });
     return this.get(kitchen, s._id, { checked: true });
   }
 
@@ -396,9 +396,9 @@ class SessionService {
     const s = await this.#live(kitchen, sessionId);
     anyOf(kitchen, s.server_id ? ['service.transfer_servers', 'service.assign_servers'] : ['service.assign_servers', 'tables.seat']);
     const server = body.server_id ? await this.#server(kitchen, body.server_id) : null;
-    await TableSession.updateOne({ _id: s._id, is_live: true }, { $set: { server_id: server?._id || null, server_name: server?.name || '' } });
+    await TableSession.updateOne({ _id: s._id, status: 'active' }, { $set: { server_id: server?._id || null, server_name: server?.name || '' } });
     await Order.updateMany(
-      { session_id: s._id, status: { $nin: DONE } },
+      { table_session_id: s._id, status: { $nin: DONE } },
       { $set: { assigned_staff: server ? { type: 'staff', id: String(server._id), name: server.name } : null } }
     );
     if (server) alerts.toStaff(kitchen.vendorId, server._id, { type: 'floor', title: `${s.table_label} is yours`, body: s.server_name ? `Moved from ${s.server_name}.` : 'You look after this table now.', link: '/vendor-dashboard/my-tables' });
@@ -415,13 +415,13 @@ class SessionService {
     const s = await this.#live(kitchen, sessionId);
     const target = await this.#table(kitchen, body.table_id);
     if (String(target._id) === String(s.table_id)) throw ApiError.badRequest('The guests are already at that table.', { table_id: 'same table' });
-    const occupied = await TableSession.exists({ table_id: target._id, is_live: true });
+    const occupied = await TableSession.exists({ vendor_id: kitchen.vendorId, table_id: target._id, status: 'active' });
     if (occupied) throw ApiError.conflict(`${target.label} is occupied. Merge the tables instead.`, 'TABLE_OCCUPIED');
     const openBill = await Invoice.exists({ table_id: target._id, kind: 'table', is_open: true });
     if (openBill) throw ApiError.conflict(`${target.label} still has an open bill. Close it first.`, 'TABLE_HAS_OPEN_BILL');
     try {
       const moved = await TableSession.updateOne(
-        { _id: s._id, is_live: true, table_id: s.table_id },
+        { _id: s._id, status: 'active', table_id: s.table_id },
         { $set: { table_id: target._id, table_label: target.label }, $push: { transfers: { from_label: s.table_label, to_label: target.label, at: new Date(), by: kitchen.actor.name } } }
       );
       if (!moved.modifiedCount) throw ApiError.conflict('This table visit just changed. Refresh and try again.', 'SESSION_CHANGED');
@@ -431,7 +431,7 @@ class SessionService {
     }
     await Invoice.updateMany({ session_id: s._id, is_open: true }, { $set: { table_id: target._id, table_label: target.label } });
     await Order.updateMany(
-      { session_id: s._id, status: { $nin: DONE } },
+      { table_session_id: s._id, status: { $nin: DONE } },
       { $set: { table: { table_id: target._id, label: target.label } }, $push: { status_history: { status: 'placed', at: new Date(), note: `Guests moved from ${s.table_label} to ${target.label}` } } }
     );
     await activity.record(kitchen, { action: 'session.transferred', target_type: 'table', target_id: target._id, summary: `Moved guests from ${s.table_label} to ${target.label}` });
@@ -495,9 +495,21 @@ class SessionService {
     }
     const now = new Date();
     const done = await TableSession.findOneAndUpdate(
-      { _id: s._id, is_live: true },
-      { $set: { status: 'closed', is_live: false, closed_at: now, closed_by: kitchen.actor, close_exceptions: exceptions } },
-      { returnDocument: 'after' }
+      { _id: s._id, status: 'active' },
+      {
+        $set: {
+          status: 'closed',
+          closed_at: now,
+          closed_by: kitchen.actor,
+          close_exceptions: exceptions,
+          // Guests' seat sessions end with the visit; pending "pay for me" grants expire.
+          'customer_sessions.$[seat].status': 'closed',
+          'customer_sessions.$[seat].closed_at': now,
+          'payment_authorizations.$[grant].status': 'expired',
+          'payment_authorizations.$[grant].token_hash': null,
+        },
+      },
+      { arrayFilters: [{ 'seat.status': 'active' }, { 'grant.status': { $in: ['pending', 'authorized'] } }], returnDocument: 'after' }
     ).lean();
     if (!done) throw ApiError.conflict('This table was just closed by someone else.', 'SESSION_CLOSED');
     // The bill stops taking new orders; an unpaid one stays in outstanding bills.

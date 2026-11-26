@@ -136,11 +136,11 @@ class OperationsService {
       kitchen.can('service.customer_requests') ? require('./serviceRequestService').openCount(vendorId) : 0,
       require('./alertService').inbox.unreadCount(kitchen),
       require('./teamService').myStatus(kitchen),
-      kitchen.can('tables.seat') || kitchen.can('tables.sessions_view') ? TableSession.countDocuments({ vendor_id: vendorId, is_live: true }) : 0,
+      kitchen.can('tables.seat') || kitchen.can('tables.sessions_view') ? TableSession.countDocuments({ vendor_id: vendorId, status: 'active' }) : 0,
       kitchen.can('packing.view') ? PackingTask.countDocuments({ vendor_id: vendorId, status: 'requested' }) : 0,
       kitchen.can('reservations.confirm') ? Reservation.countDocuments({ vendor_id: vendorId, status: 'pending', starts_at: { $gt: new Date() } }) : 0,
       kitchen.can('tables.waitlist') || kitchen.can('tables.seat') ? WaitlistEntry.countDocuments({ vendor_id: vendorId, status: 'waiting' }) : 0,
-      kitchen.actor.type === 'staff' && kitchen.can('service.view_assigned') ? TableSession.countDocuments({ vendor_id: vendorId, is_live: true, server_id: kitchen.actor.id }) : 0,
+      kitchen.actor.type === 'staff' && kitchen.can('service.view_assigned') ? TableSession.countDocuments({ vendor_id: vendorId, status: 'active', server_id: kitchen.actor.id }) : 0,
       kitchen.actor.type === 'staff' && kitchen.can('delivery.drive') ? Order.countDocuments({ vendor_id: vendorId, 'kitchen_courier.staff_id': kitchen.actor.id, status: { $nin: ['delivered', 'cancelled'] } }) : 0,
     ]);
     return {

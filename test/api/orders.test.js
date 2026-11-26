@@ -1,3 +1,5 @@
+process.env.AGENT_API_KEY ||= 'test-agent-key-that-is-long-enough-to-be-secure';
+
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const {

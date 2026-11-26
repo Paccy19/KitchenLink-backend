@@ -146,7 +146,7 @@ const SPECS = [
       kitchen_customer_id: 'oid', reopened_at: 'date',
       table_ref: ['json', 'table'], guest_name: ['text', 'guest.name'],
       invoice_id: 'oid', payment_gate: 'text',
-      session_id: 'oid', reservation_id: 'oid', converted_to_takeaway_at: 'date', packed_at: 'date', prep_minutes: 'num',
+      table_session_id: 'oid', customer_session_id: 'oid', reservation_id: 'oid', converted_to_takeaway_at: 'date', packed_at: 'date', prep_minutes: 'num',
     },
   },
   {

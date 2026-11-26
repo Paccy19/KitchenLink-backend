@@ -11,6 +11,7 @@ const tableService = require('../services/kitchen/tableService');
 const ticketService = require('../services/kitchen/ticketService');
 const serviceService = require('../services/kitchen/serviceService');
 const invoiceService = require('../services/kitchen/invoiceService');
+const tablePaymentService = require('../services/kitchen/tablePaymentService');
 const inventoryService = require('../services/kitchen/inventoryService');
 const reportService = require('../services/kitchen/reportService');
 const operationsService = require('../services/kitchen/operationsService');
@@ -81,16 +82,27 @@ router.get('/tables', ...auth, can('tables.view', 'service.table_info'), json((r
 router.post('/tables', ...act, can('tables.create'), json((req) => tableService.create(k(req), req.body), 201));
 router.post('/tables/batch', ...act, can('tables.create'), json((req) => tableService.createBatch(k(req), req.body), 201));
 router.get('/tables/:table_id', ...auth, can('tables.view', 'tables.sessions_view', 'tables.order_history', 'service.table_info'), json((req) => tableService.get(k(req), req.params.table_id)));
+router.get('/tables/:table_id/seat-balances', ...auth, can('tables.view', 'invoices.view', 'invoices.process_payment', 'invoices.cash', 'invoices.digital'), json((req) => tablePaymentService.staffSeatBalances(k(req), req.params.table_id)));
+router.post('/tables/:table_id/seat-payments', ...act, can('invoices.process_payment', 'invoices.cash', 'invoices.digital'), json((req) => tablePaymentService.recordStaffPayment(k(req), req.params.table_id, req.body)));
 router.patch('/tables/:table_id', ...act, can('tables.edit', 'tables.activate', 'service.assign_servers', 'service.transfer_servers', 'reservations.table_availability'), json((req) => tableService.update(k(req), req.params.table_id, req.body)));
 router.delete('/tables/:table_id', ...act, can('tables.delete'), json((req) => tableService.remove(k(req), req.params.table_id)));
+router.post('/tables/:table_id/session/close', ...act, can('tables.close_sessions', 'tables.edit'), json((req) => tableService.closeDiningSession(k(req), req.params.table_id)));
+router.post('/tables/:table_id/seats/:seat_number/release', ...act, can('tables.close_sessions', 'tables.seat'), json((req) => tableService.releaseSeat(k(req), req.params.table_id, req.params.seat_number, req.body)));
 router.post('/tables/:table_id/qr/rotate', ...act, can('tables.qr_regenerate'), json((req) => tableService.rotateToken(k(req), req.params.table_id)));
+router.post('/tables/:table_id/seats/:seat_number/qr/rotate', ...act, can('tables.qr_regenerate'), json((req) => tableService.rotateSeatToken(k(req), req.params.table_id, req.params.seat_number)));
 router.get(
   '/tables/:table_id/qr',
   ...auth,
   can('tables.qr_generate', 'tables.qr_download', 'tables.qr_print'),
   asyncHandler(async (req, res) => {
-    const { type, body, table } = await tableService.qr(k(req), req.params.table_id, req.query.format === 'png' ? 'png' : 'svg');
-    const name = `table-${table.label.replace(/[^A-Za-z0-9]+/g, '-')}-qr.${type === 'image/png' ? 'png' : 'svg'}`;
+    const { type, body, table, seat } = await tableService.qr(
+      k(req),
+      req.params.table_id,
+      req.query.format === 'png' ? 'png' : 'svg',
+      req.query.seat
+    );
+    const suffix = seat ? `-seat-${String(seat.seat_number).padStart(2, '0')}` : '';
+    const name = `table-${table.label.replace(/[^A-Za-z0-9]+/g, '-')}${suffix}-qr.${type === 'image/png' ? 'png' : 'svg'}`;
     res.set('Content-Type', type);
     res.set('Cache-Control', 'private, no-store');
     if (req.query.download === '1') res.set('Content-Disposition', `attachment; filename="${name}"`);

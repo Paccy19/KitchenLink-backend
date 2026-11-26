@@ -50,7 +50,7 @@ before(async () => {
   const order = await Order.findById(ids.order_id).lean();
   ids.ticket_id = String(order.tickets[0]._id);
   ids.order_item = String(order.items[0]._id);
-  ids.session_id = String(order.session_id);
+  ids.session_id = String(order.table_session_id);
   ids.invoice_id = String((await Invoice.findOne({ order_ids: order._id }).lean())._id);
   ids.reservation_id = ok(await api('POST', '/vendor/reservations', { token: owner, body: { name: 'Booked Guest', party_size: 2, starts_at: new Date(Date.now() + 3 * 86400000).toISOString() } }), 201).id;
   ids.role_id = ok(await api('POST', '/vendor/roles', { token: owner, body: { name: 'Fixture role', permissions: ['orders.view'] } }), 201).id;
@@ -140,7 +140,7 @@ test('default roles do their everyday jobs', async () => {
   ok(await api('POST', '/vendor/cashier/sessions', { token: cashier.token, body: { opening_float_rwf: 10000 } }), 201);
   assert.ok(ok(await api('GET', '/vendor/cashier/sessions', { token: cashier.token })).mine);
   const bill = ok(await api('GET', `/vendor/invoices/${ids.invoice_id}`, { token: cashier.token }));
-  ok(await api('POST', `/vendor/invoices/${ids.invoice_id}/payments`, { token: cashier.token, body: { amount_rwf: bill.total_rwf - bill.amount_paid_rwf, method: 'cash' } }));
+  ok(await api('POST', `/vendor/invoices/${ids.invoice_id}/payments`, { token: cashier.token, body: { amount_rwf: bill.total_rwf - bill.amount_paid_rwf, idempotency_key: 'test-payment-key-0001', method: 'cash' } }));
   const receipt = await fetch(`${baseUrl()}/vendor/invoices/${ids.invoice_id}/document?kind=receipt`, { headers: { Authorization: `Bearer ${cashier.token}` } });
   assert.equal(receipt.status, 200);
   assert.match(await receipt.text(), /Paid in full/);

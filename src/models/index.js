@@ -42,6 +42,7 @@ const Department = require('./Department');
 const KitchenRole = require('./KitchenRole');
 const KitchenStaff = require('./KitchenStaff');
 const DiningTable = require('./DiningTable');
+const TableSession = require('./TableSession');
 const Invoice = require('./Invoice');
 const InventoryItem = require('./InventoryItem');
 const StockMovement = require('./StockMovement');
@@ -59,7 +60,6 @@ const Reservation = require('./Reservation');
 const Promotion = require('./Promotion');
 const StaffShift = require('./StaffShift');
 const StaffAttendance = require('./StaffAttendance');
-const TableSession = require('./TableSession');
 const WaitlistEntry = require('./WaitlistEntry');
 const PackingTask = require('./PackingTask');
 
@@ -68,6 +68,7 @@ module.exports = {
   KitchenRole,
   KitchenStaff,
   DiningTable,
+  TableSession,
   Invoice,
   InventoryItem,
   StockMovement,
@@ -85,7 +86,6 @@ module.exports = {
   Promotion,
   StaffShift,
   StaffAttendance,
-  TableSession,
   WaitlistEntry,
   PackingTask,
   AdminLoginChallenge,

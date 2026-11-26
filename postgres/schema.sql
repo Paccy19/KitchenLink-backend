@@ -339,7 +339,8 @@ CREATE TABLE orders (
   kitchen_customer_id       CHAR(24),
   reopened_at               TIMESTAMPTZ,
   -- Table visit (TableSession) and booking (Reservation) the order belongs to.
-  session_id                CHAR(24),
+  table_session_id          CHAR(24),
+  customer_session_id       CHAR(24),
   reservation_id            CHAR(24),
   converted_to_takeaway_at  TIMESTAMPTZ,
   packed_at                 TIMESTAMPTZ,

@@ -63,7 +63,7 @@ class PackingService {
       vendor_id: order.vendor_id,
       order_id: order._id,
       order_number: order.order_number,
-      session_id: order.session_id || null,
+      session_id: order.table_session_id || null,
       table_label: order.table?.label || '',
       kind,
       items: items.map((i) => ({ item_id: i._id, name: i.name, quantity: i.quantity })),

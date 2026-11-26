@@ -405,7 +405,7 @@ class OrderRepository {
   async cancelOpenByVendor(vendorId, statuses, reason) {
     const now = new Date();
     const result = await Order.updateMany(
-      { vendor_id: vendorId, status: { $in: statuses } },
+      { vendor_id: vendorId, status: { $in: statuses }, payment_lock_id: null },
       {
         $set: {
           status: 'cancelled',

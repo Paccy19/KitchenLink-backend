@@ -227,11 +227,33 @@ test('F. the cashier takes a partial then a full payment; the bill stays linked 
   ok(await api('GET', `/vendor/invoices/${id}`, { token: serverToken }));
   assert.equal((await api('POST', `/vendor/invoices/${id}/payments`, { token: serverToken, body: { amount_rwf: 1000, method: 'cash' } })).status, 403);
 
-  let invoice = ok(await api('POST', `/vendor/invoices/${id}/payments`, { token: cashierToken, body: { amount_rwf: 5000, method: 'cash' } }));
+  const partialPayment = { amount_rwf: 5000, method: 'cash', idempotency_key: 'cashier-attempt-0001' };
+  let invoice = ok(await api('POST', `/vendor/invoices/${id}/payments`, { token: cashierToken, body: partialPayment }));
   assert.equal(invoice.status, 'partially_paid');
   assert.equal(invoice.balance_due_rwf, 10000);
-  assert.equal((await api('POST', `/vendor/invoices/${id}/payments`, { token: cashierToken, body: { amount_rwf: 20000, method: 'cash' } })).status, 400, 'no overpayment');
-  invoice = ok(await api('POST', `/vendor/invoices/${id}/payments`, { token: cashierToken, body: { amount_rwf: 10000, method: 'mobile_money', reference: 'MM123' } }));
+  const retries = await Promise.all([
+    api('POST', `/vendor/invoices/${id}/payments`, { token: cashierToken, body: partialPayment }),
+    api('POST', `/vendor/invoices/${id}/payments`, { token: cashierToken, body: partialPayment }),
+  ]);
+  for (const response of retries) {
+    const replay = ok(response);
+    assert.equal(replay.amount_paid_rwf, 5000, 'retrying the same attempt does not charge twice');
+    assert.equal(replay.payments.length, 1);
+  }
+  const reusedKey = await api('POST', `/vendor/invoices/${id}/payments`, {
+    token: cashierToken,
+    body: { ...partialPayment, amount_rwf: 6000 },
+  });
+  assert.equal(reusedKey.status, 409);
+  assert.equal(reusedKey.body.error.code, 'IDEMPOTENCY_KEY_REUSED');
+  assert.equal((await api('POST', `/vendor/invoices/${id}/payments`, {
+    token: cashierToken,
+    body: { amount_rwf: 20000, method: 'cash', idempotency_key: 'cashier-attempt-0002' },
+  })).status, 400, 'no overpayment');
+  invoice = ok(await api('POST', `/vendor/invoices/${id}/payments`, {
+    token: cashierToken,
+    body: { amount_rwf: 10000, method: 'mobile_money', reference: 'MM123', idempotency_key: 'cashier-attempt-0003' },
+  }));
   assert.equal(invoice.status, 'paid');
   assert.equal(invoice.is_open, false);
   assert.deepEqual(invoice.order_ids, [tableOrder.id]);
@@ -252,7 +274,10 @@ test('F. "pay before preparation": departments wait until the bill is paid', asy
   assert.equal(blocked.body.error.code, 'PAYMENT_PENDING');
   const invoice = ok(await api('GET', `/vendor/invoices/${order.invoice_id}`, { token: cashierToken }));
   assert.equal(invoice.total_rwf, 2500, 'a new bill: the last one was paid and closed');
-  ok(await api('POST', `/vendor/invoices/${invoice.id}/payments`, { token: cashierToken, body: { amount_rwf: 2500, method: 'cash' } }));
+  ok(await api('POST', `/vendor/invoices/${invoice.id}/payments`, {
+    token: cashierToken,
+    body: { amount_rwf: 2500, method: 'cash', idempotency_key: 'before-preparation-0001' },
+  }));
   ok(await api('PATCH', `/vendor/kitchen/orders/${order._id}/tickets/${ticket._id}`, { token: baristaToken, body: { status: 'preparing' } }));
   ok(await api('PUT', '/vendor/operations', { token: ownerA, body: { payment_timing: 'after_service' } }));
 });

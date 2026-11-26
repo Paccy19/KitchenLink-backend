@@ -80,7 +80,7 @@ test('dine-in: seat from the waiting list, server orders, takeaway and leftovers
   // A QR order at the same table joins the same visit and the same bill.
   const qr = ok(await api('POST', `/tables/${tables.A2.token}/orders`, { body: { items: [{ menu_item_id: dish.fries, quantity: 1 }] } }), 201);
   const qrOrder = await Order.findById(qr.order.id).lean();
-  assert.equal(String(qrOrder.session_id), session.id);
+  assert.equal(String(qrOrder.table_session_id), session.id);
 
   // The chef flags a delay; the problem shows on the ticket.
   const order = await Order.findById(taken.order.id).lean();
@@ -113,7 +113,7 @@ test('dine-in: seat from the waiting list, server orders, takeaway and leftovers
   assert.deepEqual(early.body.error.details.blockers.sort(), ['packing_open', 'unpaid']);
   ok(await api('POST', `/vendor/packing/${leftovers.id}/pack`, { token: staff.packer.token }));
   ok(await api('POST', `/vendor/packing/${leftovers.id}/handover`, { token: staff.server.token }));
-  ok(await api('POST', `/vendor/invoices/${before._id}/payments`, { token: staff.cashier.token, body: { amount_rwf: 11500, method: 'cash' } }));
+  ok(await api('POST', `/vendor/invoices/${before._id}/payments`, { token: staff.cashier.token, body: { amount_rwf: 11500, idempotency_key: 'test-payment-key-0005', method: 'cash' } }));
   const closed = ok(await api('POST', `/vendor/table-sessions/${session.id}/close`, { token: staff.cashier.token, body: {} }));
   assert.equal(closed.status, 'closed');
   assert.equal((await Order.findById(order._id).lean()).payment_status, 'paid');
@@ -231,7 +231,7 @@ test('reservations: online booking, confirm, deposit, pre-order, arrive, seat, d
   assert.equal(session.source, 'reservation');
   const pre = await Order.findOne({ reservation_id: booked.id }).lean();
   assert.ok(pre, 'the pre-order went to the kitchen at seating');
-  assert.equal(String(pre.session_id), String(session._id));
+  assert.equal(String(pre.table_session_id), String(session._id));
   const bill = await Invoice.findOne({ session_id: session._id }).lean();
   assert.equal(bill.total_rwf, 8000);
   assert.equal(bill.amount_paid_rwf, 5000, 'the deposit counts on the bill');

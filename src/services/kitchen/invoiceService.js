@@ -1,8 +1,9 @@
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
 const parsePagination = require('../../utils/pagination');
 const { parseObjectId, parseOptionalText } = require('../../utils/vendorValidators');
-const { Invoice, Order, Vendor, Counter } = require('../../models');
+const { Invoice, Order, Vendor, Counter, Payment } = require('../../models');
 const config = require('../../config');
 const access = require('../../config/kitchenAccess');
 const activity = require('./activityService');
@@ -24,6 +25,9 @@ const linesFrom = (order) =>
     order_number: order.order_number,
     item_id: item._id || null,
     menu_item_id: item.menu_item_id || null,
+    table_session_id: order.table_session_id || null,
+    customer_session_id: order.customer_session_id || null,
+    seat_number: order.table?.seat_number ?? null,
     name: item.name,
     department_id: item.department_id || null,
     department_name: item.department_name || '',
@@ -177,6 +181,9 @@ function serialize(invoice, { vendor = null, detail = false } = {}) {
       id: String(line._id),
       order_id: line.order_id ? String(line.order_id) : null,
       order_number: line.order_number,
+      table_session_id: line.table_session_id ? String(line.table_session_id) : null,
+      customer_session_id: line.customer_session_id ? String(line.customer_session_id) : null,
+      seat_number: line.seat_number ?? null,
       name: line.name,
       department_id: line.department_id ? String(line.department_id) : null,
       department_name: line.department_name || 'Kitchen',
@@ -223,6 +230,40 @@ const parseAmount = (raw, field = 'amount_rwf') => {
   }
   return amount;
 };
+
+const parseIdempotencyKey = (raw) => {
+  if (typeof raw !== 'string' || !/^[A-Za-z0-9._:-]{16,128}$/.test(raw)) {
+    throw ApiError.badRequest('A valid idempotency_key is required for each payment attempt.', {
+      idempotency_key: 'expected 16-128 safe characters',
+    });
+  }
+  return raw;
+};
+
+function discountAllocations(invoice, discount) {
+  if (!discount) return [];
+  const grossByOrder = new Map();
+  const sessionByOrder = new Map();
+  for (const line of invoice.lines || []) {
+    if (line.voided || !line.order_id) continue;
+    const key = String(line.order_id);
+    grossByOrder.set(key, (grossByOrder.get(key) || 0) + line.subtotal_rwf);
+    if (line.customer_session_id) sessionByOrder.set(key, line.customer_session_id);
+  }
+  const total = [...grossByOrder.values()].reduce((sum, amount) => sum + amount, 0);
+  if (!total || discount > total) {
+    throw ApiError.conflict('This discount cannot be safely allocated to the current table orders.', 'DISCOUNT_ALLOCATION_REQUIRED');
+  }
+  const rows = [...grossByOrder.entries()].map(([orderId, gross]) => {
+    const raw = discount * gross / total;
+    const amount = Math.floor(raw);
+    return { order_id: new ObjectId(orderId), customer_session_id: sessionByOrder.get(orderId) || null, amount_rwf: amount, remainder: raw - amount };
+  });
+  let remaining = discount - rows.reduce((sum, row) => sum + row.amount_rwf, 0);
+  rows.sort((a, b) => b.remainder - a.remainder || String(a.order_id).localeCompare(String(b.order_id)));
+  for (let index = 0; remaining > 0; index += 1, remaining -= 1) rows[index].amount_rwf += 1;
+  return rows.map(({ order_id, customer_session_id, amount_rwf }) => ({ order_id, customer_session_id, amount_rwf }));
+}
 
 class InvoiceService {
   /** A bill just reached paid (by any path): its orders are paid and points earned. */
@@ -445,11 +486,31 @@ ${payments ? `<table><tr><td colspan="2"><b>Paid</b></td></tr>${payments}${invoi
     if (invoice.kind !== 'table') {
       throw ApiError.conflict('This order was paid online; there is nothing to collect.', 'INVOICE_PAID_ONLINE');
     }
-    if (!OPEN.includes(invoice.status)) throw ApiError.conflict('This invoice is already settled.', 'INVOICE_SETTLED');
     const amount = parseAmount(body.amount_rwf);
     const method = String(body.method || 'cash');
     if (!METHOD_IDS.includes(method)) throw ApiError.badRequest('Pick how the customer paid.', { method: `expected one of: ${METHOD_IDS.join(', ')}` });
+    // Who may take this kind of payment, before anything else (a replay included).
+    if (!kitchen.can('invoices.process_payment')) kitchen.assert(method === 'cash' ? 'invoices.cash' : 'invoices.digital');
     const reference = parseOptionalText(body.reference, { field: 'reference', max: 80 }) || '';
+    const idempotencyKey = parseIdempotencyKey(body.idempotency_key);
+    const requestHash = crypto.createHash('sha256')
+      .update(JSON.stringify({ amount, method, reference }))
+      .digest('hex');
+    const previous = invoice.payments.find((payment) => payment.idempotency_key === idempotencyKey);
+    if (previous) return this.#replayPayment(kitchen, invoice._id, previous, requestHash);
+
+    const seatOwners = new Set(
+      invoice.lines.map((line) => String(line.customer_session_id || '')).filter(Boolean)
+    );
+    if (seatOwners.size > 1) {
+      throw ApiError.conflict(
+        'This bill contains independently owned seat orders. Select the seats being paid so the payment can be allocated correctly.',
+        'SEAT_SELECTION_REQUIRED'
+      );
+    }
+    if (!OPEN.includes(invoice.status)) throw ApiError.conflict('This invoice is already settled.', 'INVOICE_SETTLED');
+    const paymentPending = await Order.exists({ invoice_id: invoice._id, payment_lock_id: { $ne: null } });
+    if (paymentPending) throw ApiError.conflict('A seat payment is being processed for this invoice. Try again when it completes.', 'SEAT_PAYMENT_PENDING');
     const balance = invoice.total_rwf - invoice.amount_paid_rwf;
     // "Process payments" covers every kind; otherwise cash and digital are separate,
     // and taking less than the balance is a part payment.
@@ -465,15 +526,32 @@ ${payments ? `<table><tr><td colspan="2"><b>Paid</b></td></tr>${payments}${invoi
       {
         _id: invoice._id,
         status: { $in: OPEN },
+        'payments.idempotency_key': { $ne: idempotencyKey },
         $expr: { $lte: [{ $add: ['$amount_paid_rwf', amount] }, '$total_rwf'] },
       },
       {
         $inc: { amount_paid_rwf: amount },
-        $push: { payments: { amount_rwf: amount, method, reference, channel: 'in_person', received_by: kitchen.actor, at: new Date() } },
+        $push: {
+          payments: {
+            amount_rwf: amount,
+            method,
+            reference,
+            channel: 'in_person',
+            received_by: kitchen.actor,
+            idempotency_key: idempotencyKey,
+            request_hash: requestHash,
+            at: new Date(),
+          },
+        },
       },
       { returnDocument: 'after' }
     ).lean();
-    if (!updated) throw ApiError.conflict('The bill changed while you were entering the payment. Refresh and try again.', 'INVOICE_CHANGED');
+    if (!updated) {
+      const current = await Invoice.findById(invoice._id).lean();
+      const racedPayment = current?.payments.find((payment) => payment.idempotency_key === idempotencyKey);
+      if (racedPayment) return this.#replayPayment(kitchen, invoice._id, racedPayment, requestHash);
+      throw ApiError.conflict('The bill changed while you were entering the payment. Refresh and try again.', 'INVOICE_CHANGED');
+    }
     const saved = await recalc(invoice._id);
     await markOrdersPaid(saved);
     await activity.record(kitchen, {
@@ -508,8 +586,30 @@ ${payments ? `<table><tr><td colspan="2"><b>Paid</b></td></tr>${payments}${invoi
     return take;
   }
 
+  async #replayPayment(kitchen, invoiceId, payment, requestHash) {
+    if (payment.request_hash !== requestHash) {
+      throw ApiError.conflict('This idempotency key was already used for a different payment. Refresh the bill and start a new attempt.', 'IDEMPOTENCY_KEY_REUSED');
+    }
+    const reconciled = await recalc(invoiceId);
+    await markOrdersPaid(reconciled);
+    return this.get(kitchen, invoiceId);
+  }
+
   async refund(kitchen, invoiceId, body = {}) {
     const invoice = await this.#load(kitchen, invoiceId);
+    const seatPaymentIds = (invoice.payments || [])
+      .map((payment) => payment.payment_id)
+      .filter(Boolean);
+    if (seatPaymentIds.length && await Payment.exists({
+      _id: { $in: seatPaymentIds },
+      table_session_id: { $ne: null },
+      allocations: { $elemMatch: { invoice_id: invoice._id } },
+    })) {
+      throw ApiError.conflict(
+        'This invoice includes seat-allocated payments. Refunds for those payments must be handled through a seat-level refund workflow.',
+        'SEAT_PAYMENT_REFUND_UNSUPPORTED'
+      );
+    }
     const amount = parseAmount(body.amount_rwf);
     const reason = parseOptionalText(body.reason, { field: 'reason', max: 200 }) || '';
     if (!reason) throw ApiError.badRequest('Say why the money is going back.', { reason: 'required' });
@@ -558,6 +658,10 @@ ${payments ? `<table><tr><td colspan="2"><b>Paid</b></td></tr>${payments}${invoi
       }
       if (invoice.kind === 'order') throw ApiError.conflict('Online orders are already paid; they cannot be discounted here.', 'INVOICE_PAID_ONLINE');
       set.discount_rwf = discount;
+      set.discount_allocations = discountAllocations(invoice, discount);
+    }
+    if (Object.keys(set).length && await Order.exists({ invoice_id: invoice._id, payment_lock_id: { $ne: null } })) {
+      throw ApiError.conflict('A seat payment is being processed for this invoice. Try again when it completes.', 'SEAT_PAYMENT_PENDING');
     }
     await Invoice.updateOne({ _id: invoice._id }, { $set: set });
     const saved = await recalc(invoice._id);
@@ -576,6 +680,9 @@ ${payments ? `<table><tr><td colspan="2"><b>Paid</b></td></tr>${payments}${invoi
   async close(kitchen, invoiceId) {
     const invoice = await this.#load(kitchen, invoiceId);
     if (!invoice.is_open) return this.get(kitchen, invoice._id);
+    if (await Order.exists({ invoice_id: invoice._id, payment_lock_id: { $ne: null } })) {
+      throw ApiError.conflict('A seat payment is being processed for this invoice. Try again when it completes.', 'SEAT_PAYMENT_PENDING');
+    }
     await Invoice.updateOne({ _id: invoice._id }, { $set: { is_open: false, closed_at: new Date() } });
     await activity.record(kitchen, { action: 'invoice.closed', target_type: 'invoice', target_id: invoice._id, summary: `Closed the table bill ${invoice.invoice_number}` });
     return this.get(kitchen, invoice._id);
@@ -675,8 +782,8 @@ ${payments ? `<table><tr><td colspan="2"><b>Paid</b></td></tr>${payments}${invoi
     const now = new Date();
     // The two visits become one: the merged table's visit ends inside the other.
     const TableSession = mongoose.model('TableSession');
-    const fromSession = await TableSession.findOne({ table_id: from._id, is_live: true }).lean();
-    let targetSession = await TableSession.findOne({ table_id: target._id, is_live: true }).lean();
+    const fromSession = await TableSession.findOne({ vendor_id: kitchen.vendorId, table_id: from._id, status: 'active' }).lean();
+    let targetSession = await TableSession.findOne({ vendor_id: kitchen.vendorId, table_id: target._id, status: 'active' }).lean();
     if (fromSession && !targetSession) {
       await TableSession.updateOne({ _id: fromSession._id }, { $set: { table_id: target._id, table_label: target.label }, $push: { transfers: { from_label: from.label, to_label: target.label, at: now, by: kitchen.actor.name } } });
       targetSession = { ...fromSession, table_id: target._id };
@@ -688,13 +795,13 @@ ${payments ? `<table><tr><td colspan="2"><b>Paid</b></td></tr>${payments}${invoi
           ...(fromSession.guest_count || targetSession.guest_count ? { $set: { guest_count: (targetSession.guest_count || 0) + (fromSession.guest_count || 0) } } : {}),
         }
       );
-      await TableSession.updateOne({ _id: fromSession._id }, { $set: { status: 'closed', is_live: false, closed_at: now, closed_by: kitchen.actor, close_exceptions: [`Merged into ${target.label}`] } });
+      await TableSession.updateOne({ _id: fromSession._id }, { $set: { status: 'closed', closed_at: now, closed_by: kitchen.actor, close_exceptions: [`Merged into ${target.label}`] } });
       await Invoice.updateMany({ session_id: fromSession._id }, { $set: { session_id: targetSession._id } });
     }
     await Order.updateMany(
       { vendor_id: kitchen.vendorId, 'table.table_id': from._id, status: { $nin: ['delivered', 'cancelled'] } },
       {
-        $set: { table: { table_id: target._id, label: target.label }, ...(targetSession ? { session_id: targetSession._id } : {}) },
+        $set: { table: { table_id: target._id, label: target.label }, ...(targetSession ? { table_session_id: targetSession._id } : {}) },
         $push: { status_history: { status: 'placed', at: now, note: `Merged from ${from.label} into ${target.label}` } },
       }
     );
@@ -726,17 +833,62 @@ ${payments ? `<table><tr><td colspan="2"><b>Paid</b></td></tr>${payments}${invoi
     if (!order.invoice_id) return null;
     const invoice = await Invoice.findById(order.invoice_id).lean();
     if (!invoice) return null;
-    const { lines, departments, total_rwf, amount_paid_rwf, balance_due_rwf, status, invoice_number, subtotal_rwf, discount_rwf } = serialize(invoice, { detail: true });
+    const details = serialize(invoice, { detail: true });
+    const sessionOrders = order.table_session_id && order.customer_session_id
+      ? await Order.find({
+          table_session_id: order.table_session_id,
+          customer_session_id: order.customer_session_id,
+          invoice_id: invoice._id,
+          status: { $ne: 'cancelled' },
+        }).select('_id total_rwf amount_paid_rwf payment_status').lean()
+      : [order];
+    const orderIds = new Set(sessionOrders.map((entry) => String(entry._id)));
+    const lines = details.lines.filter((line) => !line.voided && orderIds.has(line.order_id));
+    const subtotal = lines.reduce((sum, line) => sum + line.subtotal_rwf, 0);
+    const orderIdList = sessionOrders.map((entry) => String(entry._id));
+    const allocatedDiscount = (invoice.discount_allocations || [])
+      .filter((entry) => orderIdList.includes(String(entry.order_id)))
+      .reduce((sum, entry) => sum + (entry.amount_rwf || 0), 0);
+    const totalDiscountAllocated = (invoice.discount_allocations || [])
+      .reduce((sum, entry) => sum + (entry.amount_rwf || 0), 0);
+    const discountNeedsReconciliation = (invoice.discount_rwf || 0) > 0 &&
+      totalDiscountAllocated !== invoice.discount_rwf;
+    const total = Math.max(
+      0,
+      sessionOrders.reduce((sum, entry) => sum + (entry.total_rwf || 0), 0) - allocatedDiscount
+    );
+    const paid = sessionOrders.reduce((sum, entry) =>
+      sum + (entry.amount_paid_rwf ?? (entry.payment_status === 'paid' ? entry.total_rwf : 0)), 0);
+    const departmentsByName = new Map();
+    for (const line of lines) {
+      const key = line.department_id || 'main';
+      const row = departmentsByName.get(key) || {
+        department_id: line.department_id,
+        department_name: line.department_name,
+        subtotal_rwf: 0,
+        items: 0,
+      };
+      row.subtotal_rwf += line.subtotal_rwf;
+      row.items += line.quantity;
+      departmentsByName.set(key, row);
+    }
+    const balance = Math.max(0, total - paid);
     return {
-      invoice_number,
-      status,
-      subtotal_rwf,
-      discount_rwf,
-      total_rwf,
-      amount_paid_rwf,
-      balance_due_rwf,
-      departments,
-      lines: lines.filter((l) => !l.voided).map(({ name, quantity, subtotal_rwf: sub, department_name }) => ({ name, quantity, subtotal_rwf: sub, department_name })),
+      invoice_number: details.invoice_number,
+      status: discountNeedsReconciliation
+        ? 'staff_reconciliation_required'
+        : balance === 0 && total > 0
+          ? 'paid'
+          : paid > 0
+            ? 'partially_paid'
+            : 'unpaid',
+      subtotal_rwf: subtotal,
+      discount_rwf: allocatedDiscount,
+      total_rwf: total,
+      amount_paid_rwf: paid,
+      balance_due_rwf: balance,
+      departments: [...departmentsByName.values()],
+      lines: lines.map(({ name, quantity, subtotal_rwf: sub, department_name }) => ({ name, quantity, subtotal_rwf: sub, department_name })),
     };
   }
 }

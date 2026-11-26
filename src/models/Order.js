@@ -129,7 +129,10 @@ const orderSchema = new mongoose.Schema(
     table: {
       table_id: { type: ObjectId, ref: 'DiningTable', default: null },
       label: { type: String, default: '' },
+      seat_number: { type: Number, min: 1, default: null },
     },
+    table_session_id: { type: ObjectId, ref: 'TableSession', default: null },
+    customer_session_id: { type: ObjectId, default: null },
     // Guests ordering from a table without an account: the name they gave,
     // and a hash of the secret their browser keeps to follow the order.
     guest: {
@@ -140,7 +143,6 @@ const orderSchema = new mongoose.Schema(
     source: { type: String, enum: ['marketplace', 'table_qr', 'event'], default: 'marketplace' },
     invoice_id: { type: ObjectId, ref: 'Invoice', default: null },
     // Dine-in: the table visit it belongs to; a reservation it was ordered ahead for.
-    session_id: { type: ObjectId, ref: 'TableSession', default: null },
     reservation_id: { type: ObjectId, ref: 'Reservation', default: null },
     // The guest decided to take the rest of the order away (served items stay served).
     converted_to_takeaway_at: { type: Date, default: null },
@@ -327,6 +329,8 @@ const orderSchema = new mongoose.Schema(
       enum: ['pending', 'paid', 'failed', 'refunded'],
       default: 'pending',
     },
+    payment_lock_id: { type: ObjectId, ref: 'Payment', default: null },
+    payment_lock_expires_at: { type: Date, default: null },
     // Payer details captured at checkout: phone for mobile wallets, card for cards.
     payment_details: {
       phone: { type: String, default: '' },
@@ -441,10 +445,18 @@ orderSchema.index({ settlement_status: 1, rider_payout_settled_at: 1 });
 orderSchema.index({ 'delivery_pricing.priced_at': -1 }, { sparse: true });
 
 orderSchema.index({ special_delivery_request_id: 1 }, { sparse: true });
+
+orderSchema.pre('findOneAndUpdate', function preventCancellingLockedSeat() {
+  const update = this.getUpdate() || {};
+  const status = update.status ?? update.$set?.status;
+  if (status === 'cancelled') {
+    this.setQuery({ ...this.getQuery(), payment_lock_id: null });
+  }
+});
 // Preparation queues and table activity.
 orderSchema.index({ vendor_id: 1, 'tickets.department_id': 1, 'tickets.status': 1 });
 orderSchema.index({ 'table.table_id': 1, status: 1 }, { sparse: true });
-orderSchema.index({ session_id: 1 }, { sparse: true });
+orderSchema.index({ table_session_id: 1 }, { sparse: true });
 
 // An order with a special delivery agreement keeps the request in step when
 // it is delivered or cancelled, whichever service made the change.

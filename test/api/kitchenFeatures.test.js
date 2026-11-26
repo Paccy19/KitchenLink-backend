@@ -159,8 +159,8 @@ test('cashier till: open, take cash, close with the counted cash', async () => {
   const order = await Order.findById(placed.order.id).lean();
   const bill = ok(await api('GET', `/vendor/invoices/${order.invoice_id}`, { token: owner }));
   // Cash only: digital payments need another permission.
-  assert.equal((await api('POST', `/vendor/invoices/${bill.id}/payments`, { token: cashier.token, body: { amount_rwf: bill.balance_due_rwf, method: 'card' } })).status, 403);
-  ok(await api('POST', `/vendor/invoices/${bill.id}/payments`, { token: cashier.token, body: { amount_rwf: bill.balance_due_rwf, method: 'cash' } }));
+  assert.equal((await api('POST', `/vendor/invoices/${bill.id}/payments`, { token: cashier.token, body: { amount_rwf: bill.balance_due_rwf, idempotency_key: 'test-payment-key-0002', method: 'card' } })).status, 403);
+  ok(await api('POST', `/vendor/invoices/${bill.id}/payments`, { token: cashier.token, body: { amount_rwf: bill.balance_due_rwf, idempotency_key: 'test-payment-key-0003', method: 'cash' } }));
   const closed = ok(await api('POST', `/vendor/cashier/sessions/${session.id}/close`, { token: cashier.token, body: { counted_cash_rwf: 10000 + bill.balance_due_rwf } }));
   assert.equal(closed.difference_rwf, 0);
   const report = ok(await api('GET', '/vendor/cashier/report', { token: cashier.token }));
@@ -209,7 +209,7 @@ test('customers and loyalty: earn on a paid bill, spend points, personal discoun
   const placed = await tableOrder('T3', [{ menu_item_id: dish.burger, quantity: 2 }]);
   const order = await Order.findById(placed.order.id).lean();
   let bill = ok(await api('PUT', `/vendor/invoices/${order.invoice_id}/customer`, { token: owner, body: { customer_id: regular.id } }));
-  ok(await api('POST', `/vendor/invoices/${bill.id}/payments`, { token: owner, body: { amount_rwf: bill.balance_due_rwf, method: 'cash' } }));
+  ok(await api('POST', `/vendor/invoices/${bill.id}/payments`, { token: owner, body: { amount_rwf: bill.balance_due_rwf, idempotency_key: 'test-payment-key-0004', method: 'cash' } }));
   await new Promise((resolve) => setTimeout(resolve, 200));
   let profile = ok(await api('GET', `/vendor/customers/${regular.id}`, { token: owner }));
   assert.ok(profile.loyalty_points >= 10, `earned points, got ${profile.loyalty_points}`);

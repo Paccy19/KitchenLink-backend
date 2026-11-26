@@ -33,6 +33,9 @@ const invoiceSchema = new mongoose.Schema(
         order_number: { type: String, default: '' },
         item_id: { type: ObjectId, default: null },
         menu_item_id: { type: ObjectId, ref: 'MenuItem', default: null },
+        table_session_id: { type: ObjectId, ref: 'TableSession', default: null },
+        customer_session_id: { type: ObjectId, default: null },
+        seat_number: { type: Number, min: 1, default: null },
         name: { type: String, required: true },
         department_id: { type: ObjectId, ref: 'Department', default: null },
         department_name: { type: String, default: '' },
@@ -65,6 +68,15 @@ const invoiceSchema = new mongoose.Schema(
     split_from: { type: ObjectId, ref: 'Invoice', default: null },
     merged_into: { type: ObjectId, ref: 'Invoice', default: null },
     cancel_reason: { type: String, default: '' },
+    // A table discount is fixed against the orders that existed when staff
+    // set it, so a later seat order cannot change another customer's balance.
+    discount_allocations: [
+      {
+        order_id: { type: ObjectId, ref: 'Order', required: true },
+        customer_session_id: { type: ObjectId, default: null },
+        amount_rwf: { type: Number, min: 0, required: true },
+      },
+    ],
     total_rwf: { type: Number, default: 0, min: 0 },
     amount_paid_rwf: { type: Number, default: 0, min: 0 },
     refunded_rwf: { type: Number, default: 0, min: 0 },
@@ -78,6 +90,9 @@ const invoiceSchema = new mongoose.Schema(
         // 'in_person' = taken by the kitchen; 'online' = paid in the app (platform holds it).
         channel: { type: String, enum: ['in_person', 'online', 'deposit'], default: 'in_person' },
         received_by: actor,
+        idempotency_key: { type: String, default: null },
+        request_hash: { type: String, default: null },
+        payment_id: { type: ObjectId, ref: 'Payment', default: null },
         at: { type: Date, default: Date.now },
       },
     ],

@@ -493,7 +493,7 @@ class ReservationService {
       DiningTable.find({ vendor_id: vendorId, deleted_at: null }).lean(),
       Reservation.find({ vendor_id: vendorId, status: { $in: HOLDS_TABLE }, table_id: { $ne: null }, starts_at: { $lt: new Date(endsAt.getTime() + buffer) }, ends_at: { $gt: new Date(startsAt.getTime() - buffer) } }).lean(),
       // Guests at the table now keep it busy for a booking in the next hour.
-      startsAt.getTime() - Date.now() < 3600000 ? TableSession.find({ vendor_id: vendorId, is_live: true }).select('table_id').lean() : [],
+      startsAt.getTime() - Date.now() < 3600000 ? TableSession.find({ vendor_id: vendorId, status: 'active' }).select('table_id').lean() : [],
     ]);
     const busy = new Map(bookings.map((b) => [String(b.table_id), b]));
     const occupied = new Set(live.map((s) => String(s.table_id)));
@@ -521,7 +521,7 @@ class ReservationService {
         { $match: { vendor_id: mongoose.Types.ObjectId.createFromHexString(kitchen.vendorId), 'table.table_id': { $ne: null }, status: { $nin: ['delivered', 'cancelled'] } } },
         { $group: { _id: '$table.table_id', orders: { $sum: 1 }, since: { $min: '$created_at' } } },
       ]),
-      TableSession.find({ vendor_id: kitchen.vendorId, is_live: true }).lean(),
+      TableSession.find({ vendor_id: kitchen.vendorId, status: 'active' }).lean(),
     ]);
     const tables = await DiningTable.find({ vendor_id: kitchen.vendorId, deleted_at: null }).lean();
     const byTable = new Map(tables.map((t) => [String(t._id), { table: { id: String(t._id), label: t.label }, session_id: null, guest_count: null, server: null, bill: null, reservation: null, open_orders: 0, since: null }]));
