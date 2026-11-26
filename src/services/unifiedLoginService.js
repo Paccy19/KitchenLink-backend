@@ -23,9 +23,11 @@ class UnifiedLoginService {
       lookup(driverRepository, 'phone'),
     ]);
 
+    // Kitchen employees sign in to their kitchen's dashboard (role 'vendor').
+    const kitchen = vendor && !vendor.deleted_at ? vendor : await vendorAuthService.findStaffByIdentifier(identifier);
     return [
       customer && { role: 'customer', account: customer },
-      vendor && !vendor.deleted_at && { role: 'vendor', account: vendor },
+      kitchen && { role: 'vendor', account: kitchen },
       driver && !driver.deleted_at && { role: 'driver', account: driver },
     ].filter(Boolean);
   }

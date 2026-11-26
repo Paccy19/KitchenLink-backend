@@ -32,6 +32,8 @@ const CHUNK_SIZE = 200;
  *   text[] -> TEXT[] (same values)
  *   text/num/int/bool -> passed through
  * `sample` names a column compared row-by-row during verification.
+ * A spec may be [type, 'source.path'] when the column has another name than
+ * the MongoDB field (reserved words like `table`, or one value inside a sub-document).
  */
 const SPECS = [
   {
@@ -86,6 +88,7 @@ const SPECS = [
       verification_status: 'text', rejection_reason: 'text',
       suspension_reason: 'text', suspended_at: 'date', available_balance: 'num',
       total_sales: 'num', deleted_at: 'date',
+      operations: 'json', menu_photos: 'json',
     },
   },
   {
@@ -110,6 +113,7 @@ const SPECS = [
       price_rwf: 'num', preparation_time_minutes: 'num', is_available: 'bool',
       is_preorder: 'bool', preorder_cutoff: 'text', is_popular: 'bool',
       image_url: 'text', orders_count: 'int', deleted_at: 'date',
+      department_id: 'oid', preparation_notes: 'text', recipe: 'json',
     },
   },
   {
@@ -137,6 +141,9 @@ const SPECS = [
       commission_rwf: 'num', vendor_payout_rwf: 'num', rider_payout_rwf: 'num',
       settlement_status: 'text', settled_at: 'date',
       rider_payout_settled_at: 'date',
+      tickets: 'json', fulfillment: 'text', source: 'text',
+      table_ref: ['json', 'table'], guest_name: ['text', 'guest.name'],
+      invoice_id: 'oid', payment_gate: 'text',
     },
   },
   {
@@ -286,6 +293,83 @@ const SPECS = [
       customer_id: 'oid', menu_item_id: 'oid',
     },
   },
+  {
+    table: 'departments', collection: 'departments', sample: 'name',
+    fields: {
+      vendor_id: 'oid', name: 'text', category: 'text', custom_category: 'text', description: 'text',
+      image_url: 'text', code_prefix: 'text', is_active: 'bool', sort_order: 'int',
+      manager_staff_ids: 'text[]', stations: 'json', workflow: 'json', operating_hours: 'json', deleted_at: 'date',
+    },
+  },
+  {
+    table: 'kitchenroles', collection: 'kitchenroles', sample: 'name',
+    fields: {
+      vendor_id: 'oid', name: 'text', description: 'text', permissions: 'text[]',
+      department_ids: 'text[]', template_key: 'text', deleted_at: 'date',
+    },
+  },
+  {
+    table: 'kitchenstaffs', collection: 'kitchenstaffs', sample: 'name',
+    fields: {
+      vendor_id: 'oid', name: 'text', phone: 'text', email: 'text', job_title: 'text',
+      username: 'text', password_hash: 'text', password_set_at: 'date',
+      role_ids: 'text[]', department_ids: 'text[]', is_admin: 'bool', is_active: 'bool',
+      is_current: 'bool', last_login_at: 'date', sessions_valid_after: 'date', deleted_at: 'date',
+    },
+  },
+  {
+    table: 'diningtables', collection: 'diningtables', sample: 'label',
+    fields: {
+      vendor_id: 'oid', label: 'text', label_key: 'text', area: 'text', capacity: 'int',
+      token: 'text', token_rotated_at: 'date', is_active: 'bool', assigned_staff_id: 'oid',
+      is_current: 'bool', deleted_at: 'date',
+    },
+  },
+  {
+    table: 'invoices', collection: 'invoices', sample: 'invoice_number',
+    fields: {
+      vendor_id: 'oid', invoice_number: 'text', order_ids: 'text[]', table_id: 'oid', table_label: 'text',
+      customer_name: 'text', kind: 'text', is_open: 'bool', lines: 'json', subtotal_rwf: 'num',
+      delivery_fee_rwf: 'num', discount_rwf: 'num', total_rwf: 'num', amount_paid_rwf: 'num',
+      refunded_rwf: 'num', status: 'text', payments: 'json', refunds: 'json', notes: 'text',
+      created_by: 'json', paid_at: 'date', closed_at: 'date',
+    },
+  },
+  {
+    table: 'suppliers', collection: 'suppliers', sample: 'name',
+    fields: {
+      vendor_id: 'oid', name: 'text', contact_name: 'text', phone: 'text', email: 'text', notes: 'text', deleted_at: 'date',
+    },
+  },
+  {
+    table: 'inventoryitems', collection: 'inventoryitems', sample: 'name',
+    fields: {
+      vendor_id: 'oid', department_id: 'oid', name: 'text', unit: 'text', sku: 'text', quantity: 'num',
+      low_stock_threshold: 'num', cost_per_unit_rwf: 'num', supplier_id: 'oid',
+      low_stock_alerted_at: 'date', deleted_at: 'date',
+    },
+  },
+  {
+    table: 'stockmovements', collection: 'stockmovements', sample: 'reason',
+    fields: {
+      vendor_id: 'oid', item_id: 'oid', department_id: 'oid', delta: 'num', quantity_after: 'num',
+      reason: 'text', note: 'text', order_id: 'oid', order_number: 'text', supplier_id: 'oid', actor: 'json',
+    },
+  },
+  {
+    table: 'kitchenactivities', collection: 'kitchenactivities', sample: 'action',
+    fields: {
+      vendor_id: 'oid', actor_type: 'text', actor_id: 'text', actor_name: 'text', action: 'text',
+      target_type: 'text', target_id: 'text', summary: 'text', details: 'json', department_id: 'oid',
+    },
+  },
+  {
+    table: 'kitchenreports', collection: 'kitchenreports', sample: 'label',
+    fields: {
+      vendor_id: 'oid', period: 'text', start: 'date', period_end: ['date', 'end'], label: 'text',
+      data: 'json', generated_at: 'date', generated_by: 'text',
+    },
+  },
 ];
 
 /**
@@ -380,8 +464,10 @@ const transform = (type, value) => {
  */
 const toRowValues = (spec, doc) => {
   const values = { _id: String(doc._id) };
-  for (const [field, type] of Object.entries(spec.fields)) {
-    const v = transform(type, doc[field]);
+  for (const [field, typeSpec] of Object.entries(spec.fields)) {
+    const [type, source] = Array.isArray(typeSpec) ? typeSpec : [typeSpec, field];
+    const raw = source.split('.').reduce((value, key) => (value == null ? undefined : value[key]), doc);
+    const v = transform(type, raw);
     if (v !== undefined) values[field] = v;
   }
   for (const tsField of ['created_at', 'updated_at']) {

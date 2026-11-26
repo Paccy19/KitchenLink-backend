@@ -27,6 +27,8 @@ const deliveryService = require('./deliveryService');
 const deliveryCodeService = require('./deliveryCodeService');
 const { isKitchenReady } = require('../utils/deliveryReady');
 const orderNotifications = require('./orderNotifications');
+const ticketService = require('./kitchen/ticketService');
+const invoiceService = require('./kitchen/invoiceService');
 const refundService = require('./refundService');
 const { serializeRefund } = refundService;
 const refundRepository = require('../repositories/refundRepository');
@@ -184,6 +186,7 @@ const fulfillmentFields = (order, vendor) => ({
 /** Pickup orders are "collected", not "delivered"; neither they nor kitchen-delivered orders get a rider. */
 const customerStatusLabel = (order, status = order.status) =>
   (order.fulfillment === 'pickup' && orders.pickupStatusLabels[status]) ||
+  (order.fulfillment === 'dine_in' && orders.dineInStatusLabels[status]) ||
   (isKitchenDelivered(order) && orders.vendorDeliveryStatusLabels[status]) ||
   orders.statusLabels[status];
 
@@ -247,7 +250,12 @@ const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
     quantity: item.quantity,
     subtotal_rwf: item.subtotal_rwf,
     image_url: item.image_url || null,
+    department_name: item.department_name || null,
+    service_status: item.service_status || 'pending',
   })),
+  // Each department's part of the order and how far it is.
+  departments: ticketService.ticketProgress(order),
+  table: order.table?.label ? { label: order.table.label } : null,
   subtotal_rwf: order.subtotal_rwf,
   delivery_fee_rwf: order.delivery_fee_rwf,
   delivery_distance_km: order.delivery_distance_km ?? null,
@@ -287,7 +295,9 @@ const serializeTracking = (order, vendor, payment, delivery) => {
   );
 
   const steps =
-    order.fulfillment === 'pickup'
+    order.fulfillment === 'dine_in'
+      ? orders.dineInTimeline
+      : order.fulfillment === 'pickup'
       ? orders.pickupTimeline
       : isKitchenDelivered(order)
         ? orders.vendorDeliveryTimeline
@@ -347,6 +357,7 @@ const serializeTracking = (order, vendor, payment, delivery) => {
       : null,
     delivery_location: { ...order.delivery_location },
     delivery: serializeOrderDelivery(delivery),
+    departments: ticketService.ticketProgress(order),
     timeline,
     status_history: order.status_history.map((entry) => ({
       status: entry.status,
@@ -606,11 +617,15 @@ class OrderService {
     const etaMinutes = (vendor.estimated_prep_time ?? 30) + (isPickup ? 0 : quote.duration_minutes ?? 15);
     const now = new Date();
 
+    // Each dish goes to the department that prepares it (one ticket each).
+    const orderNumber = generateOrderNumber();
+    const split = await ticketService.buildTickets(vendor._id, items, orderNumber);
     const order = await orderRepository.create({
-      order_number: generateOrderNumber(),
+      order_number: orderNumber,
       customer_id: customerId,
       vendor_id: vendor._id,
-      items,
+      items: split.items,
+      tickets: split.tickets,
       subtotal_rwf: subtotal,
       delivery_fee_rwf: fee,
       delivery_distance_km: quote.distance_km,
@@ -665,6 +680,10 @@ class OrderService {
    */
   #announcePaid(order, vendor) {
     orderNotifications.newOrder(order);
+    // Every paid order gets its invoice (already paid online).
+    invoiceService.ensureForOrder(order._id).catch((error) =>
+      console.error(`[invoice] could not create the invoice of ${order?.order_number}:`, error.message)
+    );
     this.#offerToDrivers(order);
     if (!order.pickup_code) return;
     notificationService
@@ -970,16 +989,11 @@ class OrderService {
     // Half now, the rest a day before the event.
     const plan = depositPlan(price.total_rwf, eventAt);
     const now = new Date();
-    const order = await orderRepository.create({
-      _id: orderId,
-      order_number: generateOrderNumber(),
-      customer_id: customerId,
-      vendor_id: vendor._id,
-      // How the delivery fee was set (platform formula or agreed quotation),
-      // kept apart from the food subtotal and fixed from now on.
-      big_event_delivery: pickup ? null : delivery?.record ?? null,
-      special_delivery_request_id: !pickup && agreement ? agreement.request._id : null,
-      items: [
+    const eventNumber = generateOrderNumber();
+    // The event plate is the kitchen's own ticket.
+    const eventSplit = await ticketService.buildTickets(
+      vendor._id,
+      [
         {
           menu_item_id: null,
           name: `${pkg.name}${menuSummary ? ` (${menuSummary})` : ''}`.slice(0, 200),
@@ -988,6 +1002,20 @@ class OrderService {
           subtotal_rwf: price.food_total_rwf,
         },
       ],
+      eventNumber
+    );
+    const order = await orderRepository.create({
+      _id: orderId,
+      order_number: eventNumber,
+      source: 'event',
+      tickets: eventSplit.tickets,
+      customer_id: customerId,
+      vendor_id: vendor._id,
+      // How the delivery fee was set (platform formula or agreed quotation),
+      // kept apart from the food subtotal and fixed from now on.
+      big_event_delivery: pickup ? null : delivery?.record ?? null,
+      special_delivery_request_id: !pickup && agreement ? agreement.request._id : null,
+      items: eventSplit.items,
       event: {
         package_id: pkg.id,
         package_name: pkg.name,

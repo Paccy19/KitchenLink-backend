@@ -200,6 +200,28 @@ const vendorSchema = new mongoose.Schema(
     // Wallet (RWF).
     available_balance: { type: Number, min: 0, default: 0 },
     total_sales: { type: Number, min: 0, default: 0 },
+    // Photos of the kitchen's own printed menu, shown to customers next to the
+    // dishes it lists one by one (they can't be ordered from: dishes can).
+    menu_photos: [
+      {
+        url: { type: String, required: true },
+        caption: { type: String, default: '', trim: true },
+        sort_order: { type: Number, default: 0 },
+        uploaded_at: { type: Date, default: Date.now },
+      },
+    ],
+    // In-house operations (departments, tables, cashier). See kitchenAccess.js.
+    operations: {
+      // When dine-in customers pay (kitchenAccess.PAYMENT_TIMINGS).
+      payment_timing: { type: String, default: 'after_service' },
+      // Table QR ordering on/off.
+      table_ordering_enabled: { type: Boolean, default: true },
+      // Servers may take ready items before every department is done.
+      allow_partial_service: { type: Boolean, default: true },
+      // Deduct stock from recipes when a ticket is marked ready.
+      inventory_auto_deduct: { type: Boolean, default: false },
+      updated_at: { type: Date, default: null },
+    },
     // Soft delete.
     deleted_at: { type: Date, default: null },
     // Sessions (see utils/sessions.js): tokens issued before this are refused,

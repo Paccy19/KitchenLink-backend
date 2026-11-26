@@ -154,6 +154,7 @@ function serializeMenuItem(item, options = []) {
     is_preorder: Boolean(item.is_preorder),
     preorder_cutoff: item.preorder_cutoff || '',
     image_url: item.image_url || null,
+    department_id: item.department_id ? String(item.department_id._id || item.department_id) : null,
     options: options.map(serializeMenuItemOption),
   };
 }
@@ -293,6 +294,9 @@ function serializeVendorMenuItem(item, options = []) {
         ? { id: String(category), name: null }
         : null,
     options: options.map(serializeMenuItemOption),
+    department_id: item.department_id ? String(item.department_id._id || item.department_id) : null,
+    preparation_notes: item.preparation_notes || '',
+    recipe: (item.recipe || []).map((r) => ({ inventory_item_id: String(r.inventory_item_id), quantity: r.quantity })),
     orders_count: item.orders_count ?? 0,
     created_at: item.created_at,
     updated_at: item.updated_at,
@@ -313,7 +317,10 @@ const vendorStatusLabel = (status) =>
  */
 function vendorOrderActions(order, status) {
   let allowed = config.vendor.orderTransitions[status] || [];
-  if (order.payment_status !== 'paid') allowed = allowed.filter((next) => next === 'cancelled');
+  // Unpaid orders can only be cancelled, except dine-in bills the kitchen
+  // settles later (its payment rule lets preparation start before payment).
+  const laterBill = order.payment_method === 'in_person' && order.payment_gate !== 'preparation';
+  if (order.payment_status !== 'paid' && !laterBill) allowed = allowed.filter((next) => next === 'cancelled');
   // Big events: no handover until the balance is paid.
   if (balanceUnpaid(order)) allowed = allowed.filter((next) => next !== 'ready');
   if (['picked_up', 'out_for_delivery', 'delivered'].includes(order.status)) {
@@ -405,6 +412,12 @@ function serializeVendorOrder(order, { customer } = {}) {
       quantity: item.quantity,
       subtotal_rwf: item.subtotal_rwf,
       image_url: item.image_url || null,
+      id: item._id ? String(item._id) : null,
+      department_id: item.department_id ? String(item.department_id) : null,
+      department_name: item.department_name || null,
+      ticket_id: item.ticket_id ? String(item.ticket_id) : null,
+      note: item.note || '',
+      service_status: item.service_status || 'pending',
       options: (item.options || []).map((option) => ({
         option_id: option.option_id ? String(option.option_id) : null,
         group_name: option.group_name || 'Options',
@@ -412,6 +425,19 @@ function serializeVendorOrder(order, { customer } = {}) {
         additional_price_rwf: option.additional_price_rwf || 0,
       })),
     })),
+    // One ticket per department preparing part of the order.
+    tickets: (order.tickets || []).map((ticket) => ({
+      id: String(ticket._id),
+      code: ticket.code,
+      department_id: ticket.department_id ? String(ticket.department_id) : null,
+      department_name: ticket.department_name,
+      status: ticket.status,
+      ready_at: ticket.ready_at ?? null,
+    })),
+    table: order.table?.table_id ? { id: String(order.table.table_id), label: order.table.label } : null,
+    guest_name: order.guest?.name || null,
+    source: order.source || 'marketplace',
+    invoice_id: order.invoice_id ? String(order.invoice_id) : null,
     subtotal_rwf: order.subtotal_rwf,
     delivery_fee_rwf: order.delivery_fee_rwf,
     delivery_distance_km: order.delivery_distance_km ?? null,

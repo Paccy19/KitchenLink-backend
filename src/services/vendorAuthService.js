@@ -1,7 +1,8 @@
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const { revokeAllSessions } = require('../utils/sessions');
-const { Vendor } = require('../models');
+const { Vendor, KitchenStaff } = require('../models');
+const kitchenAccess = require('./kitchen/accessService');
 const { signToken } = require('../utils/jwt');
 const { NAME_MAX_LENGTH, capitalizeName, normalizePhone, parseDeliveryLocation } = require('../utils/validators');
 const {
@@ -21,9 +22,20 @@ const { privateRef, resolveImageUrl } = require('../utils/uploads');
 const vendorRepository = require('../repositories/vendorRepository');
 const vendorCategoryService = require('./vendorCategoryService');
 const loginOtpService = require('./loginOtpService');
+const otpGuardService = require('./otpGuardService');
 const { identifierFrom } = require('../utils/identifier');
 const notificationService = require('./notificationService');
 const { assertVendorNotBlocked } = require('../utils/vendorAccess');
+
+const serializeStaffSelf = (staff) => ({
+  id: String(staff._id),
+  name: staff.name,
+  username: staff.username || null,
+  phone: staff.phone || null,
+  email: staff.email || null,
+  job_title: staff.job_title || '',
+  is_admin: Boolean(staff.is_admin),
+});
 
 class VendorAuthService {
   /**
@@ -135,7 +147,7 @@ class VendorAuthService {
    */
   async sendLoginOtp(body = {}) {
     const identifier = identifierFrom(body, 'phone', 'email');
-    const vendor = await this.#findForLogin(identifier);
+    const { vendor } = await this.#findForLogin(identifier);
     this.#assertCanLogin(vendor);
     const sent = await loginOtpService.send({ identifier, purpose: 'vendor' });
     return {
@@ -148,30 +160,124 @@ class VendorAuthService {
   async verifyLoginOtp(body = {}) {
     const identifier = identifierFrom(body, 'phone', 'email');
     await loginOtpService.verify({ identifier, purpose: 'vendor', code: body.code });
-    const vendor = await this.#findForLogin(identifier, 'This vendor account is no longer available.');
+    const { vendor, staff } = await this.#findForLogin(identifier, 'This vendor account is no longer available.');
     this.#assertCanLogin(vendor);
+    if (staff) {
+      await KitchenStaff.updateOne({ _id: staff._id }, { $set: { last_login_at: new Date() } });
+      return this.#issueStaffSession(vendor, staff);
+    }
     await vendorRepository.touchLogin(vendor._id);
     return this.#issueSession(vendor);
   }
 
+  /**
+   * The kitchen account with this phone / email, or else the kitchen of the
+   * current, active employee with it (they sign in to that kitchen as staff).
+   */
   async #findForLogin(identifier, missing = null) {
     const vendor = identifier.type === 'phone'
       ? await vendorRepository.findByPhone(identifier.value)
       : await vendorRepository.findByEmail(identifier.value);
-    if (!vendor || vendor.deleted_at) {
-      throw ApiError.notFound(
-        missing || `No vendor account is registered with this ${identifier.type === 'phone' ? 'phone number' : 'email address'}.`,
-        'VENDOR_NOT_FOUND'
-      );
+    if (vendor && !vendor.deleted_at) return { vendor, staff: null };
+
+    const staff = await this.findStaffByIdentifier(identifier);
+    if (staff) {
+      const employer = await vendorRepository.findById(staff.vendor_id);
+      if (employer && !employer.deleted_at) return { vendor: employer, staff };
     }
-    return vendor;
+    throw ApiError.notFound(
+      missing || `No vendor account is registered with this ${identifier.type === 'phone' ? 'phone number' : 'email address'}.`,
+      'VENDOR_NOT_FOUND'
+    );
   }
 
-  me(vendor) {
-    return { vendor: serializeVendorAccount(vendor) };
+  /**
+   * POST /vendor/auth/staff-login — an employee signs in with the username
+   * (or phone / email) and password their kitchen administrator gave them.
+   * Wrong passwords count towards the same lockout as other sign-ins, and the
+   * answer never says whether the username exists.
+   */
+  async staffPasswordLogin(body = {}) {
+    const raw = typeof body.username === 'string' ? body.username : typeof body.identifier === 'string' ? body.identifier : '';
+    const login = raw.trim().toLowerCase();
+    const password = typeof body.password === 'string' ? body.password : '';
+    if (!login || !password) {
+      throw ApiError.badRequest('Enter your username and password.', { username: login ? undefined : 'required', password: password ? undefined : 'required' });
+    }
+    const guardKey = `staff:${login}`;
+    await otpGuardService.assertNotLocked(guardKey, 'staff-login');
+    let phone = null;
+    try {
+      phone = /^[+\d\s()-]{9,16}$/.test(login) ? normalizePhone(login) : null;
+    } catch {
+      phone = null;
+    }
+    const staff = await KitchenStaff.findOne({
+      is_current: true,
+      deleted_at: null,
+      $or: [{ username: login }, { email: login }, ...(phone ? [{ phone }] : [])],
+    })
+      .select('+password_hash')
+      .lean();
+    const ok = staff?.password_hash ? await comparePassword(password, staff.password_hash) : false;
+    if (!ok) {
+      await otpGuardService.recordFailedAttempt(guardKey, 'staff-login');
+      throw ApiError.unauthorized('Wrong username or password.', 'INVALID_CREDENTIALS');
+    }
+    if (staff.is_active === false) {
+      throw ApiError.forbidden('Your staff account has been deactivated. Ask your kitchen administrator.', 'STAFF_DEACTIVATED');
+    }
+    const vendor = await vendorRepository.findById(staff.vendor_id);
+    if (!vendor || vendor.deleted_at) throw ApiError.unauthorized('Wrong username or password.', 'INVALID_CREDENTIALS');
+    this.#assertCanLogin(vendor);
+    await otpGuardService.clearFailures(guardKey, 'staff-login');
+    const { password_hash: _hash, ...safe } = staff;
+    await KitchenStaff.updateOne({ _id: staff._id }, { $set: { last_login_at: new Date() } });
+    return this.#issueStaffSession(vendor, safe);
   }
 
-  async changePassword(vendor, { current_password, new_password, currentToken = null }) {
+  /** A current, active kitchen employee signing in with this phone / email. */
+  async findStaffByIdentifier(identifier) {
+    return KitchenStaff.findOne({
+      [identifier.type === 'phone' ? 'phone' : 'email']: identifier.value,
+      is_current: true,
+      deleted_at: null,
+      is_active: true,
+    }).lean();
+  }
+
+  /**
+   * The signed-in kitchen, and who is using it: the owner, or an employee
+   * with their permissions (the dashboard shows only what they may use).
+   * Employees who are not administrators don't see the payout details or the balance.
+   */
+  me(vendor, access = null) {
+    const account = serializeVendorAccount(vendor);
+    if (access && !access.isAdmin) {
+      account.payment_information = {};
+      account.available_balance_rwf = null;
+      account.verification_documents = [];
+    }
+    return {
+      vendor: account,
+      access: access ? access.serialize() : null,
+      staff: access?.staff ? serializeStaffSelf(access.staff) : null,
+    };
+  }
+
+  async changePassword(vendor, { current_password, new_password, currentToken = null, staff = null }) {
+    // An employee changes their own password (the one their administrator gave them).
+    if (staff) {
+      const newPassword = parsePassword(new_password, { field: 'new_password' });
+      const fresh = await KitchenStaff.findById(staff._id).select('+password_hash').lean();
+      if (fresh?.password_hash) {
+        const ok = await comparePassword(typeof current_password === 'string' ? current_password : '', fresh.password_hash);
+        if (!ok) throw ApiError.unauthorized('Current password is incorrect.', 'INVALID_CREDENTIALS');
+      }
+      await KitchenStaff.updateOne({ _id: staff._id }, { $set: { password_hash: await hashPassword(newPassword), password_set_at: new Date() } });
+      await revokeAllSessions(KitchenStaff, staff._id, { keepPayload: currentToken });
+      return { updated: true };
+    }
     const currentPassword = parsePassword(current_password, {
       field: 'current_password',
     });
@@ -207,6 +313,21 @@ class VendorAuthService {
       token_type: 'Bearer',
       expires_in: config.auth.jwtExpiresIn,
       vendor: serializeVendorAccount({ ...vendor, last_login_at: new Date() }),
+    };
+  }
+
+  async #issueStaffSession(vendor, staff) {
+    const token = signToken({
+      sub: String(vendor._id),
+      role: config.vendor.jwtRole,
+      staff_id: String(staff._id),
+    });
+    const access = await kitchenAccess.forStaff(vendor, staff);
+    return {
+      token,
+      token_type: 'Bearer',
+      expires_in: config.auth.jwtExpiresIn,
+      ...this.me(vendor, access),
     };
   }
 

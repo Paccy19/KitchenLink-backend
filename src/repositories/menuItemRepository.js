@@ -170,8 +170,8 @@ class MenuItemRepository {
   }
 
   /** Vendor Dashboard listing with filtering, sorting and pagination. */
-  async listByVendor(vendorId, { categoryId, isAvailable, q, sort, limit, offset }) {
-    const filter = { vendor_id: vendorId, deleted_at: null };
+  async listByVendor(vendorId, { categoryId, isAvailable, q, sort, limit, offset, departmentFilter = {} }) {
+    const filter = { vendor_id: vendorId, deleted_at: null, ...departmentFilter };
     if (categoryId) filter.category_id = categoryId;
     if (typeof isAvailable === 'boolean') filter.is_available = isAvailable;
     if (q) {

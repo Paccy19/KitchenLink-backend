@@ -139,3 +139,11 @@ The role is decided only by the server; the browser never sends one. Every `/adm
 **Unlocking someone early.** Lockouts live in the `otpguards` collection,
 keyed `"<purpose>:<phone or email>"`: for example `customer:+250788123456` or
 `admin-login:owner@kitchenlink.rw`. Deleting that document lifts the lockout.
+
+## Kitchen staff and table ordering
+
+- **Staff sessions.** Kitchen employees sign in with the username and password their administrator gave them (`/vendor/auth/staff-login`: bcrypt hashes only, a generated password is shown once to the administrator, the answer never says whether a username exists, and failures count towards the password lockout), or with the same kitchen code as the kitchen account. A new password signs the employee out everywhere. Their token is a kitchen token carrying `staff_id`; every request reloads the employee, so a removed or deactivated employee is refused at once (401), and their sign-outs and "sign out everywhere" act on the employee's own record, never the kitchen owner's. A token whose `staff_id` belongs to another kitchen is refused.
+- **Permissions are checked on the server** for every `/vendor/*` route (`requireKitchenPermission`) and again per department in the services. Wallet, payout details and kitchen settings are for kitchen administrators only and can't be put in a role; `/vendor/auth/me` hides payout details and the balance from other employees. Nobody can grant permissions they don't hold or change their own roles. Access changes are written to the kitchen activity log.
+- **Table QR codes** carry a random 128-bit token, never a database id. Replacing a QR code, deactivating or removing the table stops the old one. Guest orders are priced on the server, limited to 10 a minute per network, and can only include dishes of that table's kitchen.
+- **Guest order keys** are random 192-bit secrets; only their SHA-256 hash is stored, they're compared in constant time, and they travel in the `X-Guest-Key` header (never the URL, so they stay out of request logs).
+- **CSV report exports** prefix cells that start with `=`, `+`, `-` or `@` so a spreadsheet never runs them as formulas.

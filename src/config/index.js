@@ -289,9 +289,13 @@ const config = {
     // collected at the kitchen (no delivery fee). 'vendor_delivery' is never
     // chosen by the customer: a nationwide kitchen's order beyond the platform
     // delivery range becomes one, and the kitchen brings the food itself.
-    fulfillmentModes: ['delivery', 'pickup', 'vendor_delivery'],
+    // 'dine_in': ordered from a table's QR code and served at the table.
+    fulfillmentModes: ['delivery', 'pickup', 'vendor_delivery', 'dine_in'],
     customerFulfillmentModes: ['delivery', 'pickup'],
-    fulfillmentLabels: { delivery: 'Delivery', pickup: 'Pickup at the kitchen', vendor_delivery: 'Delivered by the kitchen' },
+    fulfillmentLabels: { delivery: 'Delivery', pickup: 'Pickup at the kitchen', vendor_delivery: 'Delivered by the kitchen', dine_in: 'Dine-in' },
+    // Customer tracking for dine-in orders ('delivered' = everything served).
+    dineInTimeline: ['placed', 'confirmed', 'preparing', 'ready', 'delivered'],
+    dineInStatusLabels: { ready: 'Ready to be served', delivered: 'Served' },
     // Customer tracking for orders the kitchen brings itself.
     vendorDeliveryTimeline: ['placed', 'confirmed', 'preparing', 'ready', 'delivered'],
     vendorDeliveryStatusLabels: { ready: 'On the way from the kitchen', delivered: 'Delivered by the kitchen' },

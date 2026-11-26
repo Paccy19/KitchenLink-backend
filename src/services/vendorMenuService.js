@@ -18,6 +18,16 @@ const menuItemRepository = require('../repositories/menuItemRepository');
 const menuItemOptionRepository = require('../repositories/menuItemOptionRepository');
 const categoryRepository = require('../repositories/categoryRepository');
 const notificationService = require('./notificationService');
+const departmentService = require('./kitchen/departmentService');
+const mongoose = require('mongoose');
+
+const { Vendor } = require('../models');
+
+const MAX_MENU_PHOTOS = 12;
+
+// The kitchen account when no session access is passed (internal callers).
+const OWNER = { can: () => true, assert: () => {}, departmentFilter: () => ({}), isAdmin: true };
+const deptOf = (item) => (item?.department_id ? String(item.department_id) : null);
 
 class VendorMenuService {
   async #resolveCategoryId(raw) {
@@ -72,6 +82,10 @@ class VendorMenuService {
           max: 120,
         }) || '';
     }
+    if (body.preparation_notes !== undefined) {
+      payload.preparation_notes =
+        parseOptionalText(body.preparation_notes, { field: 'preparation_notes', max: 300 }) || '';
+    }
     if (body.is_popular !== undefined) {
       payload.is_popular = parseBooleanValue(body.is_popular, {
         field: 'is_popular',
@@ -88,7 +102,7 @@ class VendorMenuService {
     return serializeVendorMenuItem(fresh || item, options);
   }
 
-  async list(vendor, query = {}) {
+  async list(vendor, query = {}, kitchen = OWNER) {
     const { limit, page, offset } = parsePagination(query, {
       defaultLimit: config.vendor.limits.menuDefault,
       maxLimit: config.vendor.limits.menuMax,
@@ -104,7 +118,17 @@ class VendorMenuService {
     const q = parseOptionalText(query.q, { field: 'q', max: 100 });
     const sort = parseSort(query.sort, MENU_SORTS);
 
+    // Staff only see the dishes of their departments (menu.view).
+    const departmentFilter = { ...kitchen.departmentFilter('menu.view') };
+    if (query.department_id === 'none') {
+      if (departmentFilter.department_id) departmentFilter.department_id = { $in: [] };
+      else departmentFilter.department_id = null;
+    } else if (query.department_id && mongoose.isValidObjectId(query.department_id)) {
+      kitchen.assert('menu.view', String(query.department_id));
+      departmentFilter.department_id = new mongoose.Types.ObjectId(String(query.department_id));
+    }
     const { items, total } = await menuItemRepository.listByVendor(vendor._id, {
+      departmentFilter,
       categoryId,
       isAvailable,
       q,
@@ -131,9 +155,11 @@ class VendorMenuService {
     };
   }
 
-  async create(vendor, body = {}, file) {
+  async create(vendor, body = {}, file, kitchen = OWNER) {
     const payload = this.#parsePayload(body);
     payload.vendor_id = vendor._id;
+    payload.department_id = (await departmentService.resolveId(vendor._id, body.department_id)) ?? null;
+    kitchen.assert('menu.create', payload.department_id ? String(payload.department_id) : null);
 
     const categoryId = await this.#resolveCategoryId(body.category_id);
     payload.category_id = categoryId ?? null;
@@ -163,7 +189,7 @@ class VendorMenuService {
     }
   }
 
-  async update(vendor, itemId, body = {}, file) {
+  async update(vendor, itemId, body = {}, file, kitchen = OWNER) {
     const id = parseObjectId(itemId, 'item_id');
     const existing = await menuItemRepository.findByIdForVendor(id, vendor._id);
     if (!existing) {
@@ -171,6 +197,15 @@ class VendorMenuService {
     }
 
     const payload = this.#parsePayload(body, { partial: true });
+    kitchen.assert('menu.edit', deptOf(existing));
+    if (body.department_id !== undefined) {
+      payload.department_id = (await departmentService.resolveId(vendor._id, body.department_id)) ?? null;
+      kitchen.assert('menu.edit', payload.department_id ? String(payload.department_id) : null);
+    }
+    if (payload.price_rwf !== undefined && payload.price_rwf !== existing.price_rwf) kitchen.assert('menu.prices', deptOf(existing));
+    if (payload.is_available !== undefined && payload.is_available !== existing.is_available) {
+      kitchen.assert('menu.availability', deptOf(existing));
+    }
 
     if (body.category_id !== undefined) {
       payload.category_id = (await this.#resolveCategoryId(body.category_id)) ?? null;
@@ -216,12 +251,13 @@ class VendorMenuService {
     return this.#withOptions(updated);
   }
 
-  async remove(vendor, itemId, query = {}) {
+  async remove(vendor, itemId, query = {}, kitchen = OWNER) {
     const id = parseObjectId(itemId, 'item_id');
     const existing = await menuItemRepository.findByIdForVendor(id, vendor._id);
     if (!existing) {
       throw ApiError.notFound('Menu item not found.', 'MENU_ITEM_NOT_FOUND');
     }
+    kitchen.assert('menu.delete', deptOf(existing));
 
     const hard = parseBooleanValue(query.hard, {
       field: 'hard',
@@ -239,12 +275,13 @@ class VendorMenuService {
     return { deleted: true, hard: false };
   }
 
-  async setAvailability(vendor, itemId, body = {}) {
+  async setAvailability(vendor, itemId, body = {}, kitchen = OWNER) {
     const id = parseObjectId(itemId, 'item_id');
     const existing = await menuItemRepository.findByIdForVendor(id, vendor._id);
     if (!existing) {
       throw ApiError.notFound('Menu item not found.', 'MENU_ITEM_NOT_FOUND');
     }
+    kitchen.assert('menu.availability', deptOf(existing));
 
     const isAvailable =
       parseBooleanValue(body.is_available, { field: 'is_available' }) ??
@@ -256,6 +293,67 @@ class VendorMenuService {
       isAvailable
     );
     return this.#withOptions(updated);
+  }
+
+  // ------------------------------------------------------- menu photos
+
+  #serializePhotos(vendor) {
+    return {
+      photos: [...(vendor?.menu_photos || [])]
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+        .map((p) => ({ id: String(p._id), url: p.url, caption: p.caption || '', uploaded_at: p.uploaded_at })),
+      max: MAX_MENU_PHOTOS,
+    };
+  }
+
+  async listPhotos(vendor) {
+    const fresh = await Vendor.findById(vendor._id).select('menu_photos').lean();
+    return this.#serializePhotos(fresh);
+  }
+
+  /** POST /vendor/menu/photos (multipart "image", optional "caption"). */
+  async addPhoto(vendor, body = {}, file) {
+    if (!file) {
+      throw ApiError.badRequest('Choose a photo of your menu.', { image: 'expected a multipart file field named "image"' });
+    }
+    const url = buildPublicUrl(file.filename);
+    const caption = parseOptionalText(body.caption, { field: 'caption', max: 80 }) || '';
+    // Atomic: never more than the limit, even with two uploads at once.
+    const saved = await Vendor.findOneAndUpdate(
+      { _id: vendor._id, [`menu_photos.${MAX_MENU_PHOTOS - 1}`]: { $exists: false } },
+      { $push: { menu_photos: { url, caption, sort_order: Date.now(), uploaded_at: new Date() } } },
+      { returnDocument: 'after' }
+    ).select('menu_photos').lean();
+    if (!saved) {
+      deleteLocalUpload(url);
+      throw ApiError.conflict(`You can add up to ${MAX_MENU_PHOTOS} menu photos. Remove one first.`, 'MENU_PHOTO_LIMIT');
+    }
+    return this.#serializePhotos(saved);
+  }
+
+  async updatePhoto(vendor, photoId, body = {}) {
+    const id = parseObjectId(photoId, 'photo_id');
+    const caption = parseOptionalText(body.caption, { field: 'caption', max: 80 }) || '';
+    const saved = await Vendor.findOneAndUpdate(
+      { _id: vendor._id, 'menu_photos._id': id },
+      { $set: { 'menu_photos.$.caption': caption } },
+      { returnDocument: 'after' }
+    ).select('menu_photos').lean();
+    if (!saved) throw ApiError.notFound('Menu photo not found.', 'MENU_PHOTO_NOT_FOUND');
+    return this.#serializePhotos(saved);
+  }
+
+  async removePhoto(vendor, photoId) {
+    const id = parseObjectId(photoId, 'photo_id');
+    const before = await Vendor.findOneAndUpdate(
+      { _id: vendor._id, 'menu_photos._id': id },
+      { $pull: { menu_photos: { _id: id } } },
+      { returnDocument: 'before' }
+    ).select('menu_photos').lean();
+    if (!before) throw ApiError.notFound('Menu photo not found.', 'MENU_PHOTO_NOT_FOUND');
+    const removed = before.menu_photos.find((p) => String(p._id) === String(id));
+    if (removed) deleteLocalUpload(removed.url);
+    return this.listPhotos(vendor);
   }
 
   uploadImage(file) {

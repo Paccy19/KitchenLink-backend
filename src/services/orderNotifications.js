@@ -23,8 +23,11 @@ const toVendor = (order, title, body, type = 'order_update') =>
     })
   );
 
+// Guests who ordered at a table without an account follow the order on its page instead.
 const toCustomer = (order, title, body) =>
-  quietly(
+  !order.customer_id
+    ? Promise.resolve(null)
+    : quietly(
     notificationService.notifyCustomerOrder(order.customer_id, {
       orderId: order._id,
       orderNumber: order.order_number,

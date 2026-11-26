@@ -49,9 +49,11 @@ Throw `ApiError` (`src/utils/ApiError.js`). `middleware/errorHandler.js` turns i
 
 **Order and delivery state machines.** Allowed transitions live in `config` (vendor transitions near `transitions` in `src/config/index.js`, delivery transitions under `config.delivery.transitions`) and are returned to clients as `allowed_next_statuses`.
 - The vendor statuses are a translation over the customer order statuses (`new→placed`, `accepted→confirmed`, `completed→delivered`), so it's one Order record, not two.
-- Vendors never complete an order. It completes only when a driver confirms the customer's code (`POST /driver/deliveries/:id/confirm-delivery`). That step credits the vendor's balance net of commission and pays the driver.
+- Vendors never complete a delivery order. It completes only when a driver confirms the customer's code (`POST /driver/deliveries/:id/confirm-delivery`). That step credits the vendor's balance net of commission and pays the driver. (Pickup orders complete with the customer's pickup code; dine-in orders complete when everything is served, with no platform settlement.)
 - Marking an order `ready` auto-creates a Delivery and dispatches it to nearby online drivers (`$geoNear`). The first driver to accept wins atomically (`findOneAndUpdate` with `driver_id: null`).
 - Once a driver accepts, nobody can cancel (`409 DELIVERY_IN_PROGRESS`). Details are in `DELIVERY.md`.
+
+**Kitchen operations** (departments, staff roles and permissions, department tickets inside each Order, table QR ordering, invoices, stock, reports) live in `src/services/kitchen/` and are described in `KITCHEN_OPERATIONS.md`. Every `/vendor/*` route is gated by `requireKitchenPermission` (catalogue: `src/config/kitchenAccess.js`); kitchen staff sign in with the kitchen code and get a kitchen token carrying `staff_id`.
 
 **Money.** All amounts are integer RWF (`*_rwf`). Commission comes from the food subtotal only, never the delivery fee. Drivers keep the delivery fee (`DELIVERY_DRIVER_SHARE_PERCENT`), minus the late-pickup penalty. A double-entry style platform ledger (`platformLedgerService`) is checked at boot and must balance.
 

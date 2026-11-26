@@ -17,6 +17,8 @@ const orderNotifications = require('./orderNotifications');
 const notificationService = require('./notificationService');
 const dispatchSettingsService = require('./dispatchSettingsService');
 const { usesHandoverCode, isKitchenDelivered, balanceUnpaid } = require('../utils/fulfillment');
+const { Order } = require('../models');
+const ticketService = require('./kitchen/ticketService');
 
 const { vendor: vendorConfig } = config;
 
@@ -30,7 +32,7 @@ const internalStatusesFor = (vendorStatus) => {
 
 class VendorOrderService {
   async #loadCustomers(orders) {
-    const ids = [...new Set(orders.map((order) => String(order.customer_id)))];
+    const ids = [...new Set(orders.filter((order) => order.customer_id).map((order) => String(order.customer_id)))];
     const customers = await customerRepository.findByIds(ids);
     return new Map(customers.map((customer) => [String(customer._id), customer]));
   }
@@ -78,25 +80,43 @@ class VendorOrderService {
     if (!order) {
       throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
     }
-    const customer = await customerRepository.findById(order.customer_id);
+    const customer = order.customer_id ? await customerRepository.findById(order.customer_id) : null;
     return serializeVendorOrder(order, { customer });
   }
 
-  async updateStatus(vendor, orderId, body = {}) {
+  async updateStatus(vendor, orderId, body = {}, kitchen = null) {
     const id = parseObjectId(orderId, 'order_id');
     const nextStatus = parseVendorOrderStatus(body?.status);
+    // Staff need the permission for this step (the owner has them all).
+    if (kitchen) {
+      kitchen.assert(nextStatus === 'accepted' ? 'orders.accept' : nextStatus === 'cancelled' ? 'orders.cancel' : 'orders.update_status');
+    }
 
     const order = await orderRepository.findByVendorAndId(vendor._id, id);
     if (!order) {
       throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
     }
+    const updated = await this.applyStatus(vendor, order, nextStatus, { note: body?.note, actor: kitchen?.actor });
+    const customer = order.customer_id ? await customerRepository.findById(order.customer_id) : null;
+    return serializeVendorOrder(updated, { customer });
+  }
 
+  /**
+   * Moves the order to `nextStatus` (kitchen vocabulary) with every side
+   * effect: notifications, the pickup code, dispatch to delivery workers, the
+   * refund of a cancelled order, and the department tickets catching up.
+   * `fromTickets`: the tickets asked for it (they are already there).
+   */
+  async applyStatus(vendor, order, nextStatus, { note: rawNote, fromTickets = false, actor = null } = {}) {
+    const body = { note: rawNote };
     const currentStatus = vendorConfig.internalToVendorStatus[order.status];
     const allowed = vendorConfig.orderTransitions[currentStatus] || [];
 
     // Kitchens only work on orders the customer has paid for; an unpaid order
     // can only be cancelled (paying the vendor/rider would use other money).
-    if (nextStatus !== 'cancelled' && order.payment_status !== 'paid') {
+    // (Dine-in bills paid in person follow the kitchen's payment rule instead.)
+    const laterBill = order.payment_method === 'in_person' && order.payment_gate !== 'preparation';
+    if (nextStatus !== 'cancelled' && order.payment_status !== 'paid' && !laterBill) {
       throw ApiError.conflict(
         "The customer hasn't paid for this order yet. Wait for payment before accepting it.",
         'PAYMENT_PENDING'
@@ -152,6 +172,7 @@ class VendorOrderService {
     // Pickup and kitchen-delivered orders: the customer has a code to give the kitchen.
     const isPickup = usesHandoverCode(order);
     const kitchenBrings = isKitchenDelivered(order);
+    const dineIn = order.fulfillment === 'dine_in';
     if (nextStatus === 'ready' && isPickup) {
       // The code was given at placement; older orders without one get it now.
       const existing = await orderRepository.findPickupCode(order._id);
@@ -160,7 +181,12 @@ class VendorOrderService {
       update.pickup_code_attempts = 0;
     }
 
-    const updated = await orderRepository.update(order._id, update);
+    // Only from the status it was read in: two departments finishing at the
+    // same moment move the order once, not twice.
+    const updated = await Order.findOneAndUpdate({ _id: order._id, status: order.status }, { $set: update }, { returnDocument: 'after' }).lean();
+    if (!updated) {
+      throw ApiError.conflict('This order was just updated by someone else. Refresh and try again.', 'ORDER_CHANGED');
+    }
     await orderRepository.pushHistory(order._id, {
       status: update.status,
       at: now,
@@ -188,6 +214,8 @@ class VendorOrderService {
           kitchenBrings,
         })
         .catch((error) => console.error('[pickup] could not send pickup code:', error.message));
+    } else if (nextStatus === 'ready' && dineIn) {
+      // Servers see it on their board; nothing is dispatched.
     } else if (nextStatus === 'ready') {
       try {
         await deliveryService.handleOrderReady(order);
@@ -196,8 +224,10 @@ class VendorOrderService {
       }
     }
 
-    const customer = await customerRepository.findById(order.customer_id);
-    return serializeVendorOrder(updated, { customer });
+    if (!fromTickets) {
+      await ticketService.cascadeFromOrder(order._id, nextStatus, actor || { type: 'owner', name: vendor.name });
+    }
+    return (await orderRepository.findById(order._id)) || updated;
   }
 
   /**
@@ -206,7 +236,8 @@ class VendorOrderService {
    * customer's code, which completes the order and credits the vendor.
    * Delivery orders are only ever completed by the delivery worker.
    */
-  async confirmPickup(vendor, orderId, body = {}) {
+  async confirmPickup(vendor, orderId, body = {}, kitchen = null) {
+    if (kitchen) kitchen.assert('orders.handover');
     const id = parseObjectId(orderId, 'order_id');
     const order = await orderRepository.findByVendorAndId(vendor._id, id);
     if (!order) {
@@ -268,6 +299,11 @@ class VendorOrderService {
 
     // Same completion as a delivered order: the vendor is credited.
     const settled = await settlementService.releaseOrder(order._id);
+    await Order.updateOne(
+      { _id: order._id },
+      { $set: { 'items.$[it].service_status': 'handed_over' } },
+      { arrayFilters: [{ 'it.service_status': { $ne: 'cancelled' } }] }
+    ).catch(() => null);
     orderNotifications.completed(settled || collected);
 
     const customer = await customerRepository.findById(order.customer_id);

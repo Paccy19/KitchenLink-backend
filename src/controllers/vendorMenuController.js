@@ -11,21 +11,21 @@ const categories = asyncHandler(async (req, res) => {
 });
 
 const list = asyncHandler(async (req, res) => {
-  res.json(await vendorMenuService.list(req.vendor, req.query));
+  res.json(await vendorMenuService.list(req.vendor, req.query, req.kitchenAccess));
 });
 
 const create = asyncHandler(async (req, res) => {
-  res.status(201).json(await vendorMenuService.create(req.vendor, req.body, req.file));
+  res.status(201).json(await vendorMenuService.create(req.vendor, req.body, req.file, req.kitchenAccess));
 });
 
 const update = asyncHandler(async (req, res) => {
   res.json(
-    await vendorMenuService.update(req.vendor, req.params.item_id, req.body, req.file)
+    await vendorMenuService.update(req.vendor, req.params.item_id, req.body, req.file, req.kitchenAccess)
   );
 });
 
 const remove = asyncHandler(async (req, res) => {
-  res.json(await vendorMenuService.remove(req.vendor, req.params.item_id, req.query));
+  res.json(await vendorMenuService.remove(req.vendor, req.params.item_id, req.query, req.kitchenAccess));
 });
 
 const setAvailability = asyncHandler(async (req, res) => {
@@ -33,7 +33,8 @@ const setAvailability = asyncHandler(async (req, res) => {
     await vendorMenuService.setAvailability(
       req.vendor,
       req.params.item_id,
-      req.body
+      req.body,
+      req.kitchenAccess
     )
   );
 });
