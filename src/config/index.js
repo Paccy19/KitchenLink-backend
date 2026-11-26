@@ -208,12 +208,24 @@ const config = {
       senderId: process.env.SMS_SENDER_ID || 'FoodKitchen',
     },
   },
-  // No real payment provider is connected yet: every method is simulated
-  // (orders are marked paid without collecting money). Simulated payments
-  // only run on an explicit development server; a live server refuses
-  // checkout until a provider is integrated (see orderService).
+  // Mobile money is collected through Paypack (MTN MoMo and Airtel Money)
+  // once its keys are set. Without them every method is simulated (orders
+  // are marked paid without collecting money), which only runs on an explicit
+  // development server: a live server then refuses checkout (orderService).
   payments: {
-    simulated: true,
+    simulated: !(process.env.PAYPACK_CLIENT_ID && process.env.PAYPACK_CLIENT_SECRET),
+    // Only these can be chosen for now: MTN MoMo and Airtel Money through
+    // Paypack. Card, eKash and wallet come back once they have a provider.
+    enabledMethods: ['mobile_money'],
+    paypack: {
+      clientId: process.env.PAYPACK_CLIENT_ID || '',
+      clientSecret: process.env.PAYPACK_CLIENT_SECRET || '',
+      baseUrl: process.env.PAYPACK_BASE_URL || 'https://payments.paypack.rw/api',
+      // Secret from the Paypack dashboard, used to verify X-Paypack-Signature.
+      webhookSecret: process.env.PAYPACK_WEBHOOK_SECRET || '',
+      // Paypack calls the webhook URL registered for this mode.
+      webhookMode: process.env.PAYPACK_WEBHOOK_MODE || (explicitDev ? 'development' : 'production'),
+    },
   },
   orders: {
     agentKey: process.env.AGENT_API_KEY || 'dev-agent-key',
@@ -277,9 +289,13 @@ const config = {
     // collected at the kitchen (no delivery fee). 'vendor_delivery' is never
     // chosen by the customer: a nationwide kitchen's order beyond the platform
     // delivery range becomes one, and the kitchen brings the food itself.
-    fulfillmentModes: ['delivery', 'pickup', 'vendor_delivery'],
+    // 'dine_in': ordered from a table's QR code and served at the table.
+    fulfillmentModes: ['delivery', 'pickup', 'vendor_delivery', 'dine_in'],
     customerFulfillmentModes: ['delivery', 'pickup'],
-    fulfillmentLabels: { delivery: 'Delivery', pickup: 'Pickup at the kitchen', vendor_delivery: 'Delivered by the kitchen' },
+    fulfillmentLabels: { delivery: 'Delivery', pickup: 'Pickup at the kitchen', vendor_delivery: 'Delivered by the kitchen', dine_in: 'Dine-in' },
+    // Customer tracking for dine-in orders ('delivered' = everything served).
+    dineInTimeline: ['placed', 'confirmed', 'preparing', 'ready', 'delivered'],
+    dineInStatusLabels: { ready: 'Ready to be served', delivered: 'Served' },
     // Customer tracking for orders the kitchen brings itself.
     vendorDeliveryTimeline: ['placed', 'confirmed', 'preparing', 'ready', 'delivered'],
     vendorDeliveryStatusLabels: { ready: 'On the way from the kitchen', delivered: 'Delivered by the kitchen' },

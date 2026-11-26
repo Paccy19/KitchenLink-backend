@@ -17,8 +17,12 @@ const verifyOtp = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
+const staffLogin = asyncHandler(async (req, res) => {
+  res.json(await vendorAuthService.staffPasswordLogin(req.body || {}));
+});
+
 const me = asyncHandler(async (req, res) => {
-  res.json(vendorAuthService.me(req.vendor));
+  res.json(vendorAuthService.me(req.vendor, req.kitchenAccess));
 });
 
 const changePassword = asyncHandler(async (req, res) => {
@@ -27,8 +31,9 @@ const changePassword = asyncHandler(async (req, res) => {
       current_password: req.body?.current_password,
       new_password: req.body?.new_password,
       currentToken: req.tokenPayload,
+      staff: req.staff || null,
     })
   );
 });
 
-module.exports = { register, sendOtp, verifyOtp, me, changePassword };
+module.exports = { register, sendOtp, verifyOtp, staffLogin, me, changePassword };

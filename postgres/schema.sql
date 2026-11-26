@@ -35,7 +35,9 @@ DROP TABLE IF EXISTS
   ownerpayoutsettings, otpcodes, orders, notifications, menuitemoptions,
   menuitems, drivers, deliveries, customers, complaints, commissions,
   cartitems, categories, adminactionlogs, admins, payments,
-  payoutdestinations
+  payoutdestinations, departments, kitchenroles, kitchenstaffs, diningtables,
+  invoices, inventoryitems, stockmovements, suppliers, kitchenactivities,
+  kitchenreports
 CASCADE;
 
 -- ============================================================================
@@ -195,6 +197,9 @@ CREATE TABLE vendors (
                       ((location -> 'coordinates' ->> 0)::double precision) STORED,
   search_vector       tsvector GENERATED ALWAYS AS
                       (to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(neighborhood, ''))) STORED,
+  -- Kitchen operations settings and photos of the printed menu.
+  operations                JSONB       NOT NULL DEFAULT '{}',
+  menu_photos               JSONB       NOT NULL DEFAULT '[]',
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -260,6 +265,7 @@ CREATE TABLE menuitems (
   _id                      CHAR(24) PRIMARY KEY,
   vendor_id                CHAR(24)     NOT NULL,
   category_id              CHAR(24),
+  department_id            CHAR(24),
   name                     TEXT        NOT NULL,
   description              TEXT        NOT NULL DEFAULT '',
   price_rwf                NUMERIC     NOT NULL CHECK (price_rwf >= 0),
@@ -270,6 +276,8 @@ CREATE TABLE menuitems (
   is_popular               BOOLEAN     NOT NULL DEFAULT FALSE,
   image_url                TEXT        NOT NULL DEFAULT '',
   orders_count             INTEGER     NOT NULL DEFAULT 0 CHECK (orders_count >= 0),
+  preparation_notes        TEXT        NOT NULL DEFAULT '',
+  recipe                   JSONB       NOT NULL DEFAULT '[]',
   deleted_at               TIMESTAMPTZ,
   search_vector            tsvector GENERATED ALWAYS AS
                            (to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(description, ''))) STORED,
@@ -277,6 +285,7 @@ CREATE TABLE menuitems (
   updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX menuitems_vendor_category_idx     ON menuitems (vendor_id, category_id);
+CREATE INDEX menuitems_vendor_department_idx   ON menuitems (vendor_id, department_id);
 CREATE INDEX menuitems_vendor_deleted_idx      ON menuitems (vendor_id, deleted_at, created_at DESC);
 CREATE INDEX menuitems_category_available_idx  ON menuitems (category_id, is_available);
 CREATE INDEX menuitems_popular_idx             ON menuitems (is_available, orders_count DESC);
@@ -307,9 +316,20 @@ CREATE INDEX menuitemoptions_vendor_idx   ON menuitemoptions (vendor_id);
 CREATE TABLE orders (
   _id                       CHAR(24) PRIMARY KEY,
   order_number              TEXT        NOT NULL UNIQUE,
-  customer_id               CHAR(24)     NOT NULL,
+  -- Null for dine-in guests who ordered from a table QR code without an account.
+  customer_id               CHAR(24),
   vendor_id                 CHAR(24)     NOT NULL,
   items                     JSONB       NOT NULL DEFAULT '[]',
+  -- One preparation ticket per department (Order.tickets).
+  tickets                   JSONB       NOT NULL DEFAULT '[]',
+  fulfillment               TEXT        NOT NULL DEFAULT 'delivery'
+                            CHECK (fulfillment IN ('delivery','pickup','vendor_delivery','dine_in')),
+  source                    TEXT        NOT NULL DEFAULT 'marketplace'
+                            CHECK (source IN ('marketplace','table_qr','event')),
+  table_ref                 JSONB,
+  guest_name                TEXT        NOT NULL DEFAULT '',
+  invoice_id                CHAR(24),
+  payment_gate              TEXT        CHECK (payment_gate IS NULL OR payment_gate IN ('preparation','collection','none')),
   subtotal_rwf              NUMERIC     NOT NULL,
   delivery_fee_rwf          NUMERIC     NOT NULL,
   delivery_distance_km      NUMERIC     CHECK (delivery_distance_km >= 0),
@@ -320,7 +340,7 @@ CREATE TABLE orders (
   total_rwf                 NUMERIC     NOT NULL,
   delivery_location         JSONB       NOT NULL DEFAULT '{}',
   payment_method            TEXT        NOT NULL
-                            CHECK (payment_method IN ('mobile_money','card','ekash','wallet')),
+                            CHECK (payment_method IN ('mobile_money','card','ekash','wallet','in_person')),
   payment_status            TEXT        NOT NULL DEFAULT 'pending'
                             CHECK (payment_status IN ('pending','paid','failed','refunded')),
   payment_details           JSONB       NOT NULL DEFAULT '{}',
@@ -360,6 +380,7 @@ CREATE INDEX orders_vendor_completed_idx ON orders (vendor_id, completed_at DESC
 CREATE INDEX orders_status_created_idx   ON orders (status, created_at DESC);
 CREATE INDEX orders_driver_status_idx    ON orders (driver_id, status);
 CREATE INDEX orders_type_scheduled_idx   ON orders (order_type, scheduled_for);
+CREATE INDEX orders_invoice_idx          ON orders (invoice_id);
 
 -- ============================================================================
 -- 10. deliveries  (model: Delivery)
@@ -422,6 +443,9 @@ CREATE TABLE payments (
   reference      TEXT        NOT NULL UNIQUE,
   failure_reason TEXT        NOT NULL DEFAULT '',
   paid_at        TIMESTAMPTZ,
+  part           TEXT        DEFAULT 'full'
+                 CHECK (part IN ('full','deposit','balance')),
+  provider_reference TEXT,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -785,6 +809,204 @@ CREATE TABLE wishlistitems (
   UNIQUE (customer_id, menu_item_id)
 );
 CREATE INDEX wishlistitems_customer_created_idx ON wishlistitems (customer_id, created_at DESC);
+
+
+-- ============================================================================
+-- Kitchen operations (departments, staff, tables, invoices, stock, reports)
+-- ============================================================================
+CREATE TABLE departments (
+  _id               CHAR(24) PRIMARY KEY,
+  vendor_id         CHAR(24)    NOT NULL,
+  name              TEXT        NOT NULL,
+  category          TEXT        NOT NULL DEFAULT 'custom',
+  custom_category   TEXT        NOT NULL DEFAULT '',
+  description       TEXT        NOT NULL DEFAULT '',
+  image_url         TEXT        NOT NULL DEFAULT '',
+  code_prefix       TEXT        NOT NULL DEFAULT 'X',
+  is_active         BOOLEAN     NOT NULL DEFAULT TRUE,
+  sort_order        INTEGER     NOT NULL DEFAULT 0,
+  manager_staff_ids TEXT[]      NOT NULL DEFAULT '{}',
+  stations          JSONB       NOT NULL DEFAULT '[]',
+  workflow          JSONB       NOT NULL DEFAULT '{}',
+  operating_hours   JSONB       NOT NULL DEFAULT '[]',
+  deleted_at        TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX departments_vendor_idx ON departments (vendor_id, deleted_at, sort_order);
+
+CREATE TABLE kitchenroles (
+  _id             CHAR(24) PRIMARY KEY,
+  vendor_id       CHAR(24)    NOT NULL,
+  name            TEXT        NOT NULL,
+  description     TEXT        NOT NULL DEFAULT '',
+  permissions     TEXT[]      NOT NULL DEFAULT '{}',
+  department_ids  TEXT[]      NOT NULL DEFAULT '{}',
+  template_key    TEXT,
+  deleted_at      TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX kitchenroles_vendor_idx ON kitchenroles (vendor_id, deleted_at, name);
+
+CREATE TABLE kitchenstaffs (
+  _id                  CHAR(24) PRIMARY KEY,
+  vendor_id            CHAR(24)    NOT NULL,
+  name                 TEXT        NOT NULL,
+  phone                TEXT,
+  email                TEXT,
+  username             TEXT,
+  password_hash        TEXT,
+  password_set_at      TIMESTAMPTZ,
+  job_title            TEXT        NOT NULL DEFAULT '',
+  role_ids             TEXT[]      NOT NULL DEFAULT '{}',
+  department_ids       TEXT[]      NOT NULL DEFAULT '{}',
+  is_admin             BOOLEAN     NOT NULL DEFAULT FALSE,
+  is_active            BOOLEAN     NOT NULL DEFAULT TRUE,
+  is_current           BOOLEAN     NOT NULL DEFAULT TRUE,
+  last_login_at        TIMESTAMPTZ,
+  sessions_valid_after TIMESTAMPTZ,
+  deleted_at           TIMESTAMPTZ,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX kitchenstaffs_vendor_idx ON kitchenstaffs (vendor_id);
+CREATE UNIQUE INDEX kitchenstaffs_phone_current_idx ON kitchenstaffs (phone) WHERE is_current AND phone IS NOT NULL;
+CREATE UNIQUE INDEX kitchenstaffs_username_current_idx ON kitchenstaffs (username) WHERE is_current AND username IS NOT NULL;
+CREATE UNIQUE INDEX kitchenstaffs_email_current_idx ON kitchenstaffs (email) WHERE is_current AND email IS NOT NULL;
+
+CREATE TABLE diningtables (
+  _id               CHAR(24) PRIMARY KEY,
+  vendor_id         CHAR(24)    NOT NULL,
+  label             TEXT        NOT NULL,
+  label_key         TEXT        NOT NULL,
+  area              TEXT        NOT NULL DEFAULT '',
+  capacity          INTEGER     CHECK (capacity IS NULL OR capacity >= 1),
+  token             TEXT        NOT NULL UNIQUE,
+  token_rotated_at  TIMESTAMPTZ,
+  is_active         BOOLEAN     NOT NULL DEFAULT TRUE,
+  assigned_staff_id CHAR(24),
+  is_current        BOOLEAN     NOT NULL DEFAULT TRUE,
+  deleted_at        TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX diningtables_vendor_label_idx ON diningtables (vendor_id, label_key) WHERE is_current;
+
+CREATE TABLE invoices (
+  _id              CHAR(24) PRIMARY KEY,
+  vendor_id        CHAR(24)    NOT NULL,
+  invoice_number   TEXT        NOT NULL,
+  order_ids        TEXT[]      NOT NULL DEFAULT '{}',
+  table_id         CHAR(24),
+  table_label      TEXT        NOT NULL DEFAULT '',
+  customer_name    TEXT        NOT NULL DEFAULT '',
+  kind             TEXT        NOT NULL CHECK (kind IN ('table','order')),
+  is_open          BOOLEAN     NOT NULL DEFAULT TRUE,
+  lines            JSONB       NOT NULL DEFAULT '[]',
+  subtotal_rwf     NUMERIC     NOT NULL DEFAULT 0 CHECK (subtotal_rwf >= 0),
+  delivery_fee_rwf NUMERIC     NOT NULL DEFAULT 0 CHECK (delivery_fee_rwf >= 0),
+  discount_rwf     NUMERIC     NOT NULL DEFAULT 0 CHECK (discount_rwf >= 0),
+  total_rwf        NUMERIC     NOT NULL DEFAULT 0 CHECK (total_rwf >= 0),
+  amount_paid_rwf  NUMERIC     NOT NULL DEFAULT 0 CHECK (amount_paid_rwf >= 0),
+  refunded_rwf     NUMERIC     NOT NULL DEFAULT 0 CHECK (refunded_rwf >= 0),
+  status           TEXT        NOT NULL DEFAULT 'unpaid'
+                   CHECK (status IN ('unpaid','partially_paid','paid','refunded','void')),
+  payments         JSONB       NOT NULL DEFAULT '[]',
+  refunds          JSONB       NOT NULL DEFAULT '[]',
+  notes            TEXT        NOT NULL DEFAULT '',
+  created_by       JSONB,
+  paid_at          TIMESTAMPTZ,
+  closed_at        TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (vendor_id, invoice_number)
+);
+CREATE INDEX invoices_vendor_status_idx ON invoices (vendor_id, status, created_at DESC);
+
+CREATE TABLE suppliers (
+  _id           CHAR(24) PRIMARY KEY,
+  vendor_id     CHAR(24)    NOT NULL,
+  name          TEXT        NOT NULL,
+  contact_name  TEXT        NOT NULL DEFAULT '',
+  phone         TEXT        NOT NULL DEFAULT '',
+  email         TEXT        NOT NULL DEFAULT '',
+  notes         TEXT        NOT NULL DEFAULT '',
+  deleted_at    TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX suppliers_vendor_idx ON suppliers (vendor_id);
+
+CREATE TABLE inventoryitems (
+  _id                  CHAR(24) PRIMARY KEY,
+  vendor_id            CHAR(24)    NOT NULL,
+  department_id        CHAR(24),
+  name                 TEXT        NOT NULL,
+  unit                 TEXT        NOT NULL DEFAULT 'pcs',
+  sku                  TEXT        NOT NULL DEFAULT '',
+  quantity             NUMERIC     NOT NULL DEFAULT 0,
+  low_stock_threshold  NUMERIC     NOT NULL DEFAULT 0 CHECK (low_stock_threshold >= 0),
+  cost_per_unit_rwf    NUMERIC     NOT NULL DEFAULT 0 CHECK (cost_per_unit_rwf >= 0),
+  supplier_id          CHAR(24),
+  low_stock_alerted_at TIMESTAMPTZ,
+  deleted_at           TIMESTAMPTZ,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX inventoryitems_vendor_idx ON inventoryitems (vendor_id, deleted_at, department_id, name);
+
+CREATE TABLE stockmovements (
+  _id             CHAR(24) PRIMARY KEY,
+  vendor_id       CHAR(24)    NOT NULL,
+  item_id         CHAR(24)    NOT NULL,
+  department_id   CHAR(24),
+  delta           NUMERIC     NOT NULL,
+  quantity_after  NUMERIC     NOT NULL,
+  reason          TEXT        NOT NULL
+                  CHECK (reason IN ('purchase','adjustment','waste','usage','order','initial','return')),
+  note            TEXT        NOT NULL DEFAULT '',
+  order_id        CHAR(24),
+  order_number    TEXT        NOT NULL DEFAULT '',
+  supplier_id     CHAR(24),
+  actor           JSONB,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX stockmovements_vendor_idx ON stockmovements (vendor_id, created_at DESC);
+CREATE INDEX stockmovements_item_idx   ON stockmovements (item_id, created_at DESC);
+
+CREATE TABLE kitchenactivities (
+  _id            CHAR(24) PRIMARY KEY,
+  vendor_id      CHAR(24)    NOT NULL,
+  actor_type     TEXT        NOT NULL CHECK (actor_type IN ('owner','staff','customer','system')),
+  actor_id       TEXT,
+  actor_name     TEXT        NOT NULL DEFAULT '',
+  action         TEXT        NOT NULL,
+  target_type    TEXT        NOT NULL DEFAULT '',
+  target_id      TEXT        NOT NULL DEFAULT '',
+  summary        TEXT        NOT NULL DEFAULT '',
+  details        JSONB       NOT NULL DEFAULT '{}',
+  department_id  CHAR(24),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX kitchenactivities_vendor_idx ON kitchenactivities (vendor_id, created_at DESC);
+
+CREATE TABLE kitchenreports (
+  _id           CHAR(24) PRIMARY KEY,
+  vendor_id     CHAR(24)    NOT NULL,
+  period        TEXT        NOT NULL CHECK (period IN ('daily','weekly','monthly','yearly')),
+  start         TIMESTAMPTZ NOT NULL,
+  period_end    TIMESTAMPTZ NOT NULL,
+  label         TEXT        NOT NULL,
+  data          JSONB       NOT NULL DEFAULT '{}',
+  generated_at  TIMESTAMPTZ,
+  generated_by  TEXT        NOT NULL DEFAULT 'schedule',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (vendor_id, period, start)
+);
 
 -- ============================================================================
 -- FOREIGN KEYS (all deferred -> any insert order works)

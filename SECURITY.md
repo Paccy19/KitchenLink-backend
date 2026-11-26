@@ -15,7 +15,7 @@ the strict behaviour, not the relaxed one.
 | --- | --- | --- |
 | Missing or unsafe settings (below) | Listed as warnings, server starts | **Server refuses to start** and lists them all |
 | Sign-in codes and delivery codes | Shown in the API response and console | Never shown; sent by SMS only |
-| Payments | Simulated: orders marked paid, no money moves | Checkout disabled until a real provider is connected |
+| Payments | Simulated unless Paypack keys are set: orders marked paid, no money moves | Mobile money through Paypack; without its keys, checkout is disabled |
 | Public example secrets (`dev-agent-key`, `Admin@12345`) | Accepted | Refused |
 
 ## Required on a live server
@@ -38,9 +38,16 @@ Optional (the server starts and prints a reminder): an email service
 `SUPPORT_PHONE` / `SUPPORT_EMAIL`. Behind a hosting proxy or load balancer,
 set `TRUST_PROXY=1` so per-IP limits see real visitors.
 
-Payments: every payment method is still simulated (`config.payments.simulated`).
-A live server takes no orders until a real provider (e.g. MTN MoMo, Airtel
-Money, a gateway) is integrated in `orderService`.
+Payments: mobile money (MTN MoMo and Airtel Money) goes through Paypack once
+`PAYPACK_CLIENT_ID` and `PAYPACK_CLIENT_SECRET` are set; a live server then also
+needs `PAYPACK_WEBHOOK_SECRET` (from the Paypack dashboard, webhook URL
+`<PUBLIC_BASE_URL>/api/v1/payments/paypack/webhook`). Only a validly signed
+report marks an order paid, and a repeated report changes nothing. Only mobile
+money can be chosen for now (`config.payments.enabledMethods`): cards, eKash and
+the wallet are refused until they have a provider. While Paypack is connected, a
+paid pickup order can't be switched to delivery (its extra fee would need a second
+prompt). Without Paypack keys every method is simulated, which only a
+development server allows.
 
 ## Protections in place
 
@@ -132,3 +139,11 @@ The role is decided only by the server; the browser never sends one. Every `/adm
 **Unlocking someone early.** Lockouts live in the `otpguards` collection,
 keyed `"<purpose>:<phone or email>"`: for example `customer:+250788123456` or
 `admin-login:owner@kitchenlink.rw`. Deleting that document lifts the lockout.
+
+## Kitchen staff and table ordering
+
+- **Staff sessions.** Kitchen employees sign in with the username and password their administrator gave them (`/vendor/auth/staff-login`: bcrypt hashes only, a generated password is shown once to the administrator, the answer never says whether a username exists, and failures count towards the password lockout), or with the same kitchen code as the kitchen account. A new password signs the employee out everywhere. Their token is a kitchen token carrying `staff_id`; every request reloads the employee, so a removed or deactivated employee is refused at once (401), and their sign-outs and "sign out everywhere" act on the employee's own record, never the kitchen owner's. A token whose `staff_id` belongs to another kitchen is refused.
+- **Permissions are checked on the server** for every `/vendor/*` route (`requireKitchenPermission`) and again per department in the services. Wallet, payout details and kitchen settings are for kitchen administrators only and can't be put in a role; `/vendor/auth/me` hides payout details and the balance from other employees. Nobody can grant permissions they don't hold or change their own roles. Access changes are written to the kitchen activity log.
+- **Table QR codes** carry a random 128-bit token, never a database id. Replacing a QR code, deactivating or removing the table stops the old one. Guest orders are priced on the server, limited to 10 a minute per network, and can only include dishes of that table's kitchen.
+- **Guest order keys** are random 192-bit secrets; only their SHA-256 hash is stored, they're compared in constant time, and they travel in the `X-Guest-Key` header (never the URL, so they stay out of request logs).
+- **CSV report exports** prefix cells that start with `=`, `+`, `-` or `@` so a spreadsheet never runs them as formulas.

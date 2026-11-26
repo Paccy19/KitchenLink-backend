@@ -1,7 +1,7 @@
 const { Router } = require('express');
 const rateLimit = require('../middleware/rateLimit');
 const { sessionHandlers } = require('../utils/sessions');
-const { Vendor } = require('../models');
+const { Vendor, KitchenStaff } = require('../models');
 const config = require('../config');
 const requireVendorAuth = require('../middleware/requireVendorAuth');
 const upload = require('../middleware/upload');
@@ -24,11 +24,16 @@ const authLimit = rateLimit({
 router.post('/register', authLimit, registrationFiles, vendorAuthController.register);
 router.post('/send-otp', authLimit, vendorAuthController.sendOtp);
 router.post('/verify-otp', authLimit, vendorAuthController.verifyOtp);
+// Kitchen employees: the username and password their administrator gave them.
+router.post('/staff-login', authLimit, vendorAuthController.staffLogin);
 router.get('/me', requireVendorAuth, vendorAuthController.me);
 // Sign out: this device, or every device (the token stops working at once).
+// An employee signs out their own sessions, never the kitchen owner's.
 const vendorSessions = sessionHandlers(Vendor, 'vendor');
-router.post('/logout', requireVendorAuth, vendorSessions.logout);
-router.post('/logout-all', requireVendorAuth, vendorSessions.logoutAll);
+const staffSessions = sessionHandlers(KitchenStaff, 'staff');
+const bySession = (name) => (req, res, next) => (req.staff ? staffSessions : vendorSessions)[name](req, res, next);
+router.post('/logout', requireVendorAuth, bySession('logout'));
+router.post('/logout-all', requireVendorAuth, bySession('logoutAll'));
 router.post('/change-password', requireVendorAuth, vendorAuthController.changePassword);
 
 module.exports = router;

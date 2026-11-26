@@ -25,7 +25,14 @@ class VendorService {
       throw ApiError.notFound('Vendor not found.', 'VENDOR_NOT_FOUND');
     }
 
-    const items = await menuItemRepository.findByVendor(vendorId);
+    // Dishes of a switched-off department are not offered.
+    const { Department } = require('../models');
+    const inactive = new Set(
+      (await Department.find({ vendor_id: vendorId, deleted_at: null, is_active: false }).select('_id').lean()).map((d) => String(d._id))
+    );
+    const items = (await menuItemRepository.findByVendor(vendorId)).filter(
+      (item) => !item.department_id || !inactive.has(String(item.department_id))
+    );
     const options = await menuItemOptionRepository.findByMenuItemIds(items.map((item) => item._id));
     const optionsByItem = new Map();
     for (const option of options) {
@@ -65,8 +72,15 @@ class VendorService {
       ? distanceFromCoords(coords, vendor.location?.coordinates)
       : null;
 
+    // The kitchen's services (Food, Coffee, Bakery …): dishes carry department_id.
+    const departments = await Department.find({ vendor_id: vendor._id, deleted_at: null, is_active: true }).sort({ sort_order: 1, created_at: 1 }).lean();
     return {
       ...serializeVendorStorefront(vendor, { menu, distanceKm }),
+      departments: departments.map(require('./kitchen/departmentService').serializePublic),
+      // Photos of the kitchen's own printed menu.
+      menu_photos: [...(vendor.menu_photos || [])]
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+        .map((p) => ({ id: String(p._id), url: p.url, caption: p.caption || '' })),
       // How this kitchen type takes orders (advance-only, notice, limits).
       ordering: await vendorOrderingService.summary(vendor),
     };

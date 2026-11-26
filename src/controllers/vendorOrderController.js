@@ -14,14 +14,15 @@ const updateStatus = asyncHandler(async (req, res) => {
     await vendorOrderService.updateStatus(
       req.vendor,
       req.params.order_id,
-      req.body
+      req.body,
+      req.kitchenAccess
     )
   );
 });
 
 /** POST /vendor/orders/:order_id/collect { pickup_code } — pickup orders only. */
 const confirmPickup = asyncHandler(async (req, res) => {
-  res.json(await vendorOrderService.confirmPickup(req.vendor, req.params.order_id, req.body));
+  res.json(await vendorOrderService.confirmPickup(req.vendor, req.params.order_id, req.body, req.kitchenAccess));
 });
 
 module.exports = { list, getDetail, updateStatus, confirmPickup };

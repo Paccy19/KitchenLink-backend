@@ -25,6 +25,10 @@ const {
   vendorCoverageRoutes,
 } = require('./specialDeliveryRoutes');
 const { DISTRICTS, publicDistrict } = require('../config/rwandaDistricts');
+const requireVendorAuth = require('../middleware/requireVendorAuth');
+const can = require('../middleware/requireKitchenPermission');
+const kitchenRoutes = require('./kitchenRoutes');
+const tableRoutes = require('./tableRoutes');
 
 const {
   customerSupportRoutes,
@@ -55,16 +59,23 @@ router.use('/', authRoutes);
 router.use('/', wishlistRoutes);
 router.use('/', cartRoutes);
 router.use('/vendor/auth', vendorAuthRoutes);
+// Kitchen staff only reach what their roles allow (config/kitchenAccess.js);
+// the kitchen account and kitchen administrators reach everything.
 router.use('/vendor/menu', vendorMenuRoutes);
 router.use('/vendor/orders', vendorOrderRoutes);
-router.use('/vendor/wallet', vendorWalletRoutes);
-router.use('/vendor/notifications', vendorNotificationRoutes);
-router.use('/vendor/support', vendorSupportRoutes);
-router.use('/vendor/chats', vendorChatRoutes);
-router.use('/vendor/special-deliveries', vendorSpecialDeliveryRoutes);
-router.use('/vendor/delivery-coverage', vendorCoverageRoutes);
+router.use('/vendor/wallet', requireVendorAuth, can('account.wallet'), vendorWalletRoutes);
+router.use('/vendor/notifications', requireVendorAuth, can('account.notifications'), vendorNotificationRoutes);
+router.use('/vendor/support', requireVendorAuth, can('account.messages'), vendorSupportRoutes);
+router.use('/vendor/chats', requireVendorAuth, can('account.messages'), vendorChatRoutes);
+router.use('/vendor/special-deliveries', requireVendorAuth, can('account.messages'), vendorSpecialDeliveryRoutes);
+router.use('/vendor/delivery-coverage', requireVendorAuth, can('account.settings'), vendorCoverageRoutes);
+// Departments, staff, roles, tables, preparation, service, invoices, stock, reports.
+router.use('/vendor', kitchenRoutes);
 router.use('/vendor', vendorDashboardRoutes);
+// Table QR codes (public): the menu and ordering at the table.
+router.use('/tables', tableRoutes);
 router.use('/orders', orderRoutes);
+router.use('/payments', require('./paymentWebhookRoutes'));
 router.use('/notifications', notificationRoutes);
 router.use('/support', customerSupportRoutes);
 router.use('/chats', customerChatRoutes);

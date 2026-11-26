@@ -4,8 +4,55 @@ const config = require('../config');
 
 // A delivery address is only needed when the order is delivered.
 function requiredForDelivery() {
-  return this.fulfillment !== 'pickup';
+  return !['pickup', 'dine_in'].includes(this.fulfillment);
 }
+
+// Dine-in orders from a table QR code may be placed by a guest with no account.
+function requiredUnlessDineIn() {
+  return this.fulfillment !== 'dine_in';
+}
+
+const { ObjectId } = mongoose.Schema.Types;
+
+// Who moved a ticket or an item along (the kitchen account or an employee).
+const actorSchema = new mongoose.Schema(
+  {
+    type: { type: String, enum: ['owner', 'staff', 'system', 'customer'], default: 'system' },
+    id: { type: String, default: null },
+    name: { type: String, default: '' },
+  },
+  { _id: false }
+);
+
+/**
+ * One department's share of an order (Food ticket F1024, Coffee ticket C1024 …).
+ * Each department prepares its ticket on its own; the order's status follows
+ * from its tickets (ticketService.recompute). Preparation stages are in
+ * kitchenAccess.PREP_STAGES; what happens after (collected, served) is per item.
+ */
+const ticketSchema = new mongoose.Schema({
+  department_id: { type: ObjectId, ref: 'Department', default: null },
+  department_name: { type: String, default: '' },
+  code: { type: String, required: true },
+  status: { type: String, enum: ['pending', 'accepted', 'preparing', 'ready', 'cancelled'], default: 'pending' },
+  station_id: { type: String, default: null },
+  assigned_staff_id: { type: ObjectId, ref: 'KitchenStaff', default: null },
+  assigned_staff_name: { type: String, default: '' },
+  history: [
+    {
+      _id: false,
+      status: { type: String, required: true },
+      at: { type: Date, default: Date.now },
+      by: { type: actorSchema, default: () => ({}) },
+      note: { type: String, default: '' },
+    },
+  ],
+  accepted_at: { type: Date, default: null },
+  started_at: { type: Date, default: null },
+  ready_at: { type: Date, default: null },
+  cancelled_at: { type: Date, default: null },
+  stock_deducted_at: { type: Date, default: null },
+});
 
 const orderSchema = new mongoose.Schema(
   {
@@ -13,7 +60,8 @@ const orderSchema = new mongoose.Schema(
     customer_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Customer',
-      required: true,
+      required: requiredUnlessDineIn,
+      default: null,
     },
     vendor_id: {
       type: mongoose.Schema.Types.ObjectId,
@@ -33,6 +81,17 @@ const orderSchema = new mongoose.Schema(
         quantity: { type: Number, required: true, min: 1 },
         subtotal_rwf: { type: Number, required: true },
         image_url: { type: String, default: '' },
+        // Which department prepares it (snapshot), and its ticket.
+        department_id: { type: ObjectId, ref: 'Department', default: null },
+        department_name: { type: String, default: '' },
+        ticket_id: { type: ObjectId, default: null },
+        note: { type: String, default: '' },
+        // After preparation: kitchenAccess.SERVICE_STATUSES.
+        service_status: { type: String, default: 'pending' },
+        collected_at: { type: Date, default: null },
+        collected_by: { type: actorSchema, default: null },
+        served_at: { type: Date, default: null },
+        served_by: { type: actorSchema, default: null },
         options: [
           {
             option_id: { type: mongoose.Schema.Types.ObjectId, ref: 'MenuItemOption' },
@@ -43,6 +102,25 @@ const orderSchema = new mongoose.Schema(
         ],
       },
     ],
+    // One preparation ticket per department (see ticketSchema).
+    tickets: { type: [ticketSchema], default: [] },
+    // Dine-in orders: the table the QR code belongs to (snapshot of its label).
+    table: {
+      table_id: { type: ObjectId, ref: 'DiningTable', default: null },
+      label: { type: String, default: '' },
+    },
+    // Guests ordering from a table without an account: the name they gave,
+    // and a hash of the secret their browser keeps to follow the order.
+    guest: {
+      name: { type: String, default: '' },
+      key_hash: { type: String, default: '', select: false },
+    },
+    // Where the order came from.
+    source: { type: String, enum: ['marketplace', 'table_qr', 'event'], default: 'marketplace' },
+    invoice_id: { type: ObjectId, ref: 'Invoice', default: null },
+    // Dine-in orders paid in person: the point the bill must be paid by,
+    // fixed when ordered from the kitchen's rule ('preparation', 'collection', 'none').
+    payment_gate: { type: String, enum: ['preparation', 'collection', 'none', null], default: null },
     // Big-event orders (Big Event button): what the customer booked from the
     // kitchen's event offer, kept as it was when they ordered.
     event: {
@@ -185,7 +263,8 @@ const orderSchema = new mongoose.Schema(
     collected_at: { type: Date, default: null },
     payment_method: {
       type: String,
-      enum: config.orders.paymentMethods.map((m) => m.code),
+      // 'in_person': dine-in, paid to the kitchen's cashier (see Invoice).
+      enum: [...config.orders.paymentMethods.map((m) => m.code), 'in_person'],
       required: true,
     },
     payment_status: {
@@ -305,6 +384,9 @@ orderSchema.index({ settlement_status: 1, rider_payout_settled_at: 1 });
 orderSchema.index({ 'delivery_pricing.priced_at': -1 }, { sparse: true });
 
 orderSchema.index({ special_delivery_request_id: 1 }, { sparse: true });
+// Preparation queues and table activity.
+orderSchema.index({ vendor_id: 1, 'tickets.department_id': 1, 'tickets.status': 1 });
+orderSchema.index({ 'table.table_id': 1, status: 1 }, { sparse: true });
 
 // An order with a special delivery agreement keeps the request in step when
 // it is delivered or cancelled, whichever service made the change.
@@ -316,6 +398,25 @@ orderSchema.post('findOneAndUpdate', function syncSpecialDelivery(doc) {
   require('../services/specialDeliveryService')
     .syncWithOrder(doc)
     .catch((error) => console.error('[special-delivery] could not follow the order:', error.message));
+});
+
+// However an order is cancelled (kitchen, customer, admin, sweep), its
+// department tickets stop and its lines leave the bill.
+orderSchema.post('findOneAndUpdate', function cancelTicketsAndBill(doc) {
+  if (!doc || doc.status !== 'cancelled') return;
+  const openTickets = (doc.tickets || []).some((t) => t.status !== 'cancelled');
+  /* eslint-disable global-require */
+  if (openTickets) {
+    require('../services/kitchen/ticketService')
+      .cascadeFromOrder(doc._id, 'cancelled')
+      .catch((error) => console.error('[tickets] could not cancel the tickets of', doc.order_number, error.message));
+  }
+  if (doc.invoice_id) {
+    require('../services/kitchen/invoiceService')
+      .voidOrderLines(doc._id)
+      .catch((error) => console.error('[invoice] could not update the bill of', doc.order_number, error.message));
+  }
+  /* eslint-enable global-require */
 });
 
 module.exports = mongoose.model('Order', orderSchema);

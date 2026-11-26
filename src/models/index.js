@@ -38,8 +38,28 @@ const SpecialDeliveryRequest = require('./SpecialDeliveryRequest');
 const DeliveryQuotation = require('./DeliveryQuotation');
 const Counter = require('./Counter');
 const AdminLoginChallenge = require('./AdminLoginChallenge');
+const Department = require('./Department');
+const KitchenRole = require('./KitchenRole');
+const KitchenStaff = require('./KitchenStaff');
+const DiningTable = require('./DiningTable');
+const Invoice = require('./Invoice');
+const InventoryItem = require('./InventoryItem');
+const StockMovement = require('./StockMovement');
+const Supplier = require('./Supplier');
+const KitchenActivity = require('./KitchenActivity');
+const KitchenReport = require('./KitchenReport');
 
 module.exports = {
+  Department,
+  KitchenRole,
+  KitchenStaff,
+  DiningTable,
+  Invoice,
+  InventoryItem,
+  StockMovement,
+  Supplier,
+  KitchenActivity,
+  KitchenReport,
   AdminLoginChallenge,
   BigEventDeliverySettings,
   SpecialDeliveryRequest,

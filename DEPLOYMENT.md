@@ -528,20 +528,33 @@ If your provider uses different JSON field names (for example `text` instead
 of `message`), you'll need a small adapter in `src/utils/sms.js`. That's a
 code change to agree on separately.
 
-### Payments (checkout stays disabled)
+### Payments (Paypack mobile money)
 
-No payment provider is integrated (`config.payments.simulated = true` in
-[`src/config/index.js`](src/config/index.js)). On a production server, checkout answers
-`503 PAYMENTS_NOT_CONFIGURED` with "Online payment isn't available yet". This
-is intentional and safe. Browsing, kitchens' dashboards, the admin panel and
-driver sign-in all work.
+Customers pay with MTN MoMo or Airtel Money through [Paypack](https://paypack.rw)
+([`src/services/paypackService.js`](src/services/paypackService.js)). Card, eKash and
+wallet are switched off for now (`config.payments.enabledMethods`).
 
-Turning checkout on needs a real integration, which is a code change, not a setting:
+Checkout sends a prompt to the customer's phone and leaves the order `pending`.
+It becomes paid only when Paypack's signed webhook arrives, or when the app's
+check (`POST /orders/:id/payment/check`) asks Paypack and gets "successful".
+Then the kitchen is told and delivery workers are offered the order.
 
-1. Choose a provider, e.g. MTN MoMo / Airtel Money collections, or a card gateway.
-2. Get its merchant ID, API key or secret, and webhook signing secret.
-3. Implement charging and webhook confirmation in the order and payment services.
-4. Replace `simulated: true` with provider settings.
+To turn it on:
+
+1. Open a Paypack merchant account and create application keys in its dashboard.
+2. In `deploy/backend.env`, set `PAYPACK_CLIENT_ID`, `PAYPACK_CLIENT_SECRET`,
+   `PAYPACK_WEBHOOK_SECRET` (from the dashboard) and `PAYPACK_WEBHOOK_MODE=production`.
+   The API refuses to start with the keys but no webhook secret.
+3. Register the webhook `https://api.igikoni.online/api/v1/payments/paypack/webhook`
+   in the dashboard for production mode.
+4. Restart the backend, then pay a few small orders (e.g. 100 RWF) end to end.
+
+Without the keys, checkout answers `503 PAYMENTS_NOT_CONFIGURED` with "Online
+payment isn't available yet". Browsing, kitchens' dashboards, the admin panel
+and driver sign-in still work.
+
+Withdrawals and refunds stay manual (`PAYOUT_PROVIDER=manual`): an admin sends
+each transfer and records its reference.
 
 **Never set `NODE_ENV=development` on the server to get around this.** It would mark orders paid without collecting money, show sign-in codes to anyone, and accept the public example secrets.
 

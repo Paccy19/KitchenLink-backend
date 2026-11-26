@@ -207,6 +207,8 @@ const start = async () => {
     // Re-offers open orders to drivers who came into range and runs the
     // late-pickup clock.
     deliveryService.start();
+    // Daily, weekly, monthly and yearly kitchen reports, saved when each period ends.
+    require('./services/kitchen/reportService').start();
 
     app.listen(config.port, () => {
       console.log(`API listening on http://localhost:${config.port}/api/v1`);

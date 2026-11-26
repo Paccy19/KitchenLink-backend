@@ -36,8 +36,11 @@ function startupReport(config) {
     errors.push('No SMS gateway (SMS_ENABLED, SMS_API_URL, SMS_API_KEY): customers, kitchens and drivers could not receive sign-in codes');
   }
 
+  if (!config.payments.simulated && !config.payments.paypack.webhookSecret) {
+    errors.push('PAYPACK_WEBHOOK_SECRET is missing: payment confirmations from Paypack could not be verified');
+  }
   if (config.payments.simulated) {
-    warnings.push('No real payment provider is connected: checkout is disabled (simulated payments only run in development)');
+    warnings.push('No payment provider (PAYPACK_CLIENT_ID, PAYPACK_CLIENT_SECRET): checkout is disabled (simulated payments only run in development)');
   }
   if (!(config.mail.provider && config.mail.apiKey) && !config.mail.host) {
     warnings.push('No email service (EMAIL_PROVIDER + EMAIL_API_KEY, or SMTP_HOST): team invitations are not emailed; the owner gets the link to share instead');
