@@ -90,7 +90,10 @@ class RoleService {
     if (!partial || body.name !== undefined) update.name = parseRequiredText(body.name, { field: 'name', min: 2, max: 50 });
     if (body.description !== undefined) update.description = parseOptionalText(body.description, { field: 'description', max: 300 }) || '';
     if (!partial || body.permissions !== undefined) update.permissions = parsePermissions(body.permissions);
-    if (body.department_ids !== undefined) update.department_ids = (await departmentService.resolveIds(kitchen.vendorId, body.department_ids)) || [];
+    if (body.department_ids !== undefined) {
+      update.department_ids = (await departmentService.resolveIds(kitchen.vendorId, body.department_ids)) || [];
+      update.departments_auto = false;
+    }
     // Roles decide who may do what: only kitchen administrators shape them.
     if (!kitchen.isAdmin) throw ApiError.forbidden('Only a kitchen administrator can create or change roles.', 'KITCHEN_ADMIN_ONLY');
     return update;

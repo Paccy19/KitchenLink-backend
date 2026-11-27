@@ -308,7 +308,7 @@ const SPECS = [
     table: 'kitchenroles', collection: 'kitchenroles', sample: 'name',
     fields: {
       vendor_id: 'oid', name: 'text', description: 'text', permissions: 'text[]',
-      department_ids: 'text[]', template_key: 'text', deleted_at: 'date',
+      department_ids: 'text[]', departments_auto: 'bool', template_key: 'text', deleted_at: 'date',
     },
   },
   {

@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 const parsePagination = require('../utils/pagination');
@@ -19,6 +20,7 @@ const dispatchSettingsService = require('./dispatchSettingsService');
 const { usesHandoverCode, isKitchenDelivered, balanceUnpaid } = require('../utils/fulfillment');
 const { Order } = require('../models');
 const ticketService = require('./kitchen/ticketService');
+const { ALL } = require('./kitchen/accessService');
 
 const { vendor: vendorConfig } = config;
 
@@ -38,9 +40,36 @@ function statusNeeds(order, nextStatus) {
   }[nextStatus] || ['orders.accept'];
 }
 
+// Order permissions that are about the whole order, not one department's part of it.
+const WHOLE_ORDER = ['orders.receive', 'orders.accept', 'orders.reject', 'orders.cancel', 'orders.history', 'orders.handover', 'orders.assign', 'delivery.view_orders', 'delivery.history', 'delivery.track', 'delivery.confirm_completion'];
+
+/**
+ * The departments a person sees orders through, or null for the whole order.
+ * A baker limited to the Bakery sees only the cake in an order of pilau, cake
+ * and coffee; the customer still has one order and one bill.
+ */
+function departmentView(kitchen) {
+  if (!kitchen || kitchen.isAdmin || !kitchen.can('orders.view')) return null;
+  const scope = kitchen.scope('orders.view');
+  if (scope === ALL || WHOLE_ORDER.some((p) => kitchen.can(p))) return null;
+  return new Set(scope.map(String));
+}
+
 /** The order as this person sees it: only the next steps their role allows, and whether they can hand it over. */
 function forKitchen(serialized, order, kitchen) {
   if (!kitchen || kitchen.isAdmin) return serialized;
+  const departments = departmentView(kitchen);
+  if (departments) {
+    // Their part only: their dishes and tickets, no money, and no order-wide
+    // steps (they move their own ticket on the Preparation page).
+    const mine = (row) => row.department_id && departments.has(String(row.department_id));
+    const out = { ...serialized, items: serialized.items.filter(mine), tickets: serialized.tickets.filter(mine), allowed_next_statuses: [], can_confirm_pickup: false, can_hand_over: false, department_only: true };
+    for (const key of Object.keys(out)) if (key.endsWith('_rwf') || key === 'commission_percent') delete out[key];
+    delete out.deposit;
+    if (out.customer) out.customer = { id: out.customer.id, name: out.customer.name };
+    out.items = out.items.map(({ price_rwf, subtotal_rwf, ...item }) => item);
+    return out;
+  }
   const allowed = (serialized.allowed_next_statuses || []).filter((next) => statusNeeds(order, next).some((p) => kitchen.can(p)));
   const out = { ...serialized, allowed_next_statuses: allowed, can_hand_over: kitchen.can('orders.handover') || kitchen.can('delivery.confirm_completion') };
   // The kitchen's earnings (commission, payout) only for people who handle its money.
@@ -74,7 +103,10 @@ class VendorOrderService {
    * history") and delivery orders ("View delivery orders" / "history").
    */
   #visibleFilter(kitchen) {
-    if (!kitchen || kitchen.can('orders.view')) return null;
+    if (!kitchen || kitchen.isAdmin) return null;
+    const departments = departmentView(kitchen);
+    if (departments) return { 'items.department_id': { $in: [...departments].map((id) => new mongoose.Types.ObjectId(id)) } };
+    if (kitchen.can('orders.view')) return null;
     const finished = ['delivered', 'cancelled'];
     const or = [];
     if (kitchen.can('orders.receive')) or.push({ status: 'placed' });
@@ -126,6 +158,10 @@ class VendorOrderService {
     if (!order) {
       throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
     }
+    const departments = departmentView(kitchen);
+    if (departments && !(order.items || []).some((item) => item.department_id && departments.has(String(item.department_id)))) {
+      throw ApiError.notFound('Order not found.', 'ORDER_NOT_FOUND');
+    }
     const customer = order.customer_id ? await customerRepository.findById(order.customer_id) : null;
     return forKitchen(serializeVendorOrder(order, { customer }), order, kitchen);
   }
@@ -133,6 +169,9 @@ class VendorOrderService {
   async updateStatus(vendor, orderId, body = {}, kitchen = null) {
     const id = parseObjectId(orderId, 'order_id');
     const nextStatus = parseVendorOrderStatus(body?.status);
+    if (departmentView(kitchen)) {
+      throw ApiError.forbidden('You prepare part of this order: move your own ticket on the Preparation page.', 'KITCHEN_PERMISSION_DENIED');
+    }
     // Staff need the permission for this step (the owner has them all).
     const order = await orderRepository.findByVendorAndId(vendor._id, id);
     if (!order) {

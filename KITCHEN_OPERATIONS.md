@@ -35,6 +35,16 @@ security), `test/unit/kitchenReports.test.js`.
 - The catalogue is `config/kitchenAccess.js` (groups, labels, default roles).
 - A role (`KitchenRole`) is a named set of permissions, optionally limited to
   departments. An employee holds the union of their roles.
+- **Each dish goes to its team.** A dish's department decides which ticket
+  it lands on, so pilau, cake and coffee in one order go to the kitchen, the
+  bakery and the coffee bar, on one bill. The dish form asks "Who makes it?"
+  (a new kind of team is created on save) and `POST /vendor/departments/setup`
+  sorts a whole menu in one step. Creating a department of a kind limits the
+  matching default role to it (`ROLE_DEPARTMENT_CATEGORIES`: chef, baker,
+  barista, bartender; `KitchenRole.departments_auto` until an administrator
+  picks the departments). `orders.view` and `orders.details` are scoped: a
+  department-limited person sees only their dishes on the orders list
+  (`department_only`). Tests: `test/api/departmentRouting.test.js`.
 - **Department scope.** Permissions marked `scoped` (queues, menu, stock,
   department reports, department settings) cover the role's departments, or
   else the employee's own departments, or else the whole kitchen. A

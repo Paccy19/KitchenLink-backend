@@ -857,6 +857,7 @@ CREATE TABLE kitchenroles (
   description     TEXT        NOT NULL DEFAULT '',
   permissions     TEXT[]      NOT NULL DEFAULT '{}',
   department_ids  TEXT[]      NOT NULL DEFAULT '{}',
+  departments_auto BOOLEAN    NOT NULL DEFAULT false,
   template_key    TEXT,
   deleted_at      TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),

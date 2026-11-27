@@ -12,6 +12,9 @@ const kitchenRoleSchema = new mongoose.Schema(
     permissions: [{ type: String }],
     // Limits the role's department permissions to these departments. Empty = across the kitchen.
     department_ids: [{ type: ObjectId, ref: 'Department' }],
+    // Departments set automatically from the role's kind (a baker → the bakery),
+    // until an administrator chooses them by hand.
+    departments_auto: { type: Boolean, default: false },
     // The starting role it was created from (kitchenAccess.DEFAULT_ROLES key), if any.
     template_key: { type: String, default: null },
     deleted_at: { type: Date, default: null },

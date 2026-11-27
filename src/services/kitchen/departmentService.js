@@ -8,6 +8,8 @@ const access = require('../../config/kitchenAccess');
 const activity = require('./activityService');
 
 const CATEGORY_IDS = access.DEPARTMENT_CATEGORIES.map((c) => c.id);
+// Short names for departments made by the one-step setup.
+const SETUP_NAMES = { restaurant: 'Kitchen', coffee: 'Coffee', bakery: 'Bakery', bar: 'Bar', desserts: 'Desserts', fast_food: 'Fast food', juice_bar: 'Juice bar', catering: 'Catering' };
 const ACTIVE_TICKET = ['pending', 'accepted', 'preparing'];
 
 const categoryLabel = (department) =>
@@ -155,7 +157,7 @@ class DepartmentService {
   async list(kitchen) {
     const departments = await this.listForVendor(kitchen.vendorId);
     const ids = departments.map((d) => d._id);
-    const [staffCounts, itemCounts, openTickets] = await Promise.all([
+    const [staffCounts, itemCounts, openTickets, unassigned] = await Promise.all([
       KitchenStaff.aggregate([
         { $match: { vendor_id: new mongoose.Types.ObjectId(kitchen.vendorId), deleted_at: null, department_ids: { $in: ids } } },
         { $unwind: '$department_ids' },
@@ -171,6 +173,7 @@ class DepartmentService {
         { $match: { 'tickets.status': { $in: ACTIVE_TICKET } } },
         { $group: { _id: '$tickets.department_id', n: { $sum: 1 } } },
       ]),
+      ids.length ? MenuItem.countDocuments({ vendor_id: kitchen.vendorId, deleted_at: null, department_id: null }) : 0,
     ]);
     const count = (rows) => new Map(rows.map((r) => [String(r._id), r.n]));
     const staff = count(staffCounts);
@@ -185,6 +188,9 @@ class DepartmentService {
         })
       ),
       categories: access.DEPARTMENT_CATEGORIES,
+      // Dishes in no department go to a general "Kitchen" ticket that only
+      // kitchen-wide staff see.
+      unassigned_products: unassigned,
     };
   }
 
@@ -255,6 +261,7 @@ class DepartmentService {
     if (count >= 30) throw ApiError.conflict('A kitchen can have at most 30 departments.', 'DEPARTMENT_LIMIT');
     if (update.sort_order === undefined) update.sort_order = count;
     const department = await Department.create({ ...update, vendor_id: kitchen.vendorId });
+    await this.linkRoles(kitchen.vendorId, department);
     await activity.record(kitchen, {
       action: 'department.created',
       target_type: 'department',
@@ -335,6 +342,68 @@ class DepartmentService {
       summary: `Removed the ${department.name} department`,
     });
     return { deleted: true, id: String(department._id) };
+  }
+
+  /**
+   * Limits the preparing roles of this department's kind to it (a Baker role
+   * to the Bakery), unless an administrator chose that role's departments.
+   */
+  async linkRoles(vendorId, department) {
+    const keys = Object.entries(access.ROLE_DEPARTMENT_CATEGORIES)
+      .filter(([, categories]) => categories.includes(department.category))
+      .map(([key]) => key);
+    if (!keys.length) return;
+    await mongoose.model('KitchenRole').updateMany(
+      { vendor_id: vendorId, deleted_at: null, template_key: { $in: keys }, $or: [{ department_ids: { $size: 0 } }, { departments_auto: true }] },
+      { $addToSet: { department_ids: department._id }, $set: { departments_auto: true } }
+    );
+  }
+
+  /**
+   * One step to split a kitchen: creates the departments it lacks (one per
+   * kind, or reuses the one it has), puts each dish in its department and
+   * limits the preparing roles. New orders then send each dish's ticket to
+   * its own department; the customer still gets one order and one bill.
+   */
+  async setup(kitchen, body = {}) {
+    const wanted = Array.isArray(body.departments) ? [...new Set(body.departments.map(String))] : [];
+    const dishes = Array.isArray(body.dishes) ? body.dishes : [];
+    if (!wanted.length || wanted.some((c) => !CATEGORY_IDS.includes(c) || c === 'custom')) {
+      throw ApiError.badRequest('Choose the kinds of department this kitchen has.', { departments: `expected some of ${CATEGORY_IDS.filter((c) => c !== 'custom').join(', ')}` });
+    }
+    for (const d of dishes) {
+      if (!mongoose.isValidObjectId(d?.menu_item_id) || !wanted.includes(String(d?.category))) {
+        throw ApiError.badRequest('Each dish needs one of the chosen departments.', { dishes: 'expected { menu_item_id, category }' });
+      }
+    }
+    if (dishes.length && !kitchen.can('menu.assign_departments') && !kitchen.can('menu.edit')) kitchen.assert('menu.assign_departments');
+
+    const existing = await Department.find({ vendor_id: kitchen.vendorId, deleted_at: null }).lean();
+    const byCategory = new Map();
+    for (const category of wanted) {
+      let department = existing.find((d) => d.category === category);
+      if (!department) {
+        const created = await this.create(kitchen, { name: SETUP_NAMES[category] || categoryLabel({ category }), category });
+        department = await Department.findById(created.id).lean();
+      } else {
+        await this.linkRoles(kitchen.vendorId, department);
+      }
+      byCategory.set(category, department._id);
+    }
+    for (const d of dishes) {
+      await MenuItem.updateOne(
+        { _id: d.menu_item_id, vendor_id: kitchen.vendorId, deleted_at: null },
+        { $set: { department_id: byCategory.get(String(d.category)) } }
+      );
+    }
+    if (dishes.length) {
+      await activity.record(kitchen, {
+        action: 'department.setup',
+        target_type: 'department',
+        summary: `Sorted ${dishes.length} dish${dishes.length === 1 ? '' : 'es'} into departments`,
+      });
+    }
+    return this.list(kitchen);
   }
 
   /** Puts employees in (or takes them out of) a department. */

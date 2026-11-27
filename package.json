@@ -10,6 +10,7 @@
     "migrate:vendors": "node src/scripts/migrateVendorAccounts.js",
     "migrate:vendor-types": "node src/scripts/migrateVendorTypes.js",
     "strip:metadata": "node src/scripts/stripUploadMetadata.js",
+    "fix:duplicate-roles": "node src/scripts/mergeDuplicateRoles.js",
     "report:customer-phones": "node src/scripts/reportCustomerPhones.js",
     "migrate:pg": "node src/scripts/migratePostgres.js",
     "seed:drivers": "node src/scripts/seedDrivers.js",

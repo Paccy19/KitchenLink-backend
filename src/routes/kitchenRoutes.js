@@ -56,6 +56,7 @@ router.get('/activity', ...auth, can('audit.kitchen_logs', 'audit.employee_logs'
 // Services & departments
 router.get('/departments', ...auth, can('departments.view', 'kitchen.view_queue', 'menu.view', 'departments.performance'), json((req) => departmentService.list(k(req))));
 router.post('/departments', ...act, can('departments.create'), upload.single('image'), json((req) => departmentService.create(k(req), req.body, req.file), 201));
+router.post('/departments/setup', ...act, can('departments.create'), json((req) => departmentService.setup(k(req), req.body)));
 router.get('/departments/:department_id', ...auth, can('departments.view'), json((req) => departmentService.get(k(req), req.params.department_id)));
 router.patch('/departments/:department_id', ...act, can('departments.edit', 'departments.activate', 'departments.availability', 'departments.manage_hours', 'departments.configure_workflow', 'departments.settings', 'kitchen.manage_stations', 'kitchen.workflows'), upload.single('image'), json((req) => departmentService.update(k(req), req.params.department_id, req.body, req.file)));
 router.delete('/departments/:department_id', ...act, can('departments.delete'), json((req) => departmentService.remove(k(req), req.params.department_id)));

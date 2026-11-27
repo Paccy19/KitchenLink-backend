@@ -135,7 +135,7 @@ const LIST = {
     ['menu.promotions', 'Manage discounts and promotions'],
   ],
   orders: [
-    ['orders.view', 'View all orders'],
+    ['orders.view', 'View all orders', 'S'],
     ['orders.receive', 'Receive new orders'],
     ['orders.accept', 'Accept orders'],
     ['orders.reject', 'Reject orders'],
@@ -144,7 +144,7 @@ const LIST = {
     ['orders.add_items', 'Add items to orders'],
     ['orders.remove_items', 'Remove items from orders'],
     ['orders.quantities', 'Update order quantities'],
-    ['orders.details', 'View order details'],
+    ['orders.details', 'View order details', 'S'],
     ['orders.assign_employees', 'Assign orders to employees'],
     ['orders.assign_departments', 'Assign orders to departments'],
     ['orders.priorities', 'Manage order priorities'],
@@ -495,6 +495,18 @@ const DEFAULT_ROLES = [
 ];
 
 /** Suggested service categories; a kitchen may type its own instead. */
+/**
+ * Which kind of department each preparing role works in. When a kitchen
+ * creates a department of that kind, the role is limited to it, so a baker
+ * sees bakery tickets and not the whole order.
+ */
+const ROLE_DEPARTMENT_CATEGORIES = {
+  chef: ['restaurant', 'fast_food', 'catering'],
+  baker: ['bakery', 'desserts'],
+  barista: ['coffee', 'juice_bar'],
+  bartender: ['bar'],
+};
+
 const DEPARTMENT_CATEGORIES = [
   { id: 'restaurant', label: 'Restaurant / Food', prefix: 'F' },
   { id: 'coffee', label: 'Coffee / Barista', prefix: 'C' },
@@ -600,6 +612,7 @@ module.exports = {
   DEPARTMENT_MANAGER_PERMISSIONS,
   DEFAULT_ROLES,
   DEPARTMENT_CATEGORIES,
+  ROLE_DEPARTMENT_CATEGORIES,
   PREP_STAGES,
   PREP_STAGE_LABELS,
   SERVICE_STATUSES,
