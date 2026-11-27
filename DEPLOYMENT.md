@@ -1,18 +1,118 @@
 # KitchenLink — Production Deployment Guide
 
-Target: Ubuntu VPS (Contabo) running Docker Engine + Docker Compose, serving
-
 | Address | What |
 | --- | --- |
-| `https://igikoni.online` | React website |
-| `https://www.igikoni.online` | permanent redirect to `https://igikoni.online` (path kept) |
-| `https://api.igikoni.online` | Node.js/Express API (`/api/v1/...`, photos under `/uploads/...`) |
+| `https://igikoni.online` | React website, and the API under `/api/v1/...` (photos under `/uploads/...`) |
+| `https://www.igikoni.online` | The same website |
+| `https://api.igikoni.online` | The API on its own address (mobile app, webhooks, other direct callers) |
 
-All deployment files live in this repository under [`deploy/`](deploy/). The
-website is built from the **KitchenLink-frontend** repository, cloned next to
-this one.
+**Part A** describes the server as it runs today. **Part B** (sections 1–15)
+is a full Docker stack that was prepared but **is not what runs**: don't run
+its `docker compose` commands on the live server.
 
 ---
+
+# Part A — The live server today
+
+Checked on 27 November 2026. Contabo VPS `194.163.185.38`, Ubuntu, signed in as `root`.
+
+## A1. What runs where
+
+```
+              Internet (80, 443)
+                     │
+        ┌────────────▼─────────────┐  Docker container "kitchenlink-caddy"
+        │ Caddy 2.11 (HTTPS, Let's │  (caddy:2, restart unless-stopped)
+        │ Encrypt), one Caddyfile  │  also serves other sites (see A3)
+        │ for every site on the VPS│
+        └──┬───────────────┬───────┘
+   /api, /uploads        everything else
+           │               │
+   host port 4000    /opt/kitchenlink/frontend/dist (built files, read-only)
+           │
+ ┌─────────▼──────────┐        ┌───────────────────────────────┐
+ │ API: pm2 process   │──────▶ │ MongoDB 7: Docker container   │
+ │ "kitchenlink-      │        │ "kitchenlink-mongo",          │
+ │ backend" (root),   │        │ 127.0.0.1:27017 only          │
+ │ Node 22, npm start │        └───────────────────────────────┘
+ │ /opt/kitchenlink/  │
+ │ backend            │   No PostgreSQL mirror runs: PG_URI is set, the API
+ └────────────────────┘   only logs a warning that it is down.
+```
+
+| Path on the server | What |
+| --- | --- |
+| `/opt/kitchenlink/backend` | Clone of this repository at `origin/main`, with its own `.env` (never committed) |
+| `/opt/kitchenlink/frontend` | Clone of KitchenLink-frontend; `dist/` is what Caddy serves |
+| `/opt/kitchenlink/caddy/Caddyfile` | Caddy's settings for **every** site on the VPS. Copy: [`deploy/server/Caddyfile`](deploy/server/Caddyfile) |
+| `/opt/kitchenlink/deploy-backend.sh`, `deploy-frontend.sh` | What a deploy runs. Copies: [`deploy/server/`](deploy/server/) |
+| Docker volumes `kitchenlink_caddy_data`, `kitchenlink_caddy_config` | Certificates and Caddy state. Keep them |
+| Docker volumes of `kitchenlink-mongo` | **All application data.** Keep them |
+
+## A2. Deploying
+
+Pushing to `main` deploys by itself (`.github/workflows/deploy.yml` in each
+repository signs in over SSH and runs the script):
+
+- **Backend:** `git reset --hard origin/main`, `npm ci --omit=dev`, `pm2 restart kitchenlink-backend --update-env`.
+- **Website:** `git reset --hard origin/main`, `npm ci`, then `VITE_API_BASE_URL=/api/v1 VITE_DEMO_MODE=false npm run build`. Caddy serves the new `dist/` at once.
+
+Watch a run in the repository's **Actions** tab. To deploy by hand:
+`ssh root@194.163.185.38 'bash /opt/kitchenlink/deploy-backend.sh'` (or `deploy-frontend.sh`).
+
+The reset discards anything edited on the server inside those two folders,
+except files git ignores (`.env`, `uploads/`, `private-uploads/`, `node_modules/`).
+
+## A3. Caddy (HTTPS)
+
+One Caddyfile serves every site on this VPS: `igikoni.online` (with `www`),
+`api.igikoni.online`, `mvec.igikoni.online`, `ikiguzi.online` (with `www`) and
+`kigalicoffeelab.online` (with `www`). A mistake in it takes **all of them**
+down, so:
+
+```bash
+cd /opt/kitchenlink/caddy
+cp -p Caddyfile Caddyfile.backup-$(date +%Y%m%d-%H%M%S)      # 1. backup
+nano Caddyfile                                                # 2. edit
+docker exec kitchenlink-caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile   # 3. must say "Valid configuration"
+docker exec kitchenlink-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile     # 4. apply, no downtime
+docker logs --since 5m kitchenlink-caddy 2>&1 | grep -iE "obtain|error" | tail     # 5. new certificates
+```
+
+- **Edit the file in place** (nano, `>>`). The container mounts this one file, and tools that write a new file instead (`sed -i`) leave Caddy reading the old one until it restarts.
+- **Certificates:** Caddy gets and renews one for every address in the file, automatically. An address that isn't in the file gets none. That was why `api.igikoni.online` failed until 27 November 2026.
+- **Avoid `docker restart kitchenlink-caddy`** unless reload fails. A restart briefly takes every site offline.
+- After changing the live file, copy it back into [`deploy/server/Caddyfile`](deploy/server/Caddyfile) and commit it.
+
+## A4. Day-to-day commands
+
+```bash
+pm2 status                                   # the API: online?
+pm2 logs kitchenlink-backend --lines 100     # API logs
+pm2 restart kitchenlink-backend --update-env # restart the API (after editing backend/.env)
+docker logs --since 1h kitchenlink-caddy     # proxy and certificate logs
+docker logs --tail 100 kitchenlink-mongo     # database logs
+cd /opt/kitchenlink/backend && npm run fix:duplicate-roles   # maintenance scripts run here, against the live database
+```
+
+## A5. Restarts, firewall and backups
+
+- **After a reboot:** Docker restarts `kitchenlink-caddy` and `kitchenlink-mongo`, and `pm2-root.service` brings back the API from pm2's saved list. After adding or removing a pm2 process, run `pm2 save`, or a reboot brings back the old list. (`pm2-kcl.service` belongs to another user's pm2. Leave it alone.)
+- **Firewall:** the API listens on port 4000, which is blocked on the internet-facing interface `eth0` (IPv4 and IPv6). Caddy reaches it through `docker0`. `kitchenlink-firewall.service` runs `/opt/kitchenlink/firewall.sh` at boot to put the rule back. Copies of both: [`deploy/server/`](deploy/server/). The server's other firewall (ufw) is off.
+- **Backups:** every night at 02:30, `/opt/kitchenlink/backup-mongo.sh` writes a compressed dump of every database in `kitchenlink-mongo` to `/opt/kitchenlink/backups/` and keeps 14 days. The log is `/var/log/kitchenlink-backup.log`. These backups stay **on the same server**, so also copy one elsewhere from time to time:
+  `scp root@194.163.185.38:/opt/kitchenlink/backups/$(ssh root@194.163.185.38 'ls -t /opt/kitchenlink/backups | head -1') .`
+- **Restore** (it replaces the current data, so take a fresh backup first):
+  `docker exec -i kitchenlink-mongo mongorestore --archive --gzip --drop < /opt/kitchenlink/backups/<file>`, then `pm2 restart kitchenlink-backend`.
+- **PostgreSQL mirror:** none runs. `PG_URI` is set, and the API only logs a warning that the mirror is down. Run PostgreSQL and `npm run migrate:pg` only if you need it.
+
+---
+
+# Part B — Full Docker stack (prepared, not running)
+
+Target: Ubuntu VPS running Docker Engine + Docker Compose. All files for it
+live under [`deploy/`](deploy/); the website is built from the
+**KitchenLink-frontend** repository, cloned next to this one. Moving the live
+server to it means moving the MongoDB data and the other sites' Caddy entries.
 
 ## 1. Architecture
 

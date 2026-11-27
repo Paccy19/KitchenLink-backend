@@ -1,0 +1,100 @@
+igikoni.online, www.igikoni.online {
+    encode gzip
+
+    @api path /api /api/*
+    handle @api {
+        reverse_proxy host.docker.internal:4000
+    }
+
+    @uploads path /uploads /uploads/*
+    handle @uploads {
+        reverse_proxy host.docker.internal:4000
+    }
+
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+mvec.igikoni.online {
+    encode gzip
+
+    @api path /api /api/*
+    handle @api {
+        reverse_proxy host.docker.internal:4100
+    }
+
+    @uploads path /uploads /uploads/*
+    handle @uploads {
+        reverse_proxy host.docker.internal:4100
+    }
+
+    @health path /health
+    handle @health {
+        reverse_proxy host.docker.internal:4100
+    }
+
+    handle {
+        root * /srv-mvec
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+ikiguzi.online, www.ikiguzi.online {
+    encode gzip
+
+    @api path /api /api/*
+    handle @api {
+        reverse_proxy host.docker.internal:4100
+    }
+
+    @uploads path /uploads /uploads/*
+    handle @uploads {
+        reverse_proxy host.docker.internal:4100
+    }
+
+    @health path /health
+    handle @health {
+        reverse_proxy host.docker.internal:4100
+    }
+
+    handle {
+        root * /srv-mvec
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+
+www.kigalicoffeelab.online {
+    redir https://kigalicoffeelab.online{uri} permanent
+}
+
+kigalicoffeelab.online {
+    encode gzip
+
+    # API: strip the /api prefix (the backend's routes live at /orders, /tables, ...)
+    handle_path /api/* {
+        reverse_proxy host.docker.internal:5050
+    }
+
+    # Uploaded menu/product/staff photos are served by the backend
+    @uploads path /uploads/*
+    handle @uploads {
+        reverse_proxy host.docker.internal:5050
+    }
+
+    # Everything else: the React app (with SPA fallback) from kcl-web
+    handle {
+        reverse_proxy host.docker.internal:5051
+    }
+}
+
+# API for the mobile app and other direct callers (same backend as igikoni.online/api).
+api.igikoni.online {
+    encode gzip
+    reverse_proxy host.docker.internal:4000
+}
