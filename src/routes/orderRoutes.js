@@ -33,6 +33,12 @@ router.get(
   })
 );
 router.post('/:order_id/cancel', requireAuth, orderController.cancelOrder);
+// The kitchen can't make a dish: continue without it (refunded) or cancel.
+router.post(
+  '/:order_id/issues/:issue_id/respond',
+  requireAuth,
+  asyncHandler(async (req, res) => res.json(await orderService.respondToIssue(req.customer._id, req.params.order_id, req.params.issue_id, req.body)))
+);
 // The customer's delivery code, sent again to their verified email (never returned here).
 router.post(
   '/:order_id/delivery-code/resend',

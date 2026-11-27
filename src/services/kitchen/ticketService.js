@@ -375,6 +375,12 @@ class TicketService {
     if (!['delayed', 'unavailable', 'assistance'].includes(kind)) throw ApiError.badRequest('Pick the problem: delayed, unavailable or assistance.', { kind: 'expected delayed, unavailable or assistance' });
     if (ticket.status === 'cancelled') throw ApiError.conflict('This ticket is cancelled.', 'TICKET_FINISHED');
     const note = String(body.note || '').trim().slice(0, 200);
+    // How late, for the customer ("about 10 minutes"); optional.
+    let minutes = null;
+    if (kind === 'delayed' && body.minutes !== undefined && body.minutes !== null && body.minutes !== '') {
+      minutes = Number(body.minutes);
+      if (!Number.isInteger(minutes) || minutes < 1 || minutes > 180) throw ApiError.badRequest('Minutes late are 1 to 180.', { minutes: 'expected 1-180' });
+    }
     let itemIds = [];
     if (kind === 'unavailable') {
       const mine = order.items.filter((i) => String(i.ticket_id) === String(ticket._id) && i.service_status === 'pending');
@@ -402,6 +408,8 @@ class TicketService {
     if (order.assigned_staff?.id && order.assigned_staff.type === 'staff') alerts.toStaff(order.vendor_id, order.assigned_staff.id, { ...alert, type: 'order_alerts' });
     alerts.emit(order.vendor_id, 'order_alerts', { ...alert, permission: kind === 'assistance' ? 'service.view_ready' : 'service.view_assigned' });
     activity.record(kitchen, { action: `ticket.flag_${kind}`, target_type: 'order', target_id: order._id, summary: `${ticket.code} ${label}${names ? ` (${names})` : ''}${note ? `: ${note}` : ''}`, department_id: ticket.department_id });
+    // The customer is told too: a delay as a message, a missing dish with choices.
+    await require('./customerIssueService').fromFlag(order, ticket, { kind, itemIds, minutes, note });
     const fresh = await Order.findById(order._id).lean();
     return { ticket: serializeTicket(fresh.tickets.find((t) => String(t._id) === String(ticket._id)), fresh, null) };
   }

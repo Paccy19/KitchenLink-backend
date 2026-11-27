@@ -116,7 +116,7 @@ test('pilau, cake and coffee: each goes to its own department, on one bill', asy
   assert.equal(ok(await api('GET', `/vendor/invoices/${invoices[0].id}`, { token: token.cashier })).total_rwf, 9500);
 });
 
-test('"Bring the bill" goes to the table\'s own server and to the cashier', async () => {
+test('"Call the waiter" and "Bring the bill" go to the table\'s own server; the bill also to the cashier', async () => {
   const { roles } = ok(await api('GET', '/vendor/roles', { token: owner }));
   const serverRole = roles.find((r) => r.template_key === 'server').id;
   const amina = ok(await api('POST', '/vendor/staff', { token: owner, body: { name: 'Amina', phone: '0788600011', role_ids: [serverRole] } }), 201);
@@ -138,4 +138,13 @@ test('"Bring the bill" goes to the table\'s own server and to the cashier', asyn
   assert.ok((await titles(boscoToken)).includes('Table 2: Bring the bill'));
   assert.ok((await titles(aminaToken)).includes('Table 2: Bring the bill'));
   assert.ok((await titles(token.cashier)).includes('Table 2: Bring the bill'));
+
+  // "Call the waiter": the table's server only (no cashier); every server when it has none.
+  ok(await api('POST', `/tables/${table.token}/requests`, { body: { kind: 'call_waiter' } }), 201);
+  assert.ok((await titles(aminaToken)).includes('Table 1: Call the waiter'));
+  assert.ok(!(await titles(boscoToken)).includes('Table 1: Call the waiter'));
+  assert.ok(!(await titles(token.cashier)).includes('Table 1: Call the waiter'));
+  ok(await api('POST', `/tables/${table2.token}/requests`, { body: { kind: 'call_waiter' } }), 201);
+  assert.ok((await titles(boscoToken)).includes('Table 2: Call the waiter'));
+  assert.ok((await titles(aminaToken)).includes('Table 2: Call the waiter'));
 });

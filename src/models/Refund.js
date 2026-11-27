@@ -22,7 +22,7 @@ const REFUND_STATUSES = ['pending', 'completed', 'failed'];
  *                            when resolving a dispute: the part the customer
  *                            had already paid (the order stays active)
  */
-const REFUND_KINDS = ['order_cancelled', 'delivery_fee_adjustment'];
+const REFUND_KINDS = ['order_cancelled', 'delivery_fee_adjustment', 'item_unavailable'];
 
 const refundSchema = new mongoose.Schema(
   {

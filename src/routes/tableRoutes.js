@@ -165,6 +165,16 @@ router.get(
     res.json(await tableOrderService.getOrder(req.params.token, req.params.order_id, key, req.customer || null));
   })
 );
+// A guest answers the kitchen about a dish it can't make (remove it, or choose something else).
+router.post(
+  '/:token/orders/:order_id/issues/:issue_id/respond',
+  orderLimit,
+  optionalCustomer,
+  asyncHandler(async (req, res) => {
+    const key = req.headers['x-guest-key'];
+    res.json(await tableOrderService.respondToIssue(req.params.token, req.params.order_id, req.params.issue_id, key, req.body, req.customer || null));
+  })
+);
 
 // "Call the waiter" / "Bring the bill" from the table (rate limited per network).
 const requestLimit = rateLimit({ windowMs: 60 * 1000, max: 6, code: 'TABLE_REQUEST_RATE_LIMITED', message: 'Please wait a moment before asking again.' });

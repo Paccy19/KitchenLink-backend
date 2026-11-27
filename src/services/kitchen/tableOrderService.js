@@ -68,6 +68,8 @@ function guestView(order, departments, bill) {
       note: item.note || '',
     })),
     departments: ticketService.ticketProgress(order, departments),
+    // What the kitchen told the guest (a delay, a dish it can't make) and the choices.
+    issues: require('./customerIssueService').serialize(order),
     subtotal_rwf: order.subtotal_rwf,
     total_rwf: order.total_rwf,
     bill,
@@ -301,6 +303,14 @@ class TableOrderService {
     await this.getOrder(token, orderId, key, customer);
     const order = await Order.findById(orderId).lean();
     return require('./customerService').leaveFeedback(order, body);
+  }
+
+  /** A guest answers the kitchen about a dish it can't make (the key proves the order is theirs). */
+  async respondToIssue(token, orderId, issueId, key, body = {}, customer = null) {
+    await this.getOrder(token, orderId, key, customer);
+    const order = await Order.findById(orderId).lean();
+    await require('./customerIssueService').respond(order, issueId, body.choice, { guest: true, customerId: customer?._id || null });
+    return this.#view(order._id);
   }
 
   /** GET /tables/:token/orders/:id?key= — a guest following their order (the key proves it's theirs). */

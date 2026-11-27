@@ -125,6 +125,28 @@ const orderSchema = new mongoose.Schema(
     ],
     // One preparation ticket per department (see ticketSchema).
     tickets: { type: [ticketSchema], default: [] },
+    // What the kitchen told the customer about this order: a dish running
+    // late, or one it can't make and the customer's answer (customerIssueService).
+    customer_issues: [
+      {
+        kind: { type: String, enum: ['delayed', 'unavailable'], required: true },
+        ticket_id: { type: ObjectId, default: null },
+        department_name: { type: String, default: '' },
+        item_ids: [{ type: ObjectId }],
+        minutes: { type: Number, default: null },
+        note: { type: String, default: '' },
+        // info: nothing to answer (a delay); open: waiting for the customer; answered.
+        status: { type: String, enum: ['info', 'open', 'answered'], default: 'open' },
+        choice: { type: String, enum: ['remove', 'swap', 'cancel', null], default: null },
+        refund_rwf: { type: Number, default: 0 },
+        // The dish's price can't go back on its own any more (an earlier dish refund was sent).
+        refund_blocked: { type: Boolean, default: false },
+        answered_at: { type: Date, default: null },
+        created_at: { type: Date, default: Date.now },
+      },
+    ],
+    // When the kitchen was warned that this order was still waiting (newOrderWatch).
+    escalated_at: { type: Date, default: null },
     // Dine-in orders: the table the QR code belongs to (snapshot of its label).
     table: {
       table_id: { type: ObjectId, ref: 'DiningTable', default: null },

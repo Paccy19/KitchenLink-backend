@@ -147,6 +147,7 @@ const SPECS = [
       table_ref: ['json', 'table'], guest_name: ['text', 'guest.name'],
       invoice_id: 'oid', payment_gate: 'text',
       table_session_id: 'oid', customer_session_id: 'oid', reservation_id: 'oid', converted_to_takeaway_at: 'date', packed_at: 'date', prep_minutes: 'num',
+      customer_issues: 'json', escalated_at: 'date',
     },
   },
   {

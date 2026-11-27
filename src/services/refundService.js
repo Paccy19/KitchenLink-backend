@@ -41,7 +41,7 @@ const serializeRefund = (refund, { admin = false } = {}) => {
     order_id: String(refund.order_id?._id || refund.order_id),
     order_number: refund.order_number || '',
     kind: refund.kind || 'order_cancelled',
-    kind_label: refund.kind === 'delivery_fee_adjustment' ? 'Delivery fee reduced' : 'Order cancelled',
+    kind_label: refund.kind === 'delivery_fee_adjustment' ? 'Delivery fee reduced' : refund.kind === 'item_unavailable' ? 'Dish not available' : 'Order cancelled',
     special_delivery_request_id: refund.special_delivery_request_id ? String(refund.special_delivery_request_id) : null,
     amount_rwf: refund.amount_rwf,
     status: refund.status,
@@ -143,6 +143,43 @@ class RefundService {
       provider: config.admin.owner.payoutProvider || 'manual',
     });
     return this.#dispatch(refund, `(delivery fee reduced) on ${refund?.order_number}`);
+  }
+
+  /**
+   * The kitchen couldn't make a dish of a paid app order and the customer kept
+   * the rest: its price goes back to them. The caller has already lowered the
+   * order's total (and kept what was paid in amount_paid_rwf), so the books
+   * stay balanced. A second missing dish on the same order is added to the
+   * refund while it hasn't been sent yet; returns null when it already was.
+   */
+  async openItemRefund(order, { amountRwf, reason = '' } = {}) {
+    const amount = Math.round(Number(amountRwf) || 0);
+    if (amount <= 0) return null;
+    const { Refund } = require('../models');
+    const existing = await Refund.findOne({ order_id: order._id, kind: 'item_unavailable' }).lean();
+    if (existing) {
+      if (existing.status !== 'pending') return null;
+      const grown = await Refund.findOneAndUpdate(
+        { _id: existing._id, status: 'pending' },
+        { $inc: { amount_rwf: amount }, $set: { reason: String(reason || existing.reason || '').slice(0, 200) } },
+        { returnDocument: 'after' }
+      ).lean();
+      return grown ? this.#dispatch(grown, `(dish unavailable) on ${grown.order_number}`) : null;
+    }
+    const refund = await refundRepository.createOnce({
+      order_id: order._id,
+      kind: 'item_unavailable',
+      order_number: order.order_number || '',
+      customer_id: order.customer_id,
+      vendor_id: order.vendor_id || null,
+      amount_rwf: amount,
+      payment_method: order.payment_method || '',
+      destination: this.#destinationFor(order),
+      cancelled_by: 'customer',
+      reason: String(reason || '').slice(0, 200),
+      provider: config.admin.owner.payoutProvider || 'manual',
+    });
+    return this.#dispatch(refund, `(dish unavailable) on ${refund?.order_number}`);
   }
 
   /** Sends a new refund automatically when possible, otherwise asks an admin. */

@@ -232,6 +232,9 @@ const vendorSchema = new mongoose.Schema(
       },
       // Delivery and pickup orders are packed and checked before they leave.
       require_packing: { type: Boolean, default: false },
+      // Minutes an order may wait with nobody accepting it before the managers
+      // get an urgent alert and an SMS (newOrderWatchService). 0 = off.
+      escalate_after_minutes: { type: Number, min: 0, max: 60, default: 5 },
       // Several departments' delivery items may leave separately.
       allow_partial_dispatch: { type: Boolean, default: false },
       // What must be true before a table session closes (a manager may override).

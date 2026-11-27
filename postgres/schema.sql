@@ -371,6 +371,8 @@ CREATE TABLE orders (
   delivery_id               CHAR(24),
   eta_minutes               NUMERIC,
   prep_minutes              NUMERIC,
+  customer_issues           JSONB,
+  escalated_at              TIMESTAMPTZ,
   estimated_delivery_at     TIMESTAMPTZ,
   picked_up_at              TIMESTAMPTZ,
   delivered_at              TIMESTAMPTZ,

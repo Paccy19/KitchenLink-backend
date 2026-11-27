@@ -230,6 +230,8 @@ const serializeDetail = (order, vendor, payment, delivery, refund = null) => ({
   payment_method_label: methodLabel(order.payment_method),
   payment_status: order.payment_status,
   payment_details: serializePaymentDetails(order),
+  // What the kitchen told the customer (a delay, a dish it can't make) and the choices.
+  issues: require('./kitchen/customerIssueService').serialize(order),
   created_at: order.created_at,
   updated_at: order.updated_at,
   vendor: vendor
@@ -1135,6 +1137,13 @@ class OrderService {
     const { vendor, payment, delivery } = await this.#loadWithVendor(order);
     await this.#ensureDeliveryCodeNotification(order, delivery);
     return serializeDetail(order, vendor, payment, delivery, await refundService.forOrder(order._id));
+  }
+
+  /** The customer answers the kitchen about a dish it can't make. */
+  async respondToIssue(customerId, orderId, issueId, body = {}) {
+    const order = await this.#loadOrder(customerId, orderId);
+    await require('./kitchen/customerIssueService').respond(order, issueId, body?.choice, { customerId });
+    return this.getDetail(customerId, orderId);
   }
 
   /** The customer's own pickup code, shown from placement until the food is collected. */

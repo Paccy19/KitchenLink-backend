@@ -171,6 +171,8 @@ const start = async () => {
     }
 
     platformSweepService.start();
+    // Orders nobody has accepted: an urgent alert (and an SMS) after a few minutes.
+    require('./services/kitchen/newOrderWatchService').start();
     vendorOfferService.start();
     // Big events: reminders to pay the balance (due a day before the event).
     eventBalanceService.start();

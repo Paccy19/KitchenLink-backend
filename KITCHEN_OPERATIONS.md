@@ -35,10 +35,25 @@ security), `test/unit/kitchenReports.test.js`.
 - The catalogue is `config/kitchenAccess.js` (groups, labels, default roles).
 - A role (`KitchenRole`) is a named set of permissions, optionally limited to
   departments. An employee holds the union of their roles.
-- **Guest requests.** "Bring the bill" alerts the table's own server (the
-  visit's server, else the table's assigned server; every server when it has
-  none) and the cashiers (`invoices.process_payment`). "Call the waiter" and
-  "Something else" alert everyone with `service.customer_requests`. All of
+- **The customer hears about problems.** A department flagging "running late"
+  (with minutes) or "can't make a dish" tells the customer on their order page
+  (`customerIssueService`; app customers also get a notification). For a
+  missing dish the customer chooses: at a table, remove it or choose
+  something else (the bill goes down); paid in the app, continue without it
+  (its price is refunded, `Refund.kind` `item_unavailable`, with the held
+  total and payout lowered so the ledger balances) or cancel. The department
+  and the server hear the answer, and the department's flag is closed.
+- **New orders aren't missed.** `counts.new_work` in the workspace is this
+  person's work nobody accepted; the dashboard shows a banner and, once sound
+  is turned on, chimes every 5 seconds until it's accepted or someone presses
+  "Got it". After `operations.escalate_after_minutes` (default 5, 0 = off)
+  `newOrderWatchService` alerts everyone who accepts orders and texts the
+  kitchen's phone (when an SMS gateway is set up), once per order.
+- **Guest requests.** "Call the waiter" and "Bring the bill" alert the
+  table's own server (the visit's server, else the table's assigned server;
+  every server when it has none); a bill request also alerts the cashiers
+  (`invoices.process_payment`). "Something else" alerts everyone with
+  `service.customer_requests`. All of
   them show on the Service board until a server marks them done.
 - **Each dish goes to its team.** A dish's department decides which ticket
   it lands on, so pilau, cake and coffee in one order go to the kitchen, the

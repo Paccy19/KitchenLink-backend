@@ -26,6 +26,7 @@ const serializeSettings = (vendor) => {
       point_value_rwf: ops.loyalty?.point_value_rwf || 10,
     },
     require_packing: Boolean(ops.require_packing),
+    escalate_after_minutes: ops.escalate_after_minutes ?? 5,
     session_close: {
       orders_complete: ops.session_close?.orders_complete !== false,
       paid: ops.session_close?.paid !== false,
@@ -77,6 +78,12 @@ class OperationsService {
         if (!Number.isInteger(n) || n < min || n > 1000000) throw ApiError.badRequest(`loyalty.${field} must be a whole number of at least ${min}.`, { [`loyalty.${field}`]: 'out of range' });
         set[`operations.loyalty.${field}`] = n;
       }
+    }
+    if (body.escalate_after_minutes !== undefined) {
+      anyOf(['settings.operational_rules']);
+      const n = Number(body.escalate_after_minutes);
+      if (!Number.isInteger(n) || n < 0 || n > 60) throw ApiError.badRequest('Minutes are 0 (off) to 60.', { escalate_after_minutes: 'expected 0-60' });
+      set['operations.escalate_after_minutes'] = n;
     }
     for (const field of ['table_ordering_enabled', 'allow_partial_service', 'inventory_auto_deduct', 'require_packing']) {
       if (body[field] !== undefined) {
@@ -131,6 +138,21 @@ class OperationsService {
       kitchen.can('tables.view') || kitchen.can('overview.active_tables') ? DiningTable.countDocuments({ vendor_id: vendorId, deleted_at: null }) : 0,
       kitchen.can('staff.view') || kitchen.can('overview.active_employees') ? KitchenStaff.countDocuments({ vendor_id: vendorId, deleted_at: null }) : 0,
     ]);
+    // New work nobody has taken yet: the dashboard rings until it is accepted.
+    // Preparers: tickets still waiting in their departments. Others who take
+    // orders: orders nobody has accepted.
+    const ready = { $or: [{ payment_method: 'in_person' }, { payment_status: 'paid' }] };
+    const newWork =
+      prepScope !== null && !prepScope.length
+        ? kitchen.can('orders.accept')
+          ? await Order.countDocuments({ vendor_id: vendorId, status: 'placed', ...ready })
+          : 0
+        : await Order.aggregate([
+            { $match: { vendor_id: new mongoose.Types.ObjectId(vendorId), status: { $in: ON_FLOOR }, ...ready } },
+            { $unwind: '$tickets' },
+            { $match: { 'tickets.status': 'pending', 'tickets.paused': { $ne: true }, ...(prepScope !== null ? { 'tickets.department_id': { $in: prepScope.map((id) => new mongoose.Types.ObjectId(id)) } } : {}) } },
+            { $count: 'n' },
+          ]).then((r) => r[0]?.n || 0);
     const { TableSession, PackingTask, Reservation, WaitlistEntry } = require('../../models');
     const [requests, inboxUnread, clock, liveTables, toPack, toConfirm, waiting, myTables, myDeliveries] = await Promise.all([
       kitchen.can('service.customer_requests') ? require('./serviceRequestService').openCount(vendorId) : 0,
@@ -147,7 +169,7 @@ class OperationsService {
       ...kitchen.serialize(),
       clock,
       departments: departments.map((d) => ({ id: String(d._id), name: d.name, is_active: d.is_active !== false, category: d.category, code_prefix: d.code_prefix })),
-      counts: { queue: queueCount, ready_orders: waitingCount, open_invoices: openBills, tables, staff: staffCount, requests, inbox: inboxUnread, live_tables: liveTables, to_pack: toPack, bookings_to_confirm: toConfirm, waiting_list: waiting, my_tables: myTables, my_deliveries: myDeliveries },
+      counts: { new_work: newWork, queue: queueCount, ready_orders: waitingCount, open_invoices: openBills, tables, staff: staffCount, requests, inbox: inboxUnread, live_tables: liveTables, to_pack: toPack, bookings_to_confirm: toConfirm, waiting_list: waiting, my_tables: myTables, my_deliveries: myDeliveries },
       settings: serializeSettings((await Vendor.findById(vendorId).select('operations').lean()) || {}),
     };
   }
