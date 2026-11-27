@@ -104,11 +104,38 @@ test('pilau, cake and coffee: each goes to its own department, on one bill', asy
   // They move their own ticket, not the whole order.
   assert.equal((await api('PATCH', `/vendor/orders/${order.id}/status`, { token: token.baker, body: { status: 'ready' } })).status, 403);
 
-  // The manager and the cashier see the whole order; the bill is one.
+  // The manager, the cashier and the owner see the whole order; the bill is one.
   const managerView = (await seen('kitchen_manager'))[0];
   assert.equal(managerView.items.length, 3);
   assert.equal(managerView.total_amount_rwf, 9500);
+  const ownerView = ok(await api('GET', '/vendor/orders', { token: owner })).orders[0];
+  assert.equal(ownerView.items.length, 3);
+  assert.equal(ownerView.total_amount_rwf, 9500);
   const invoices = ok(await api('GET', '/vendor/invoices', { token: token.cashier })).invoices;
   assert.equal(invoices.length, 1);
   assert.equal(ok(await api('GET', `/vendor/invoices/${invoices[0].id}`, { token: token.cashier })).total_rwf, 9500);
+});
+
+test('"Bring the bill" goes to the table\'s own server and to the cashier', async () => {
+  const { roles } = ok(await api('GET', '/vendor/roles', { token: owner }));
+  const serverRole = roles.find((r) => r.template_key === 'server').id;
+  const amina = ok(await api('POST', '/vendor/staff', { token: owner, body: { name: 'Amina', phone: '0788600011', role_ids: [serverRole] } }), 201);
+  const bosco = ok(await api('POST', '/vendor/staff', { token: owner, body: { name: 'Bosco', phone: '0788600012', role_ids: [serverRole] } }), 201);
+  const aminaToken = staffToken(K.vendor, amina.id);
+  const boscoToken = staffToken(K.vendor, bosco.id);
+  const titles = async (t) => ok(await api('GET', '/vendor/inbox', { token: t })).items.map((n) => n.title);
+
+  // Table 1 is Amina's: only she (and the cashier) hear about its bill.
+  ok(await api('PATCH', `/vendor/tables/${table.id}`, { token: owner, body: { assigned_staff_id: amina.id } }));
+  ok(await api('POST', `/tables/${table.token}/requests`, { body: { kind: 'request_bill' } }), 201);
+  assert.ok((await titles(aminaToken)).includes('Table 1: Bring the bill'));
+  assert.ok(!(await titles(boscoToken)).includes('Table 1: Bring the bill'));
+  assert.ok((await titles(token.cashier)).includes('Table 1: Bring the bill'));
+
+  // A table nobody looks after: every server hears, and the cashier.
+  const table2 = ok(await api('POST', '/vendor/tables', { token: owner, body: { label: 'Table 2' } }), 201);
+  ok(await api('POST', `/tables/${table2.token}/requests`, { body: { kind: 'request_bill' } }), 201);
+  assert.ok((await titles(boscoToken)).includes('Table 2: Bring the bill'));
+  assert.ok((await titles(aminaToken)).includes('Table 2: Bring the bill'));
+  assert.ok((await titles(token.cashier)).includes('Table 2: Bring the bill'));
 });

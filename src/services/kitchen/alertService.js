@@ -16,8 +16,8 @@ async function alertsOn(vendorId, type) {
   return vendor?.operations?.alerts?.[type] !== false;
 }
 
-/** An automatic alert for whoever holds `permission` (and the administrators). */
-function emit(vendorId, type, { title, body = '', link = '', permission = null }) {
+/** An automatic alert for whoever holds `permission` (and the administrators, unless `admins: false`). */
+function emit(vendorId, type, { title, body = '', link = '', permission = null, admins = true }) {
   return quietly(
     (async () => {
       if (!(await alertsOn(vendorId, type))) return;
@@ -28,7 +28,7 @@ function emit(vendorId, type, { title, body = '', link = '', permission = null }
         title,
         body,
         link,
-        recipients: { permission, admins: true },
+        recipients: { permission, admins },
       });
     })()
   );

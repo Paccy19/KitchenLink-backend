@@ -40,8 +40,9 @@ function statusNeeds(order, nextStatus) {
   }[nextStatus] || ['orders.accept'];
 }
 
-// Order permissions that are about the whole order, not one department's part of it.
-const WHOLE_ORDER = ['orders.receive', 'orders.accept', 'orders.reject', 'orders.cancel', 'orders.history', 'orders.handover', 'orders.assign', 'delivery.view_orders', 'delivery.history', 'delivery.track', 'delivery.confirm_completion'];
+// Order steps a department-limited person may still take on the whole order
+// (if their role allows): taking or refusing it. Cooking steps are per ticket.
+const DEPARTMENT_ORDER_STEPS = ['accepted', 'cancelled'];
 
 /**
  * The departments a person sees orders through, or null for the whole order.
@@ -51,7 +52,7 @@ const WHOLE_ORDER = ['orders.receive', 'orders.accept', 'orders.reject', 'orders
 function departmentView(kitchen) {
   if (!kitchen || kitchen.isAdmin || !kitchen.can('orders.view')) return null;
   const scope = kitchen.scope('orders.view');
-  if (scope === ALL || WHOLE_ORDER.some((p) => kitchen.can(p))) return null;
+  if (scope === ALL) return null;
   return new Set(scope.map(String));
 }
 
@@ -60,10 +61,13 @@ function forKitchen(serialized, order, kitchen) {
   if (!kitchen || kitchen.isAdmin) return serialized;
   const departments = departmentView(kitchen);
   if (departments) {
-    // Their part only: their dishes and tickets, no money, and no order-wide
-    // steps (they move their own ticket on the Preparation page).
+    // Their part only: their dishes and tickets, no money. They move their
+    // own ticket on the Preparation page; taking or refusing the order and
+    // handing it over stay, if their role allows them.
     const mine = (row) => row.department_id && departments.has(String(row.department_id));
-    const out = { ...serialized, items: serialized.items.filter(mine), tickets: serialized.tickets.filter(mine), allowed_next_statuses: [], can_confirm_pickup: false, can_hand_over: false, department_only: true };
+    const allowed = (serialized.allowed_next_statuses || []).filter((next) => DEPARTMENT_ORDER_STEPS.includes(next) && statusNeeds(order, next).some((p) => kitchen.can(p)));
+    const handOver = kitchen.can('orders.handover') || kitchen.can('delivery.confirm_completion');
+    const out = { ...serialized, items: serialized.items.filter(mine), tickets: serialized.tickets.filter(mine), allowed_next_statuses: allowed, can_confirm_pickup: handOver && serialized.can_confirm_pickup, can_hand_over: handOver, department_only: true };
     for (const key of Object.keys(out)) if (key.endsWith('_rwf') || key === 'commission_percent') delete out[key];
     delete out.deposit;
     if (out.customer) out.customer = { id: out.customer.id, name: out.customer.name };
@@ -169,7 +173,7 @@ class VendorOrderService {
   async updateStatus(vendor, orderId, body = {}, kitchen = null) {
     const id = parseObjectId(orderId, 'order_id');
     const nextStatus = parseVendorOrderStatus(body?.status);
-    if (departmentView(kitchen)) {
+    if (departmentView(kitchen) && !DEPARTMENT_ORDER_STEPS.includes(nextStatus)) {
       throw ApiError.forbidden('You prepare part of this order: move your own ticket on the Preparation page.', 'KITCHEN_PERMISSION_DENIED');
     }
     // Staff need the permission for this step (the owner has them all).

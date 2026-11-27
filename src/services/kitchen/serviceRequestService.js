@@ -1,6 +1,6 @@
 const ApiError = require('../../utils/ApiError');
 const { parseObjectId, parseOptionalText } = require('../../utils/vendorValidators');
-const { ServiceRequest } = require('../../models');
+const { ServiceRequest, TableSession, KitchenStaff } = require('../../models');
 const alerts = require('./alertService');
 const activity = require('./activityService');
 
@@ -29,13 +29,37 @@ class ServiceRequestService {
     const existing = await ServiceRequest.findOne({ table_id: table._id, kind, status: { $ne: 'done' } }).lean();
     if (existing) return { request: serialize(existing), already_open: true };
     const request = await ServiceRequest.create({ vendor_id: table.vendor_id, table_id: table._id, table_label: table.label, kind, note });
-    alerts.emit(table.vendor_id, 'requests', {
-      title: `${table.label}: ${KINDS[kind]}`,
-      body: note,
-      link: '/vendor-dashboard/service',
-      permission: 'service.customer_requests',
-    });
+    const title = `${table.label}: ${KINDS[kind]}`;
+    if (kind === 'request_bill') {
+      await this.#billAlerts(table, title, note);
+    } else {
+      alerts.emit(table.vendor_id, 'requests', { title, body: note, link: '/vendor-dashboard/service', permission: 'service.customer_requests' });
+    }
     return { request: serialize(request.toObject()), already_open: false };
+  }
+
+  /**
+   * "Bring the bill" goes to the server looking after the table (the visit's
+   * server, else the table's), or to every server when it has none, and to
+   * the cashiers, who prepare and take the payment.
+   */
+  async #billAlerts(table, title, note) {
+    const session = await TableSession.findOne({ vendor_id: table.vendor_id, table_id: table._id, status: 'active' }).select('server_id').lean();
+    const serverId = session?.server_id || table.assigned_staff_id || null;
+    const server = serverId
+      ? await KitchenStaff.findOne({ _id: serverId, vendor_id: table.vendor_id, deleted_at: null, is_active: { $ne: false } }).select('_id').lean()
+      : null;
+    if (server) {
+      alerts.toStaff(table.vendor_id, server._id, { title, body: note, link: '/vendor-dashboard/my-tables', type: 'requests' });
+    } else {
+      alerts.emit(table.vendor_id, 'requests', { title, body: note, link: '/vendor-dashboard/service', permission: 'service.customer_requests', admins: false });
+    }
+    alerts.emit(table.vendor_id, 'requests', {
+      title,
+      body: note || 'Prepare the bill for this table.',
+      link: '/vendor-dashboard/invoices',
+      permission: 'invoices.process_payment',
+    });
   }
 
   async openForTable(table) {

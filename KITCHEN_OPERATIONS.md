@@ -35,13 +35,18 @@ security), `test/unit/kitchenReports.test.js`.
 - The catalogue is `config/kitchenAccess.js` (groups, labels, default roles).
 - A role (`KitchenRole`) is a named set of permissions, optionally limited to
   departments. An employee holds the union of their roles.
+- **Guest requests.** "Bring the bill" alerts the table's own server (the
+  visit's server, else the table's assigned server; every server when it has
+  none) and the cashiers (`invoices.process_payment`). "Call the waiter" and
+  "Something else" alert everyone with `service.customer_requests`. All of
+  them show on the Service board until a server marks them done.
 - **Each dish goes to its team.** A dish's department decides which ticket
   it lands on, so pilau, cake and coffee in one order go to the kitchen, the
   bakery and the coffee bar, on one bill. The dish form asks "Who makes it?"
   (a new kind of team is created on save) and `POST /vendor/departments/setup`
   sorts a whole menu in one step. Creating a department of a kind limits the
   matching default role to it (`ROLE_DEPARTMENT_CATEGORIES`: chef, baker,
-  barista, bartender; `KitchenRole.departments_auto` until an administrator
+  barista, bartender; the Kitchen Manager stays kitchen-wide; `KitchenRole.departments_auto` until an administrator
   picks the departments). `orders.view` and `orders.details` are scoped: a
   department-limited person sees only their dishes on the orders list
   (`department_only`). Tests: `test/api/departmentRouting.test.js`.

@@ -498,7 +498,8 @@ const DEFAULT_ROLES = [
 /**
  * Which kind of department each preparing role works in. When a kitchen
  * creates a department of that kind, the role is limited to it, so a baker
- * sees bakery tickets and not the whole order.
+ * sees bakery tickets and not the whole order. The Kitchen Manager stays
+ * kitchen-wide; the Chef cooks for the Kitchen.
  */
 const ROLE_DEPARTMENT_CATEGORIES = {
   chef: ['restaurant', 'fast_food', 'catering'],
